@@ -1,0 +1,990 @@
+AddOffsetsToTxnRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AddOffsetsToTxnResponse.json
+	
+MINOR: Renaming the Abortable_Transaction error to `Transaction_Abo…
+	
+2 years ago
+AddPartitionsToTxnRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AddPartitionsToTxnResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+AddRaftVoterRequest.json
+	
+KAFKA-19400: Update AddRaftVoterRequest RPC to version 1 (#19982)
+	
+8 months ago
+AddRaftVoterResponse.json
+	
+KAFKA-19400: Update AddRaftVoterRequest RPC to version 1 (#19982)
+	
+8 months ago
+AllocateProducerIdsRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+AllocateProducerIdsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+AlterClientQuotasRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AlterClientQuotasResponse.json
+	
+KAFKA-10729; Bump remaining RPC's to use tagged fields. (#9601)
+	
+6 years ago
+AlterConfigsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AlterConfigsResponse.json
+	
+KAFKA-10729; Bump remaining RPC's to use tagged fields. (#9601)
+	
+6 years ago
+AlterPartitionReassignmentsRequest.json
+	
+KAFKA-14121: AlterPartitionReassignments API should allow callers to …
+	
+last year
+AlterPartitionReassignmentsResponse.json
+	
+KAFKA-14121: AlterPartitionReassignments API should allow callers to …
+	
+last year
+AlterPartitionRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+AlterPartitionResponse.json
+	
+KAFKA-18601: Assume a baseline of 3.3 for server protocol versions (#…
+	
+last year
+AlterReplicaLogDirsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AlterReplicaLogDirsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+AlterShareGroupOffsetsRequest.json
+	
+KAFKA-19057: Stabilize KIP-932 RPCs for AK 4.1 (#19378)
+	
+11 months ago
+AlterShareGroupOffsetsResponse.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+AlterUserScramCredentialsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+AlterUserScramCredentialsResponse.json
+	
+KAFKA-10259: KIP-554 Broker-side SCRAM Config API (#9032)
+	
+6 years ago
+ApiVersionsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+ApiVersionsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+AssignReplicasToDirsRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+AssignReplicasToDirsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+BeginQuorumEpochRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+BeginQuorumEpochResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+BrokerHeartbeatRequest.json
+	
+KAFKA-18408 tweak the 'tag' field for BrokerHeartbeatRequest.json, Br…
+	
+last year
+BrokerHeartbeatResponse.json
+	
+KAFKA-15355: Message schema changes (#14290)
+	
+3 years ago
+BrokerRegistrationRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+BrokerRegistrationResponse.json
+	
+KAFKA-17011: Fix a bug preventing features from supporting v0 (#16421)
+	
+2 years ago
+ConsumerGroupDescribeRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ConsumerGroupDescribeResponse.json
+	
+KAFKA-18813: ConsumerGroupHeartbeat API and ConsumerGroupDescribe API…
+	
+last year
+ConsumerGroupHeartbeatRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ConsumerGroupHeartbeatResponse.json
+	
+KAFKA-18813: ConsumerGroupHeartbeat API and ConsumerGroupDescribe API…
+	
+last year
+ConsumerProtocolAssignment.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ConsumerProtocolSubscription.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ControlledShutdownRequest.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+ControlledShutdownResponse.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+ControllerRegistrationRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ControllerRegistrationResponse.json
+	
+KAFKA-15369: Implement KIP-919: Allow AC to Talk Directly with Contro…
+	
+3 years ago
+CreateAclsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+CreateAclsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+CreateDelegationTokenRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+CreateDelegationTokenResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+CreatePartitionsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+CreatePartitionsResponse.json
+	
+KAFKA-10163; Throttle Create Topic, Create Partition and Delete Topic…
+	
+6 years ago
+CreateTopicsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+CreateTopicsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DefaultPrincipalData.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DeleteAclsRequest.json
+	
+MINOR: add the explanation of null for DeleteAclsRequest#ResourceNa…
+	
+6 months ago
+DeleteAclsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DeleteGroupsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DeleteGroupsResponse.json
+	
+KAFKA-18352: Add back DeleteGroups v0, it incorrectly tagged as depre…
+	
+2 years ago
+DeleteRecordsRequest.json
+	
+KAFKA-19699 improve the documentation of RecordsToDelete (#20527)
+	
+6 months ago
+DeleteRecordsResponse.json
+	
+KAFKA-8768: DeleteRecords request/response automated protocol (#7957)
+	
+6 years ago
+DeleteShareGroupOffsetsRequest.json
+	
+KAFKA-16718-3/n: Added the ShareGroupStatePartitionMetadata record du…
+	
+11 months ago
+DeleteShareGroupOffsetsResponse.json
+	
+KAFKA-16718-3/n: Added the ShareGroupStatePartitionMetadata record du…
+	
+11 months ago
+DeleteShareGroupStateRequest.json
+	
+KAFKA-19057: Stabilize KIP-932 RPCs for AK 4.1 (#19378)
+	
+11 months ago
+DeleteShareGroupStateResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DeleteTopicsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DeleteTopicsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DescribeAclsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeAclsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DescribeClientQuotasRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeClientQuotasResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeClusterRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeClusterResponse.json
+	
+MINOR: enhance DescribeClusterResponse ControllerId description (#20400)
+	
+7 months ago
+DescribeConfigsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeConfigsResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DescribeDelegationTokenRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeDelegationTokenResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+DescribeGroupsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeGroupsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeLogDirsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeLogDirsResponse.json
+	
+KAFKA-19527 improve the docs of LogDirDescription for remote storage (#…
+	
+8 months ago
+DescribeProducersRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeProducersResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeQuorumRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeQuorumResponse.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+DescribeShareGroupOffsetsRequest.json
+	
+KAFKA-19800: Compute share partition lag in GroupCoordinatorService (#…
+	
+4 months ago
+DescribeShareGroupOffsetsResponse.json
+	
+KAFKA-19800: Compute share partition lag in GroupCoordinatorService (#…
+	
+4 months ago
+DescribeTopicPartitionsRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeTopicPartitionsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeTransactionsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeTransactionsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+DescribeUserScramCredentialsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+DescribeUserScramCredentialsResponse.json
+	
+KAFKA-10259: KIP-554 Broker-side SCRAM Config API (#9032)
+	
+6 years ago
+ElectLeadersRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+ElectLeadersResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+EndQuorumEpochRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+EndQuorumEpochResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+EndTxnMarker.json
+	
+KAFKA-10864 Convert end txn marker schema to use auto-generated proto…
+	
+last year
+EndTxnRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+EndTxnResponse.json
+	
+MINOR: Use bools for ignorable in EndTxnResponse.json (#17558)
+	
+2 years ago
+EnvelopeRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+EnvelopeResponse.json
+	
+KAFKA-10181: Use Envelope RPC to do redirection for (Incremental)Alte…
+	
+6 years ago
+ExpireDelegationTokenRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+ExpireDelegationTokenResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+FetchRequest.json
+	
+MINOR: Fix typo and docs (#20373)
+	
+7 months ago
+FetchResponse.json
+	
+KAFKA-14145; Faster KRaft HWM replication (#19800)
+	
+9 months ago
+FetchSnapshotRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+FetchSnapshotResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+FindCoordinatorRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+FindCoordinatorResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+GetTelemetrySubscriptionsRequest.json
+	
+[MINOR-PR] Enable telemetry APIs and logs suppression (KIP-714) (#14928)
+	
+3 years ago
+GetTelemetrySubscriptionsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+HeartbeatRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+HeartbeatResponse.json
+	
+KAFKA-8885; The Kafka Protocol should Support Optional Tagged Fields (#…
+	
+7 years ago
+IncrementalAlterConfigsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+IncrementalAlterConfigsResponse.json
+	
+KAFKA-8885; The Kafka Protocol should Support Optional Tagged Fields (#…
+	
+7 years ago
+InitProducerIdRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+InitProducerIdResponse.json
+	
+KAFKA-15370: Support Participation in 2PC (KIP-939) (2/N) (#18316)
+	
+last year
+InitializeShareGroupStateRequest.json
+	
+KAFKA-19057: Stabilize KIP-932 RPCs for AK 4.1 (#19378)
+	
+11 months ago
+InitializeShareGroupStateResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+JoinGroupRequest.json
+	
+KAFKA-19444: Add back JoinGroup v0 & v1 (#20116)
+	
+8 months ago
+JoinGroupResponse.json
+	
+KAFKA-19444: Add back JoinGroup v0 & v1 (#20116)
+	
+8 months ago
+KRaftVersionRecord.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+LeaderAndIsrRequest.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+LeaderAndIsrResponse.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+LeaderChangeMessage.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+LeaveGroupRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+LeaveGroupResponse.json
+	
+KAFKA-13496: Add reason to LeaveGroupRequest (KIP-800) (#11571)
+	
+5 years ago
+ListConfigResourcesRequest.json
+	
+KAFKA-18904: [1/N] Change ListClientMetricsResources API to ListConfi…
+	
+10 months ago
+ListConfigResourcesResponse.json
+	
+KAFKA-18904: [1/N] Change ListClientMetricsResources API to ListConfi…
+	
+10 months ago
+ListGroupsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+ListGroupsResponse.json
+	
+KAFKA-17144 Retract unimplemented ListGroups v6 added in error (#16635)
+	
+2 years ago
+ListOffsetsRequest.json
+	
+KAFKA-17108: Add EarliestPendingUpload offset spec in ListOffsets API (…
+	
+7 months ago
+ListOffsetsResponse.json
+	
+KAFKA-17108: Add EarliestPendingUpload offset spec in ListOffsets API (…
+	
+7 months ago
+ListPartitionReassignmentsRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+ListPartitionReassignmentsResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+ListTransactionsRequest.json
+	
+KAFKA-19073 add transactional ID pattern filter to ListTransactions (#…
+	
+11 months ago
+ListTransactionsResponse.json
+	
+KAFKA-19073 add transactional ID pattern filter to ListTransactions (#…
+	
+11 months ago
+MetadataRequest.json
+	
+KAFKA-18648: Add back support for metadata version 0-3 (#18716)
+	
+last year
+MetadataResponse.json
+	
+KAFKA-18648: Add back support for metadata version 0-3 (#18716)
+	
+last year
+OffsetCommitRequest.json
+	
+KAFKA-19186; Mark OffsetCommit and OffsetFetch APIs as stable (#20923)
+	
+4 months ago
+OffsetCommitResponse.json
+	
+KAFKA-14690; Add TopicId to OffsetCommit API (#19461)
+	
+11 months ago
+OffsetDeleteRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+OffsetDeleteResponse.json
+	
+KAFKA-12877: Make flexibleVersions mandatory (#10804)
+	
+5 years ago
+OffsetFetchRequest.json
+	
+KAFKA-19186; Mark OffsetCommit and OffsetFetch APIs as stable (#20923)
+	
+4 months ago
+OffsetFetchResponse.json
+	
+KAFKA-14691; Add TopicId to OffsetFetch API (#19515)
+	
+10 months ago
+OffsetForLeaderEpochRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+OffsetForLeaderEpochResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+ProduceRequest.json
+	
+KAFKA-10551: Add topic id support to produce request and response (#1…
+	
+11 months ago
+ProduceResponse.json
+	
+KAFKA-10551: Add topic id support to produce request and response (#1…
+	
+11 months ago
+PushTelemetryRequest.json
+	
+KAFKA-17867 Consider using zero-copy for PushTelemetryRequest (#17622)
+	
+2 years ago
+PushTelemetryResponse.json
+	
+KAFKA-15604: Telemetry API request and response schemas and classes (…
+	
+3 years ago
+README.md
+	
+MINOR: fix MetadataRequest and MetadataResponse doc (#19963)
+	
+9 months ago
+ReadShareGroupStateRequest.json
+	
+KAFKA-19057: Stabilize KIP-932 RPCs for AK 4.1 (#19378)
+	
+11 months ago
+ReadShareGroupStateResponse.json
+	
+KAFKA-19057: Stabilize KIP-932 RPCs for AK 4.1 (#19378)
+	
+11 months ago
+ReadShareGroupStateSummaryRequest.json
+	
+KAFKA-19799: Added deliveryCompleteCount to ReadShareGroupStateSummary (
+	
+4 months ago
+ReadShareGroupStateSummaryResponse.json
+	
+KAFKA-19799: Added deliveryCompleteCount to ReadShareGroupStateSummary (
+	
+4 months ago
+RemoveRaftVoterRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+RemoveRaftVoterResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+RenewDelegationTokenRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+RenewDelegationTokenResponse.json
+	
+KAFKA-18269: Remove deprecated protocol APIs support (KIP-896, KIP-72…
+	
+2 years ago
+RequestHeader.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+ResponseHeader.json
+	
+KAFKA-8885; The Kafka Protocol should Support Optional Tagged Fields (#…
+	
+7 years ago
+SaslAuthenticateRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+SaslAuthenticateResponse.json
+	
+MINOR: Fix incorrect description of SessionLifetimeMs (#13649)
+	
+3 years ago
+SaslHandshakeRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+SaslHandshakeResponse.json
+	
+KAFKA-12877: Make flexibleVersions mandatory (#10804)
+	
+5 years ago
+ShareAcknowledgeRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+ShareAcknowledgeResponse.json
+	
+MINOR: Make acq lock timeout ignorable in share ack response. (#20934)
+	
+4 months ago
+ShareFetchRequest.json
+	
+KAFKA-19845: [1/N] Renew acks in share consumer (#20838)
+	
+4 months ago
+ShareFetchResponse.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+ShareGroupDescribeRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+ShareGroupDescribeResponse.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+ShareGroupHeartbeatRequest.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+ShareGroupHeartbeatResponse.json
+	
+MINOR: Fix typos in RPC files (#20800)
+	
+4 months ago
+SnapshotFooterRecord.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+SnapshotHeaderRecord.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+StopReplicaRequest.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+StopReplicaResponse.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+StreamsGroupDescribeRequest.json
+	
+KAFKA-19869: Mark streams groups records and APIs stable (#20841)
+	
+4 months ago
+StreamsGroupDescribeResponse.json
+	
+MINOR: Removed unused struct in StreamsGroupDescribeResponse.json (#2…
+	
+4 months ago
+StreamsGroupHeartbeatRequest.json
+	
+KAFKA-19869: Mark streams groups records and APIs stable (#20841)
+	
+4 months ago
+StreamsGroupHeartbeatResponse.json
+	
+KAFKA-19978: Don't enter running state as long as group is not ready (#…
+	
+3 months ago
+SyncGroupRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+SyncGroupResponse.json
+	
+MINOR: Fix typos introduced in KIP-559 (#8042)
+	
+6 years ago
+TxnOffsetCommitRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+TxnOffsetCommitResponse.json
+	
+KAFKA-14563: RemoveClient-Side AddPartitionsToTxn Requests (#17698)
+	
+2 years ago
+UnregisterBrokerRequest.json
+	
+MINOR: Fix some bugs with UNREGISTER_BROKER
+	
+4 years ago
+UnregisterBrokerResponse.json
+	
+MINOR: Rename DecommissionBrokers to UnregisterBrokers (#10084)
+	
+5 years ago
+UpdateFeaturesRequest.json
+	
+KAFKA-18474: Remove zkBroker listener (#18477)
+	
+last year
+UpdateFeaturesResponse.json
+	
+KAFKA-16308 [3/N]: Introduce feature dependency validation to UpdateF…
+	
+2 years ago
+UpdateMetadataRequest.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+UpdateMetadataResponse.json
+	
+KAFKA-14552: Assume a baseline of 3.0 for server protocol versions (#…
+	
+last year
+UpdateRaftVoterRequest.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+UpdateRaftVoterResponse.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+VoteRequest.json
+	
+KAFKA-17641; Update Vote RPC with PreVote field (#17807)
+	
+2 years ago
+VoteResponse.json
+	
+KAFKA-17641; Update Vote RPC with PreVote field (#17807)
+	
+2 years ago
+VotersRecord.json
+	
+KAFKA-17864: add descriptions to fields in the agreement (#17681)
+	
+2 years ago
+WriteShareGroupStateRequest.json
+	
+KAFKA-19797: Added deliveryCompleteCount to writeState, ShareUpdate a…
+	
+4 months ago
+WriteShareGroupStateResponse.json
+	
+KAFKA-19797: Added deliveryCompleteCount to writeState, ShareUpdate a…
+	
+4 months ago
+WriteTxnMarkersRequest.json
+	
+KAFKA-19446: Add transaction version field [1/3] (#20857)
+	
+4 months ago
+WriteTxnMarkersResponse.json
+	
+KAFKA-19446: Add transaction version field [1/3] (#20857)
+	
+4 months ago
