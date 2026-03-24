@@ -37,11 +37,16 @@ tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# 协议派生宏
-kafka_protocol_derive = { path = "kafka_protocol_derive" }
+# 协议
+kafka-client-protocol = { path = "kafka-client-protocol" }
 
 # UUID
 uuid = { version = "1.0", features = ["v4"] }
 
 [workspace]
-members = [ "kafka_protocol_codegen" , "kafka_protocol_derive"]
+members = [
+    "kafka-client-protocol-core",
+    "kafka-client-protocol-codegen",
+    "kafka-client-protocol-derive",
+    "kafka-client-protocol"
+]

@@ -1,0 +1,67 @@
+//! Auto-generated from Kafka protocol
+//! Message: BeginQuorumEpochRequest
+//! DO NOT EDIT
+
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
+use bytes::Bytes;
+use uuid::Uuid;
+
+#[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
+pub struct PartitionData {
+    /// The partition index.
+    #[kafka(versions = "0+")]
+    pub partition_index: i32,
+    /// The directory id of the receiving replica.
+    #[kafka(versions = "1+", nullable_versions = "1+")]
+    pub voter_directory_id: Option<Uuid>,
+    /// The ID of the newly elected leader.
+    #[kafka(versions = "0+")]
+    pub leader_id: i32,
+    /// The epoch of the newly elected leader.
+    #[kafka(versions = "0+")]
+    pub leader_epoch: i32,
+}
+
+
+#[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
+pub struct TopicData {
+    /// The topic name.
+    #[kafka(versions = "0+")]
+    pub topic_name: String,
+    /// The partitions.
+    #[kafka(versions = "0+")]
+    pub partitions: Vec<PartitionData>,
+}
+
+
+#[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
+pub struct LeaderEndpoint {
+    /// The name of the endpoint.
+    #[kafka(versions = "1+", map_key)]
+    pub name: String,
+    /// The node's hostname.
+    #[kafka(versions = "1+")]
+    pub host: String,
+    /// The node's port.
+    #[kafka(versions = "1+")]
+    pub port: u16,
+}
+
+
+#[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
+#[kafka(api_key = 53, msg_type = "request", valid_versions = "0-1", flexible_versions = "1+")]
+pub struct BeginQuorumEpochRequest {
+    /// The cluster id.
+    #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
+    pub cluster_id: Option<String>,
+    /// The replica id of the voter receiving the request.
+    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    pub voter_id: i32,
+    /// The topics.
+    #[kafka(versions = "0+")]
+    pub topics: Vec<TopicData>,
+    /// Endpoints for the leader.
+    #[kafka(versions = "1+", nullable_versions = "1+")]
+    pub leader_endpoints: Option<Vec<LeaderEndpoint>>,
+}
+

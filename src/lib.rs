@@ -5,81 +5,45 @@
 //! and uses a layered architecture with both low-level protocol API
 //! and high-level producer/consumer API.
 
-pub mod error;
-pub mod transport;
-pub mod protocol;
-pub mod sasl;
-pub mod connection;
 pub mod client;
+pub mod connection;
+pub mod error;
+pub mod sasl;
+pub mod transport;
+mod codec;
 
 // Re-export commonly used types
-pub use error::{KafkaError, SaslError, ProtocolError, Result};
-pub use transport::{SecurityProtocol, TlsConfigData};
+pub use connection::{Connection, NegotiatedVersions};
+pub use error::{KafkaError, ProtocolError, Result, SaslError};
+pub use kafka_client_protocol as protocol;
 pub use sasl::{SaslCredentials, SaslMechanismType};
-pub use connection::{KafkaConnection, NegotiatedVersions};
+pub use transport::{SecurityProtocol, TlsConfigData};
 
-// Re-export client types
-pub use client::{
-    KafkaClientBuilder,
-    builder,
-};
+// // Re-export client types
+// pub use client::{KafkaClientBuilder, builder};
 
-pub use client::low_level::{
-    KafkaClient as LowLevelClient,
-    ClientConfig,
-};
+// pub use client::low_level::{ClientConfig, KafkaClient as LowLevelClient};
 
-pub use client::metadata::MetadataCache;
+// pub use client::metadata::MetadataCache;
 
-pub use client::high_level::{
-    // Producer
-    Producer,
-    ProducerConfig,
-    ProducerRecord,
-    RecordMetadata,
-    Header,
-    // Consumer
-    Consumer,
-    ConsumerConfig,
-    AutoOffsetReset,
-    // Partition routing
-    PartitionRouter,
-    PartitionRouting,
-};
-
-// Re-export protocol types
-pub use protocol::{
-    VersionedKafkaEncode,
-    VersionedKafkaDecode,
-};
-
-pub use protocol::api::{
-    // Metadata
-    MetadataRequest,
-    MetadataResponse,
-    Broker,
-    Topic,
-    Partition,
-    // Produce
-    ProduceRequest,
-    ProduceResponse,
-    // Fetch
-    FetchRequest,
-    FetchResponse,
-    ConsumerRecord,
-    // ApiVersions
-    ApiVersionsRequest,
-    ApiVersionsResponse,
-    ApiVersion,
-    // SASL
-    SaslHandshakeRequest,
-    SaslHandshakeResponse,
-    SaslAuthenticateRequest,
-    SaslAuthenticateResponse,
-};
-
-/// Library version
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+// pub use client::high_level::{
+//     AutoOffsetReset,
+//     // Consumer
+//     Consumer,
+//     ConsumerConfig,
+//     Header,
+//     // Partition routing
+//     PartitionRouter,
+//     PartitionRouting,
+//     // Producer
+//     Producer,
+//     ProducerConfig,
+//     ProducerRecord,
+//     RecordMetadata,
+// };
 
 /// Library name
 pub const NAME: &str = env!("CARGO_PKG_NAME");
+
+/// Library version
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

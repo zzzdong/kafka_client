@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 // 重新导出 protocol 模块的错误类型
-pub use crate::protocol::error::{ProtocolError, ProtocolResult};
+pub use kafka_client_protocol::ProtocolError;
 
 #[derive(Debug, Error)]
 pub enum KafkaError {
@@ -63,10 +63,7 @@ pub enum KafkaError {
     SaslError(#[from] SaslError),
 
     #[error("Protocol decode error: {0}")]
-    ProtocolDecodeError(String),
-
-    #[error("Protocol encode error: {0}")]
-    ProtocolEncodeError(String),
+    ProtocolError(#[from] ProtocolError),
 
     #[error("Connection closed")]
     ConnectionClosed,
@@ -76,6 +73,9 @@ pub enum KafkaError {
 
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
+
+    #[error("Correlation ID mismatch: expected {expected}, actual {actual}")]
+    CorrelationIdMismatch { expected: i32, actual: i32 },
 }
 
 impl From<std::string::FromUtf8Error> for KafkaError {
@@ -87,12 +87,6 @@ impl From<std::string::FromUtf8Error> for KafkaError {
 impl From<base64::DecodeError> for KafkaError {
     fn from(e: base64::DecodeError) -> Self {
         KafkaError::Base64(e.to_string())
-    }
-}
-
-impl From<ProtocolError> for KafkaError {
-    fn from(e: ProtocolError) -> Self {
-        KafkaError::ProtocolDecodeError(e.to_string())
     }
 }
 

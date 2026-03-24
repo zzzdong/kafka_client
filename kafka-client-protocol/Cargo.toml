@@ -1,0 +1,10 @@
+[package]
+name = "kafka-client-protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes = "1"
+kafka-client-protocol-core = { path = "../kafka-client-protocol-core" }
+kafka-client-protocol-derive = { path = "../kafka-client-protocol-derive" }
+uuid = { version = "1", features = ["v4"] }

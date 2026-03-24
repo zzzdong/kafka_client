@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::connection::KafkaConnection;
+use crate::connection::BrokerConnection;
 use crate::transport::SecurityProtocol;
 use crate::client::metadata::MetadataCache;
 use crate::protocol::*;
@@ -32,7 +32,7 @@ impl Default for ClientConfig {
 
 /// 低级 Kafka 客户端
 pub struct KafkaClient {
-    connections: HashMap<SocketAddr, Arc<Mutex<KafkaConnection>>>,
+    connections: HashMap<SocketAddr, Arc<Mutex<BrokerConnection>>>,
     metadata: Arc<MetadataCache>,
     config: ClientConfig,
 }
@@ -66,15 +66,15 @@ impl KafkaClient {
         Err(KafkaError::NoBootstrapBrokerAvailable)
     }
 
-    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<KafkaConnection> {
-        KafkaConnection::connect(
+    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<BrokerConnection> {
+        BrokerConnection::connect(
             addr,
             self.config.security_protocol.clone(),
             self.config.client_id.clone(),
         ).await
     }
 
-    async fn get_connection(&mut self, addr: SocketAddr) -> Result<Arc<Mutex<KafkaConnection>>> {
+    async fn get_connection(&mut self, addr: SocketAddr) -> Result<Arc<Mutex<BrokerConnection>>> {
         if !self.connections.contains_key(&addr) {
             let conn = self.connect_to_broker(addr).await?;
             self.connections.insert(addr, Arc::new(Mutex::new(conn)));
@@ -113,14 +113,14 @@ impl KafkaClient {
         self.send_request(leader_addr, api_key, request).await
     }
 
-    pub async fn refresh_metadata(&mut self) -> Result<api::MetadataResponse> {
+    pub async fn refresh_metadata(&mut self) -> Result<MetadataResponse> {
         // Get any available connection
         let (_addr, conn) = self.connections.iter().next()
             .ok_or(KafkaError::NoBrokerAvailable)?;
 
-        let request = api::MetadataRequest::all_topics();
+        let request = MetadataRequest::all_topics();
         let mut conn_guard = conn.lock().await;
-        let response: api::MetadataResponse = conn_guard.send_request(3, &request).await?;
+        let response: MetadataResponse = conn_guard.send_request(3, &request).await?;
         drop(conn_guard);
 
         self.metadata.update(response.clone()).await;
@@ -128,13 +128,13 @@ impl KafkaClient {
         Ok(response)
     }
 
-    pub async fn get_metadata_for_topics(&mut self, topics: Vec<String>) -> Result<api::MetadataResponse> {
+    pub async fn get_metadata_for_topics(&mut self, topics: Vec<String>) -> Result<MetadataResponse> {
         let (_addr, conn) = self.connections.iter().next()
             .ok_or(KafkaError::NoBrokerAvailable)?;
 
-        let request = api::MetadataRequest::for_topics(topics);
+        let request = MetadataRequest::for_topics(topics);
         let mut conn_guard = conn.lock().await;
-        let response: api::MetadataResponse = conn_guard.send_request(3, &request).await?;
+        let response: MetadataResponse = conn_guard.send_request(3, &request).await?;
         drop(conn_guard);
 
         self.metadata.update(response.clone()).await;

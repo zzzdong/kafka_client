@@ -6,11 +6,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pub mod tcp;
 pub mod tls;
-pub mod codec;
 
 pub use tcp::TcpNetworkStream;
-pub use tls::{TlsNetworkStream, TlsConfig};
-pub use codec::{RawFrame, KafkaFrame, ApiVersionsCodec, KafkaCodec};
+pub use tls::{TlsConfig, TlsNetworkStream};
 
 /// 网络流抽象 trait
 ///
@@ -68,11 +66,17 @@ pub enum SecurityProtocol {
 
 impl SecurityProtocol {
     pub fn uses_tls(&self) -> bool {
-        matches!(self, SecurityProtocol::Ssl(_) | SecurityProtocol::SaslSsl(_))
+        matches!(
+            self,
+            SecurityProtocol::Ssl(_) | SecurityProtocol::SaslSsl(_)
+        )
     }
 
     pub fn uses_sasl(&self) -> bool {
-        matches!(self, SecurityProtocol::SaslPlaintext | SecurityProtocol::SaslSsl(_))
+        matches!(
+            self,
+            SecurityProtocol::SaslPlaintext | SecurityProtocol::SaslSsl(_)
+        )
     }
 }
 
@@ -88,7 +92,7 @@ impl TransportConnector {
         match protocol {
             SecurityProtocol::Plaintext | SecurityProtocol::SaslPlaintext => {
                 let stream = TcpNetworkStream::connect(addr).await?;
-                Ok(Box::new(stream))
+                Ok(Box::new(stream) as Box<dyn NetworkStream>)
             }
             SecurityProtocol::Ssl(config) | SecurityProtocol::SaslSsl(config) => {
                 let tls_config = tls::TlsConfig {
@@ -99,7 +103,7 @@ impl TransportConnector {
                     client_key_path: config.client_key_path.clone(),
                 };
                 let stream = TlsNetworkStream::connect(addr, tls_config).await?;
-                Ok(Box::new(stream))
+                Ok(Box::new(stream) as Box<dyn NetworkStream>)
             }
         }
     }

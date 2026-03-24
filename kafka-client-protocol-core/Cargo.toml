@@ -1,0 +1,12 @@
+[package]
+name = "kafka-client-protocol-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes = "1.11.1"
+crc32fast = "1.5.0"
+thiserror = "2.0.18"
+uuid = "1.22.0"
+tokio-util = "0.7.18"
+kafka-client-protocol-derive = { path = "../kafka-client-protocol-derive", version = "0.1" }
