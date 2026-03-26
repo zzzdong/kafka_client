@@ -1,14 +1,13 @@
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose};
 use sha2::{Sha256, Sha512, Digest};
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2_hmac;
-use async_trait::async_trait;
-use super::{SaslMechanism, SaslCredentials, SaslMechanismType};
+use super::{SaslCredentials, SaslMechanismType};
 use crate::error::SaslError;
 
 /// SCRAM 状态
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum ScramState {
     Initial,
     WaitingServerFirst,
@@ -16,7 +15,7 @@ enum ScramState {
     Complete,
 }
 
-/// SCRAM 机制实现
+/// SCRAM 机制实现（同步版本，用于连接认证）
 pub struct ScramMechanism {
     mechanism_type: SaslMechanismType,
     state: ScramState,
@@ -33,24 +32,16 @@ pub struct ScramMechanism {
 
 impl ScramMechanism {
     pub fn new_sha256() -> Self {
-        Self {
-            mechanism_type: SaslMechanismType::ScramSha256,
-            state: ScramState::Initial,
-            username: String::new(),
-            password: String::new(),
-            client_nonce: Self::generate_nonce(),
-            server_nonce: None,
-            salt: None,
-            iterations: None,
-            auth_message: None,
-            success: false,
-            salted_password: None,
-        }
+        Self::new(SaslMechanismType::ScramSha256)
     }
 
     pub fn new_sha512() -> Self {
+        Self::new(SaslMechanismType::ScramSha512)
+    }
+
+    fn new(mechanism_type: SaslMechanismType) -> Self {
         Self {
-            mechanism_type: SaslMechanismType::ScramSha512,
+            mechanism_type,
             state: ScramState::Initial,
             username: String::new(),
             password: String::new(),
@@ -69,6 +60,86 @@ impl ScramMechanism {
         let mut bytes = [0u8; 24];
         rand::rng().fill_bytes(&mut bytes);
         general_purpose::STANDARD.encode(&bytes)
+    }
+
+    /// 获取机制名称
+    pub fn name(&self) -> &'static str {
+        match self.mechanism_type {
+            SaslMechanismType::ScramSha256 => "SCRAM-SHA-256",
+            SaslMechanismType::ScramSha512 => "SCRAM-SHA-512",
+            _ => unreachable!(),
+        }
+    }
+
+    /// 是否为 client-first 机制
+    pub fn is_client_first(&self) -> bool {
+        true
+    }
+
+    /// 认证是否完成
+    pub fn is_complete(&self) -> bool {
+        matches!(self.state, ScramState::Complete)
+    }
+
+    /// 认证是否成功
+    pub fn is_success(&self) -> bool {
+        self.success
+    }
+
+    /// 重置状态（用于重试）
+    pub fn reset(&mut self) {
+        self.state = ScramState::Initial;
+        self.client_nonce = Self::generate_nonce();
+        self.server_nonce = None;
+        self.salt = None;
+        self.iterations = None;
+        self.auth_message = None;
+        self.success = false;
+        self.salted_password = None;
+    }
+
+    /// 生成初始响应（client-first）
+    pub fn client_first(&mut self, credentials: &SaslCredentials) -> Result<Bytes, SaslError> {
+        self.username = credentials.username.clone();
+        self.password = credentials.password.clone();
+
+        // 格式: n,,n=username,r=client_nonce
+        let msg = format!("n,,n={},r={}", self.username, self.client_nonce);
+        self.state = ScramState::WaitingServerFirst;
+
+        Ok(Bytes::from(msg))
+    }
+
+    /// 处理服务器第一轮挑战，生成 client-final
+    pub fn client_final(&mut self, server_first: &[u8]) -> Result<Bytes, SaslError> {
+        if self.state != ScramState::WaitingServerFirst {
+            return Err(SaslError::InvalidState);
+        }
+
+        let challenge_str = String::from_utf8(server_first.to_vec())?;
+        self.parse_server_first(&challenge_str)?;
+        let client_final = self.generate_client_final()?;
+        self.state = ScramState::WaitingServerFinal;
+        
+        Ok(Bytes::from(client_final))
+    }
+
+    /// 验证服务器最终响应
+    pub fn verify_server_final(&mut self, server_final: &[u8]) -> Result<(), SaslError> {
+        if self.state != ScramState::WaitingServerFinal {
+            return Err(SaslError::InvalidState);
+        }
+
+        let challenge_str = String::from_utf8(server_final.to_vec())?;
+        
+        if let Some(sig) = challenge_str.strip_prefix("v=") {
+            self.verify_server_signature(sig)?;
+            self.state = ScramState::Complete;
+            self.success = true;
+            Ok(())
+        } else {
+            Err(SaslError::InvalidChallenge("Missing server signature".to_string()))
+        }
     }
 
     fn hmac(&self, key: &[u8], data: &[u8]) -> Vec<u8> {
@@ -227,72 +298,66 @@ impl ScramMechanism {
     }
 }
 
-#[async_trait]
-impl SaslMechanism for ScramMechanism {
-    fn name(&self) -> &'static str {
-        match self.mechanism_type {
-            SaslMechanismType::ScramSha256 => "SCRAM-SHA-256",
-            SaslMechanismType::ScramSha512 => "SCRAM-SHA-512",
-            _ => unreachable!(),
+// ============================================================================
+// 异步适配器（用于需要 async trait 的场景）
+// ============================================================================
+
+use async_trait::async_trait;
+use super::SaslMechanism;
+
+pub struct AsyncScramMechanism {
+    inner: ScramMechanism,
+}
+
+impl AsyncScramMechanism {
+    pub fn new_sha256() -> Self {
+        Self {
+            inner: ScramMechanism::new_sha256(),
         }
     }
 
+    pub fn new_sha512() -> Self {
+        Self {
+            inner: ScramMechanism::new_sha512(),
+        }
+    }
+}
+
+#[async_trait]
+impl SaslMechanism for AsyncScramMechanism {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
     fn is_client_first(&self) -> bool {
-        true
+        self.inner.is_client_first()
     }
 
     async fn initial_response(&mut self, credentials: &SaslCredentials)
         -> Result<Option<Bytes>, SaslError> {
-        self.username = credentials.username.clone();
-        self.password = credentials.password.clone();
-
-        // 格式: n,,n=username,r=client_nonce
-        let msg = format!("n,,n={},r={}", self.username, self.client_nonce);
-        self.state = ScramState::WaitingServerFirst;
-
-        Ok(Some(Bytes::from(msg)))
+        self.inner.client_first(credentials).map(Some)
     }
 
-    async fn challenge(&mut self, challenge: &[u8]) -> Result<Option<Bytes>, SaslError> {
-        let challenge_str = String::from_utf8(challenge.to_vec())?;
-
-        match self.state {
-            ScramState::WaitingServerFirst => {
-                self.parse_server_first(&challenge_str)?;
-                let client_final = self.generate_client_final()?;
-                self.state = ScramState::WaitingServerFinal;
-                Ok(Some(Bytes::from(client_final)))
-            }
-            ScramState::WaitingServerFinal => {
-                if let Some(sig) = challenge_str.strip_prefix("v=") {
-                    self.verify_server_signature(sig)?;
-                    self.state = ScramState::Complete;
-                    self.success = true;
-                    Ok(None)
-                } else {
-                    Err(SaslError::InvalidChallenge("Missing server signature".to_string()))
-                }
-            }
-            _ => Err(SaslError::ProtocolError("Invalid SCRAM state".to_string())),
+    async fn challenge(&mut self, challenge: &[u8])
+        -> Result<Option<Bytes>, SaslError> {
+        if self.inner.state == ScramState::WaitingServerFirst {
+            self.inner.client_final(challenge).map(Some)
+        } else if self.inner.state == ScramState::WaitingServerFinal {
+            self.inner.verify_server_final(challenge).map(|_| None)
+        } else {
+            Err(SaslError::ProtocolError("Invalid SCRAM state".to_string()))
         }
     }
 
     fn is_complete(&self) -> bool {
-        matches!(self.state, ScramState::Complete)
+        self.inner.is_complete()
     }
 
     fn is_success(&self) -> bool {
-        self.success
+        self.inner.is_success()
     }
 
     fn reset(&mut self) {
-        self.state = ScramState::Initial;
-        self.client_nonce = Self::generate_nonce();
-        self.server_nonce = None;
-        self.salt = None;
-        self.iterations = None;
-        self.auth_message = None;
-        self.success = false;
-        self.salted_password = None;
+        self.inner.reset();
     }
 }

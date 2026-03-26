@@ -13,9 +13,43 @@ use tracing::{debug, error, warn};
 
 use crate::codec::{KafkaCodec, KafkaFrame};
 use crate::error::{KafkaError, Result};
-use crate::sasl::{Credentials, SaslAuthenticator, SaslMechanism};
+use crate::sasl::{SaslCredentials, SaslMechanismType};
 use crate::transport::*;
-use kafka_client_protocol::{self as protocol, Message, Request, Response, ResponseHeader};
+use kafka_client_protocol::{self as protocol, Request, Response, ResponseHeader};
+
+// 导入 SCRAM 实现
+use crate::sasl::scram::ScramMechanism;
+
+// ============================================================================
+// NegotiatedVersions
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct NegotiatedVersions {
+    versions: HashMap<i16, i16>,
+}
+
+impl NegotiatedVersions {
+    pub fn new() -> Self {
+        Self {
+            versions: HashMap::new(),
+        }
+    }
+
+    pub fn set_version(&mut self, api_key: i16, version: i16) {
+        self.versions.insert(api_key, version);
+    }
+
+    pub fn get_version(&self, api_key: i16) -> Option<i16> {
+        self.versions.get(&api_key).copied()
+    }
+}
+
+impl Default for NegotiatedVersions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============================================================================
 // 一问一答模式连接（初始化阶段）
@@ -25,7 +59,7 @@ use kafka_client_protocol::{self as protocol, Message, Request, Response, Respon
 /// 用于版本协商和 SASL 认证
 pub struct SequentialConnection {
     sink: SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-    stream: SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
+    stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
     client_id: Option<String>,
     negotiated: NegotiatedVersions,
 }
@@ -63,16 +97,14 @@ impl SequentialConnection {
         // 发送
         self.sink
             .send(KafkaFrame::new(request_data))
-            .await
-            .map_err(KafkaError::Io)?;
+            .await?;
 
         // 等待响应
         let frame = self
             .stream
             .next()
             .await
-            .ok_or(KafkaError::ConnectionClosed)?
-            .map_err(KafkaError::Io)?;
+            .ok_or(KafkaError::ConnectionClosed)??;
 
         // 解码响应
         let (header, response) = Resp::decode_frame(frame.data, version)?;
@@ -113,7 +145,7 @@ impl SequentialConnection {
         self,
     ) -> (
         SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-        SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
+        futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
     ) {
         (self.sink, self.stream)
     }
@@ -135,8 +167,11 @@ pub struct PipelineConnection {
 
 struct PipelineRequest {
     correlation_id: i32,
+    #[allow(dead_code)]
     api_key: i16,
+    #[allow(dead_code)]
     version: i16,
+    #[allow(dead_code)]
     data: Bytes,
     response_tx: oneshot::Sender<Result<Bytes>>,
 }
@@ -144,7 +179,7 @@ struct PipelineRequest {
 impl PipelineConnection {
     fn new(
         sink: SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-        stream: SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
+        stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
         client_id: Option<String>,
         negotiated: Arc<NegotiatedVersions>,
     ) -> Self {
@@ -162,7 +197,7 @@ impl PipelineConnection {
     }
 
     async fn run_receiver(
-        mut stream: SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
+        mut stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
         mut request_rx: mpsc::UnboundedReceiver<PipelineRequest>,
         _client_id: Option<String>,
     ) {
@@ -197,8 +232,10 @@ impl PipelineConnection {
                         }
                         Some(Err(e)) => {
                             error!("Receive error: {}", e);
+                            let kind = e.kind();
+                            let msg = e.to_string();
                             for (_, tx) in pending.drain() {
-                                let _ = tx.send(Err(e.clone().into()));
+                                let _ = tx.send(Err(io::Error::new(kind.clone(), msg.clone()).into()));
                             }
                             break;
                         }
@@ -255,8 +292,7 @@ impl PipelineConnection {
         // 发送到网络
         self.sink
             .send(KafkaFrame::new(request_data))
-            .await
-            .map_err(KafkaError::Io)?;
+            .await?;
 
         // 等待响应
         let response_data = rx.await.map_err(|_| KafkaError::ConnectionClosed)??;
@@ -281,33 +317,35 @@ impl PipelineConnection {
 
     pub async fn close(self) -> Result<()> {
         self.receiver_task.await.map_err(|e| {
-            KafkaError::Io(io::Error::new(io::ErrorKind::BrokenPipe, e.to_string()))
+            KafkaError::Io(format!("Task join error: {}", e))
         })?;
         Ok(())
     }
 }
 
+
+
 // ============================================================================
 // 构建器 - 管理连接建立流程
 // ============================================================================
 
-pub struct ConnectionBuilder {
+pub struct Builder {
     addr: SocketAddr,
     security_protocol: SecurityProtocol,
     client_name: String,
     client_version: String,
     client_id: Option<String>,
-    sasl_config: Option<(SaslMechanism, Credentials)>,
+    sasl_config: Option<(SaslMechanismType, SaslCredentials)>,
 }
 
-impl ConnectionBuilder {
+impl Builder {
     pub fn new(
         addr: SocketAddr,
         security_protocol: SecurityProtocol,
         client_name: String,
         client_version: String,
     ) -> Self {
-        ConnectionBuilder {
+        Builder {
             addr,
             security_protocol,
             client_name,
@@ -317,7 +355,7 @@ impl ConnectionBuilder {
         }
     }
 
-    pub fn with_sasl(mut self, mechanism: SaslMechanism, credentials: Credentials) -> Self {
+    pub fn with_sasl(mut self, mechanism: SaslMechanismType, credentials: SaslCredentials) -> Self {
         self.sasl_config = Some((mechanism, credentials));
         self
     }
@@ -384,8 +422,8 @@ impl ConnectionBuilder {
 
     async fn sasl_authenticate(
         conn: &mut SequentialConnection,
-        mechanism: SaslMechanism,
-        credentials: Credentials,
+        mechanism: SaslMechanismType,
+        credentials: SaslCredentials,
     ) -> Result<()> {
         // SASL 握手
         let handshake_req = protocol::SaslHandshakeRequest {
@@ -404,8 +442,8 @@ impl ConnectionBuilder {
 
         // 根据机制认证
         match mechanism {
-            SaslMechanism::Plain => Self::authenticate_plain(conn, credentials).await,
-            SaslMechanism::ScramSha256 | SaslMechanism::ScramSha512 => {
+            SaslMechanismType::Plain => Self::authenticate_plain(conn, credentials).await,
+            SaslMechanismType::ScramSha256 | SaslMechanismType::ScramSha512 => {
                 Self::authenticate_scram(conn, mechanism, credentials).await
             }
         }
@@ -413,7 +451,7 @@ impl ConnectionBuilder {
 
     async fn authenticate_plain(
         conn: &mut SequentialConnection,
-        credentials: Credentials,
+        credentials: SaslCredentials,
     ) -> Result<()> {
         let mut auth_bytes = Vec::new();
         auth_bytes.push(0x00);
@@ -439,13 +477,22 @@ impl ConnectionBuilder {
 
     async fn authenticate_scram(
         conn: &mut SequentialConnection,
-        mechanism: SaslMechanism,
-        credentials: Credentials,
+        mechanism: SaslMechanismType,
+        credentials: SaslCredentials,
     ) -> Result<()> {
-        let mut scram = ScramClient::new(mechanism, credentials);
+        let mut scram = match mechanism {
+            SaslMechanismType::ScramSha256 => ScramMechanism::new_sha256(),
+            SaslMechanismType::ScramSha512 => ScramMechanism::new_sha512(),
+            _ => {
+                return Err(KafkaError::MechanismNotSupported(
+                    mechanism.as_str().to_string(),
+                ));
+            }
+        };
 
         // 第一轮
-        let auth_bytes = scram.client_first()?;
+        let auth_bytes = scram.client_first(&credentials)
+            .map_err(KafkaError::SaslError)?;
         let auth_req = protocol::SaslAuthenticateRequest { auth_bytes };
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
 
@@ -457,7 +504,8 @@ impl ConnectionBuilder {
         }
 
         // 第二轮
-        let auth_bytes = scram.client_final(&auth_resp.auth_bytes)?;
+        let auth_bytes = scram.client_final(&auth_resp.auth_bytes)
+            .map_err(KafkaError::SaslError)?;
         let auth_req = protocol::SaslAuthenticateRequest { auth_bytes };
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
 
@@ -469,11 +517,19 @@ impl ConnectionBuilder {
         }
 
         // 验证
-        scram.verify_server_final(&auth_resp.auth_bytes)?;
+        scram.verify_server_final(&auth_resp.auth_bytes)
+            .map_err(KafkaError::SaslError)?;
 
         Ok(())
     }
 }
+
+// ============================================================================
+// Connection 类型别名（用于 lib.rs 导出）
+// ============================================================================
+
+/// Connection 类型别名，指向 PipelineConnection
+pub type Connection = PipelineConnection;
 
 // ============================================================================
 // 使用示例
@@ -483,19 +539,23 @@ impl ConnectionBuilder {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    #[ignore] // 需要运行 Kafka 服务器
     async fn example_usage() -> Result<()> {
         // 方式1: 使用 Builder（推荐）
-        let mut conn = ConnectionBuilder::new(
+        let mut conn = Builder::new(
             "localhost:9092".parse().unwrap(),
             SecurityProtocol::Plaintext,
             "my-client".to_string(),
             "1.0.0".to_string(),
         )
         .with_sasl(
-            SaslMechanism::Plain,
-            Credentials {
+            SaslMechanismType::Plain,
+            SaslCredentials {
+                mechanism: SaslMechanismType::Plain,
                 username: "alice".to_string(),
                 password: "secret".to_string(),
+                authzid: None,
             },
         )
         .build()
@@ -505,7 +565,8 @@ mod tests {
         let response: protocol::MetadataResponse = conn
             .send_request(&protocol::MetadataRequest {
                 topics: None,
-                allow_auto_topic_creation: Some(false),
+                allow_auto_topic_creation: false,
+                ..Default::default()
             })
             .await?;
 

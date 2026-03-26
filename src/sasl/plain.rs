@@ -1,6 +1,6 @@
 use bytes::{Bytes, BytesMut, BufMut};
 use async_trait::async_trait;
-use super::{SaslMechanism, SaslCredentials, SaslMechanismType};
+use super::{SaslMechanism, SaslCredentials};
 use crate::error::SaslError;
 
 pub struct PlainMechanism {

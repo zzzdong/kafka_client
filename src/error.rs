@@ -3,10 +3,10 @@ use thiserror::Error;
 // 重新导出 protocol 模块的错误类型
 pub use kafka_client_protocol::ProtocolError;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum KafkaError {
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
 
     #[error("UTF-8 error: {0}")]
     Utf8(String),
@@ -63,7 +63,7 @@ pub enum KafkaError {
     SaslError(#[from] SaslError),
 
     #[error("Protocol decode error: {0}")]
-    ProtocolError(#[from] ProtocolError),
+    ProtocolError(String),
 
     #[error("Connection closed")]
     ConnectionClosed,
@@ -78,6 +78,12 @@ pub enum KafkaError {
     CorrelationIdMismatch { expected: i32, actual: i32 },
 }
 
+impl From<std::io::Error> for KafkaError {
+    fn from(e: std::io::Error) -> Self {
+        KafkaError::Io(e.to_string())
+    }
+}
+
 impl From<std::string::FromUtf8Error> for KafkaError {
     fn from(e: std::string::FromUtf8Error) -> Self {
         KafkaError::Utf8(e.to_string())
@@ -90,7 +96,13 @@ impl From<base64::DecodeError> for KafkaError {
     }
 }
 
-#[derive(Debug, Error)]
+impl From<ProtocolError> for KafkaError {
+    fn from(e: ProtocolError) -> Self {
+        KafkaError::ProtocolError(e.to_string())
+    }
+}
+
+#[derive(Debug, Error, Clone)]
 pub enum SaslError {
     #[error("Protocol error: {0}")]
     ProtocolError(String),
