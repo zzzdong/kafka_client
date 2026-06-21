@@ -2,8 +2,8 @@
 //! Message: ProduceResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct BatchIndexAndErrorMessage {
     pub batch_index_error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct LeaderIdAndEpoch {
     /// The ID of the current leader or -1 if the leader is unknown.
@@ -26,7 +25,6 @@ pub struct LeaderIdAndEpoch {
     #[kafka(versions = "10+", default = -1)]
     pub leader_epoch: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionProduceResponse {
@@ -56,7 +54,6 @@ pub struct PartitionProduceResponse {
     pub current_leader: LeaderIdAndEpoch,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicProduceResponse {
     /// The topic name.
@@ -69,7 +66,6 @@ pub struct TopicProduceResponse {
     #[kafka(versions = "0+")]
     pub partition_responses: Vec<PartitionProduceResponse>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -87,9 +83,13 @@ pub struct NodeEndpoint {
     pub rack: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 0, msg_type = "response", valid_versions = "3-13", flexible_versions = "9+")]
+#[kafka(
+    api_key = 0,
+    msg_type = "response",
+    valid_versions = "3-13",
+    flexible_versions = "9+"
+)]
 pub struct ProduceResponse {
     /// Each produce response.
     #[kafka(versions = "0+")]
@@ -101,4 +101,3 @@ pub struct ProduceResponse {
     #[kafka(versions = "10+", tag = 0, tagged_versions = "10+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

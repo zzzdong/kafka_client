@@ -2,8 +2,8 @@
 //! Message: MetadataResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -21,7 +21,6 @@ pub struct MetadataResponseBroker {
     #[kafka(versions = "1+", nullable_versions = "1+", default = None)]
     pub rack: Option<String>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct MetadataResponsePartition {
@@ -48,7 +47,6 @@ pub struct MetadataResponsePartition {
     pub offline_replicas: Option<Vec<i32>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct MetadataResponseTopic {
     /// The topic error, or 0 if there was no error.
@@ -71,9 +69,13 @@ pub struct MetadataResponseTopic {
     pub topic_authorized_operations: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 3, msg_type = "response", valid_versions = "0-13", flexible_versions = "9+")]
+#[kafka(
+    api_key = 3,
+    msg_type = "response",
+    valid_versions = "0-13",
+    flexible_versions = "9+"
+)]
 pub struct MetadataResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "3+", nullable_versions = "3+")]
@@ -97,4 +99,3 @@ pub struct MetadataResponse {
     #[kafka(versions = "13+", nullable_versions = "13+")]
     pub error_code: i16,
 }
-

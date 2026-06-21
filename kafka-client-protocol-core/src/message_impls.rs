@@ -1,9 +1,9 @@
 // kafka-client-protocol-core/src/message_impls.rs
 //! 为基础类型实现 Message trait
 
+use crate::codec::*;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::message::Message;
-use crate::codec::*;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 // ============================================================================

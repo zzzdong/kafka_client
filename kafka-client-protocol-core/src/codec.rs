@@ -1,8 +1,8 @@
 // kafka-client-protocol-core/src/codec.rs
 //! 基础编解码辅助函数
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crate::error::{ProtocolError, ProtocolResult};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 // ============================================================================
 // 变长整数
@@ -62,7 +62,10 @@ pub fn decode_string(buf: &mut Bytes) -> ProtocolResult<String> {
         return Ok(String::new());
     }
     if buf.remaining() < len as usize {
-        return Err(ProtocolError::insufficient_data(len as usize, buf.remaining()));
+        return Err(ProtocolError::insufficient_data(
+            len as usize,
+            buf.remaining(),
+        ));
     }
     let bytes = buf.copy_to_bytes(len as usize);
     Ok(String::from_utf8_lossy(&bytes).to_string())
@@ -91,7 +94,10 @@ pub fn decode_nullable_string(buf: &mut Bytes) -> ProtocolResult<Option<String>>
         return Ok(None);
     }
     if buf.remaining() < len as usize {
-        return Err(ProtocolError::insufficient_data(len as usize, buf.remaining()));
+        return Err(ProtocolError::insufficient_data(
+            len as usize,
+            buf.remaining(),
+        ));
     }
     let bytes = buf.copy_to_bytes(len as usize);
     Ok(Some(String::from_utf8_lossy(&bytes).to_string()))
@@ -188,7 +194,10 @@ pub fn decode_bytes(buf: &mut Bytes) -> ProtocolResult<Bytes> {
         return Ok(Bytes::new());
     }
     if buf.remaining() < len as usize {
-        return Err(ProtocolError::insufficient_data(len as usize, buf.remaining()));
+        return Err(ProtocolError::insufficient_data(
+            len as usize,
+            buf.remaining(),
+        ));
     }
     Ok(buf.copy_to_bytes(len as usize))
 }

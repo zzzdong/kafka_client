@@ -2,8 +2,8 @@
 //! Message: AlterReplicaLogDirsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct AlterReplicaLogDirPartitionResult {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AlterReplicaLogDirTopicResult {
     /// The name of the topic.
@@ -27,9 +26,13 @@ pub struct AlterReplicaLogDirTopicResult {
     pub partitions: Vec<AlterReplicaLogDirPartitionResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 34, msg_type = "response", valid_versions = "1-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 34,
+    msg_type = "response",
+    valid_versions = "1-2",
+    flexible_versions = "2+"
+)]
 pub struct AlterReplicaLogDirsResponse {
     /// Duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct AlterReplicaLogDirsResponse {
     #[kafka(versions = "0+")]
     pub results: Vec<AlterReplicaLogDirTopicResult>,
 }
-

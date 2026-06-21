@@ -2,12 +2,17 @@
 //! Message: FindCoordinatorRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 10, msg_type = "request", valid_versions = "0-6", flexible_versions = "3+")]
+#[kafka(
+    api_key = 10,
+    msg_type = "request",
+    valid_versions = "0-6",
+    flexible_versions = "3+"
+)]
 pub struct FindCoordinatorRequest {
     /// The coordinator key.
     #[kafka(versions = "0-3")]
@@ -19,4 +24,3 @@ pub struct FindCoordinatorRequest {
     #[kafka(versions = "4+")]
     pub coordinator_keys: Vec<String>,
 }
-

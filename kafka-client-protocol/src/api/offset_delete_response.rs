@@ -2,8 +2,8 @@
 //! Message: OffsetDeleteResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct OffsetDeleteResponsePartition {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetDeleteResponseTopic {
     /// The topic name.
@@ -27,9 +26,13 @@ pub struct OffsetDeleteResponseTopic {
     pub partitions: Vec<OffsetDeleteResponsePartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 47, msg_type = "response", valid_versions = "0", flexible_versions = "none")]
+#[kafka(
+    api_key = 47,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "none"
+)]
 pub struct OffsetDeleteResponse {
     /// The top-level error code, or 0 if there was no error.
     #[kafka(versions = "0+")]
@@ -41,4 +44,3 @@ pub struct OffsetDeleteResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetDeleteResponseTopic>,
 }
-

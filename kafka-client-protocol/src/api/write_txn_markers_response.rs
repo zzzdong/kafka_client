@@ -2,8 +2,8 @@
 //! Message: WriteTxnMarkersResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct WritableTxnMarkerPartitionResult {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct WritableTxnMarkerTopicResult {
     /// The topic name.
@@ -26,7 +25,6 @@ pub struct WritableTxnMarkerTopicResult {
     #[kafka(versions = "0+")]
     pub partitions: Vec<WritableTxnMarkerPartitionResult>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct WritableTxnMarkerResult {
@@ -38,12 +36,15 @@ pub struct WritableTxnMarkerResult {
     pub topics: Vec<WritableTxnMarkerTopicResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 27, msg_type = "response", valid_versions = "1-2", flexible_versions = "1+")]
+#[kafka(
+    api_key = 27,
+    msg_type = "response",
+    valid_versions = "1-2",
+    flexible_versions = "1+"
+)]
 pub struct WriteTxnMarkersResponse {
     /// The results for writing makers.
     #[kafka(versions = "0+")]
     pub markers: Vec<WritableTxnMarkerResult>,
 }
-

@@ -2,12 +2,17 @@
 //! Message: ExpireDelegationTokenRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 40, msg_type = "request", valid_versions = "1-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 40,
+    msg_type = "request",
+    valid_versions = "1-2",
+    flexible_versions = "2+"
+)]
 pub struct ExpireDelegationTokenRequest {
     /// The HMAC of the delegation token to be expired.
     #[kafka(versions = "0+")]
@@ -16,4 +21,3 @@ pub struct ExpireDelegationTokenRequest {
     #[kafka(versions = "0+")]
     pub expiry_time_period_ms: i64,
 }
-

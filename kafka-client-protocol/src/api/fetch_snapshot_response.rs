@@ -2,8 +2,8 @@
 //! Message: FetchSnapshotResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct SnapshotId {
     pub epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct LeaderIdAndEpoch {
     /// The ID of the current leader or -1 if the leader is unknown.
@@ -26,7 +25,6 @@ pub struct LeaderIdAndEpoch {
     #[kafka(versions = "0+")]
     pub leader_epoch: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionSnapshot {
@@ -53,7 +51,6 @@ pub struct PartitionSnapshot {
     pub unaligned_records: RecordBatch,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicSnapshot {
     /// The name of the topic to fetch.
@@ -63,7 +60,6 @@ pub struct TopicSnapshot {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionSnapshot>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -78,9 +74,13 @@ pub struct NodeEndpoint {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 59, msg_type = "response", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 59,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct FetchSnapshotResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+", nullable_versions = "0+")]
@@ -95,4 +95,3 @@ pub struct FetchSnapshotResponse {
     #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

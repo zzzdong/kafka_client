@@ -2,8 +2,8 @@
 //! Message: FetchResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct EpochEndOffset {
     pub end_offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct LeaderIdAndEpoch {
     /// The ID of the current leader or -1 if the leader is unknown.
@@ -26,7 +25,6 @@ pub struct LeaderIdAndEpoch {
     #[kafka(versions = "12+", default = -1)]
     pub leader_epoch: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct SnapshotId {
@@ -38,7 +36,6 @@ pub struct SnapshotId {
     pub epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AbortedTransaction {
     /// The producer id associated with the aborted transaction.
@@ -48,7 +45,6 @@ pub struct AbortedTransaction {
     #[kafka(versions = "4+")]
     pub first_offset: i64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -87,7 +83,6 @@ pub struct PartitionData {
     pub records: Option<RecordBatch>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchableTopicResponse {
     /// The topic name.
@@ -100,7 +95,6 @@ pub struct FetchableTopicResponse {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -118,9 +112,13 @@ pub struct NodeEndpoint {
     pub rack: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 1, msg_type = "response", valid_versions = "4-18", flexible_versions = "12+")]
+#[kafka(
+    api_key = 1,
+    msg_type = "response",
+    valid_versions = "4-18",
+    flexible_versions = "12+"
+)]
 pub struct FetchResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "1+", nullable_versions = "1+")]
@@ -138,4 +136,3 @@ pub struct FetchResponse {
     #[kafka(versions = "16+", tag = 0, tagged_versions = "16+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

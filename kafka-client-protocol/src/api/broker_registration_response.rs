@@ -2,12 +2,17 @@
 //! Message: BrokerRegistrationResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 62, msg_type = "response", valid_versions = "0-4", flexible_versions = "0+")]
+#[kafka(
+    api_key = 62,
+    msg_type = "response",
+    valid_versions = "0-4",
+    flexible_versions = "0+"
+)]
 pub struct BrokerRegistrationResponse {
     /// Duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -19,4 +24,3 @@ pub struct BrokerRegistrationResponse {
     #[kafka(versions = "0+", default = -1)]
     pub broker_epoch: i64,
 }
-

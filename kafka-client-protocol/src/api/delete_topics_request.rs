@@ -2,8 +2,8 @@
 //! Message: DeleteTopicsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct DeleteTopicState {
     pub topic_id: Uuid,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 20, msg_type = "request", valid_versions = "1-6", flexible_versions = "4+")]
+#[kafka(
+    api_key = 20,
+    msg_type = "request",
+    valid_versions = "1-6",
+    flexible_versions = "4+"
+)]
 pub struct DeleteTopicsRequest {
     /// The name or topic ID of the topic.
     #[kafka(versions = "6+")]
@@ -30,4 +34,3 @@ pub struct DeleteTopicsRequest {
     #[kafka(versions = "0+")]
     pub timeout_ms: i32,
 }
-

@@ -2,8 +2,8 @@
 //! Message: SyncGroupRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct SyncGroupRequestAssignment {
     pub assignment: Bytes,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 14, msg_type = "request", valid_versions = "0-5", flexible_versions = "4+")]
+#[kafka(
+    api_key = 14,
+    msg_type = "request",
+    valid_versions = "0-5",
+    flexible_versions = "4+"
+)]
 pub struct SyncGroupRequest {
     /// The unique group identifier.
     #[kafka(versions = "0+")]
@@ -42,4 +46,3 @@ pub struct SyncGroupRequest {
     #[kafka(versions = "0+")]
     pub assignments: Vec<SyncGroupRequestAssignment>,
 }
-

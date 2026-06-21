@@ -2,12 +2,17 @@
 //! Message: ListTransactionsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 66, msg_type = "request", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 66,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct ListTransactionsRequest {
     /// The transaction states to filter by: if empty, all transactions are returned; if non-empty, then only transactions matching one of the filtered states will be returned.
     #[kafka(versions = "0+")]
@@ -22,4 +27,3 @@ pub struct ListTransactionsRequest {
     #[kafka(versions = "2+", nullable_versions = "2+", default = None)]
     pub transactional_id_pattern: Option<String>,
 }
-

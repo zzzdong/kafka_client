@@ -2,8 +2,8 @@
 //! Message: IncrementalAlterConfigsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct AlterableConfig {
     pub value: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AlterConfigsResource {
     /// The resource type.
@@ -33,9 +32,13 @@ pub struct AlterConfigsResource {
     pub configs: Vec<AlterableConfig>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 44, msg_type = "request", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 44,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct IncrementalAlterConfigsRequest {
     /// The incremental updates for each resource.
     #[kafka(versions = "0+")]
@@ -44,4 +47,3 @@ pub struct IncrementalAlterConfigsRequest {
     #[kafka(versions = "0+")]
     pub validate_only: bool,
 }
-

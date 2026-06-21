@@ -2,8 +2,8 @@
 //! Message: InitializeShareGroupStateResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct PartitionResult {
     pub error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct InitializeStateResult {
     /// The topic identifier.
@@ -30,12 +29,15 @@ pub struct InitializeStateResult {
     pub partitions: Vec<PartitionResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 83, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 83,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct InitializeShareGroupStateResponse {
     /// The initialization results.
     #[kafka(versions = "0+")]
     pub results: Vec<InitializeStateResult>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: ProduceRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct PartitionProduceData {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub records: Option<RecordBatch>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicProduceData {
@@ -30,9 +29,13 @@ pub struct TopicProduceData {
     pub partition_data: Vec<PartitionProduceData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 0, msg_type = "request", valid_versions = "3-13", flexible_versions = "9+")]
+#[kafka(
+    api_key = 0,
+    msg_type = "request",
+    valid_versions = "3-13",
+    flexible_versions = "9+"
+)]
 pub struct ProduceRequest {
     /// The transactional ID, or null if the producer is not transactional.
     #[kafka(versions = "3+", nullable_versions = "3+", default = None)]
@@ -47,4 +50,3 @@ pub struct ProduceRequest {
     #[kafka(versions = "0+")]
     pub topic_data: Vec<TopicProduceData>,
 }
-

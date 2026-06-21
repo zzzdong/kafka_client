@@ -2,12 +2,17 @@
 //! Message: AddOffsetsToTxnRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 25, msg_type = "request", valid_versions = "0-4", flexible_versions = "3+")]
+#[kafka(
+    api_key = 25,
+    msg_type = "request",
+    valid_versions = "0-4",
+    flexible_versions = "3+"
+)]
 pub struct AddOffsetsToTxnRequest {
     /// The transactional id corresponding to the transaction.
     #[kafka(versions = "0+")]
@@ -22,4 +27,3 @@ pub struct AddOffsetsToTxnRequest {
     #[kafka(versions = "0+")]
     pub group_id: String,
 }
-

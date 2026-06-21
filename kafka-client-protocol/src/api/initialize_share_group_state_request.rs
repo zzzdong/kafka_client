@@ -2,8 +2,8 @@
 //! Message: InitializeShareGroupStateRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct PartitionData {
     pub start_offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct InitializeStateData {
     /// The topic identifier.
@@ -30,9 +29,13 @@ pub struct InitializeStateData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 83, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 83,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct InitializeShareGroupStateRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -41,4 +44,3 @@ pub struct InitializeShareGroupStateRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<InitializeStateData>,
 }
-

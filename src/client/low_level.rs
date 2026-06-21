@@ -1,14 +1,14 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::connection::BrokerConnection;
-use crate::transport::SecurityProtocol;
+use crate::client::broker_manager::BrokerManager;
 use crate::client::metadata::MetadataCache;
-use crate::protocol::*;
-use crate::error::{Result, KafkaError};
+use crate::connection::Connection;
+use crate::error::{KafkaError, Result};
+use crate::protocol::{MetadataRequest, MetadataRequestTopic, MetadataResponse};
+use crate::transport::SecurityProtocol;
 
 /// 客户端配置
 #[derive(Debug, Clone)]
@@ -32,69 +32,75 @@ impl Default for ClientConfig {
 
 /// 低级 Kafka 客户端
 pub struct KafkaClient {
-    connections: HashMap<SocketAddr, Arc<Mutex<BrokerConnection>>>,
+    broker_manager: BrokerManager,
     metadata: Arc<MetadataCache>,
     config: ClientConfig,
 }
 
 impl KafkaClient {
     pub async fn connect(config: ClientConfig) -> Result<Self> {
+        debug!("KafkaClient::connect starting");
+        let mut broker_manager = BrokerManager::new(
+            config.bootstrap_servers.clone(),
+            config.security_protocol.clone(),
+            config.client_id.clone(),
+            crate::NAME.to_string(),
+            crate::VERSION.to_string(),
+        );
+
+        debug!("bootstrapping broker manager");
+        broker_manager.bootstrap().await.map_err(|e| {
+            debug!(error = ?e, "bootstrap failed");
+            e
+        })?;
+        debug!("bootstrap succeeded");
+
         let mut client = Self {
-            connections: HashMap::new(),
+            broker_manager,
             metadata: Arc::new(MetadataCache::new(config.metadata_ttl)),
             config,
         };
 
-        client.bootstrap().await?;
+        debug!("refreshing metadata");
+        client.refresh_metadata().await.map_err(|e| {
+            debug!(error = ?e, "refresh metadata failed");
+            e
+        })?;
+        debug!("metadata refreshed successfully");
         Ok(client)
-    }
-
-    async fn bootstrap(&mut self) -> Result<()> {
-        for addr in &self.config.bootstrap_servers {
-            match self.connect_to_broker(*addr).await {
-                Ok(conn) => {
-                    self.connections.insert(*addr, Arc::new(Mutex::new(conn)));
-                    self.refresh_metadata().await?;
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Failed to connect to {}: {}", addr, e);
-                    continue;
-                }
-            }
-        }
-        Err(KafkaError::NoBootstrapBrokerAvailable)
-    }
-
-    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<BrokerConnection> {
-        BrokerConnection::connect(
-            addr,
-            self.config.security_protocol.clone(),
-            self.config.client_id.clone(),
-        ).await
-    }
-
-    async fn get_connection(&mut self, addr: SocketAddr) -> Result<Arc<Mutex<BrokerConnection>>> {
-        if !self.connections.contains_key(&addr) {
-            let conn = self.connect_to_broker(addr).await?;
-            self.connections.insert(addr, Arc::new(Mutex::new(conn)));
-        }
-        Ok(self.connections.get(&addr).unwrap().clone())
     }
 
     pub async fn send_request<Req, Resp>(
         &mut self,
         broker_addr: SocketAddr,
-        api_key: i16,
+        _api_key: i16,
         request: &Req,
     ) -> Result<Resp>
     where
-        Req: VersionedKafkaEncode,
-        Resp: VersionedKafkaDecode,
+        Req: kafka_client_protocol::Request,
+        Resp: kafka_client_protocol::Response,
     {
-        let conn = self.get_connection(broker_addr).await?;
+        let conn = self.broker_manager.get_connection(broker_addr).await?;
         let mut conn_guard = conn.lock().await;
-        conn_guard.send_request(api_key, request).await
+        conn_guard.send_request(request).await.inspect_err(|_e| {
+            self.broker_manager.mark_unhealthy(broker_addr);
+        })
+    }
+
+    /// 获取到指定 broker 的连接（不会持有 KafkaClient 锁的版本）
+    /// 调用方应尽快使用连接并释放锁
+    pub async fn get_broker_connection(
+        &mut self,
+        broker_addr: SocketAddr,
+    ) -> Result<Arc<Mutex<Connection>>> {
+        self.broker_manager.get_connection(broker_addr).await
+    }
+
+    /// 获取任意一个健康 broker 的地址
+    pub fn any_broker_address(&self) -> Option<SocketAddr> {
+        self.broker_manager
+            .get_any_healthy_broker()
+            .map(|(addr, _)| addr)
     }
 
     pub async fn send_to_partition<Req, Resp>(
@@ -105,40 +111,121 @@ impl KafkaClient {
         request: &Req,
     ) -> Result<Resp>
     where
-        Req: VersionedKafkaEncode,
-        Resp: VersionedKafkaDecode,
+        Req: kafka_client_protocol::Request,
+        Resp: kafka_client_protocol::Response,
     {
-        let leader_addr = self.metadata.get_partition_leader(topic, partition).await
+        // 如果 metadata 过期，先刷新
+        if self.metadata.is_expired().await {
+            debug!("Metadata expired, refreshing before sending to partition");
+            if let Err(e) = self.refresh_metadata().await {
+                warn!("Failed to refresh expired metadata: {}", e);
+            }
+        }
+
+        let leader_addr = self
+            .metadata
+            .get_partition_leader(topic, partition)
+            .await
             .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
-        self.send_request(leader_addr, api_key, request).await
+
+        match self.send_request(leader_addr, api_key, request).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                // 发送失败时尝试刷新 metadata（leader 可能已变更）
+                warn!("Send to partition failed, refreshing metadata: {}", e);
+                self.refresh_metadata().await?;
+                let leader_addr = self
+                    .metadata
+                    .get_partition_leader(topic, partition)
+                    .await
+                    .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
+                self.send_request(leader_addr, api_key, request).await
+            }
+        }
     }
 
     pub async fn refresh_metadata(&mut self) -> Result<MetadataResponse> {
-        // Get any available connection
-        let (_addr, conn) = self.connections.iter().next()
-            .ok_or(KafkaError::NoBrokerAvailable)?;
+        let request = MetadataRequest {
+            topics: None,
+            allow_auto_topic_creation: true,
+            include_cluster_authorized_operations: false,
+            include_topic_authorized_operations: false,
+        };
 
-        let request = MetadataRequest::all_topics();
-        let mut conn_guard = conn.lock().await;
-        let response: MetadataResponse = conn_guard.send_request(3, &request).await?;
-        drop(conn_guard);
-
+        let response: MetadataResponse = self.send_to_any_broker(&request).await?;
+        // 根据新的 metadata 更新 broker 连接池
+        self.broker_manager
+            .refresh_from_metadata(response.brokers.clone())
+            .await?;
         self.metadata.update(response.clone()).await;
         debug!("Metadata refreshed successfully");
         Ok(response)
     }
 
-    pub async fn get_metadata_for_topics(&mut self, topics: Vec<String>) -> Result<MetadataResponse> {
-        let (_addr, conn) = self.connections.iter().next()
-            .ok_or(KafkaError::NoBrokerAvailable)?;
+    pub async fn get_metadata_for_topics(
+        &mut self,
+        topics: Vec<String>,
+    ) -> Result<MetadataResponse> {
+        let request_topics: Vec<MetadataRequestTopic> = topics
+            .into_iter()
+            .map(|name| MetadataRequestTopic {
+                topic_id: None,
+                name: Some(name),
+            })
+            .collect();
 
-        let request = MetadataRequest::for_topics(topics);
-        let mut conn_guard = conn.lock().await;
-        let response: MetadataResponse = conn_guard.send_request(3, &request).await?;
-        drop(conn_guard);
+        let request = MetadataRequest {
+            topics: Some(request_topics),
+            allow_auto_topic_creation: false,
+            include_cluster_authorized_operations: false,
+            include_topic_authorized_operations: false,
+        };
 
+        let response: MetadataResponse = self.send_to_any_broker(&request).await?;
         self.metadata.update(response.clone()).await;
         Ok(response)
+    }
+
+    /// 将请求发送到任意一个健康的 broker
+    async fn send_to_any_broker<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
+    where
+        Req: kafka_client_protocol::Request,
+        Resp: kafka_client_protocol::Response,
+    {
+        // 优先使用已连接的健康 broker
+        if let Some((addr, conn)) = self.broker_manager.get_any_healthy_broker() {
+            debug!(broker = %addr, "trying healthy broker");
+            let mut conn_guard = conn.lock().await;
+            match conn_guard.send_request(request).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    debug!(broker = %addr, error = ?e, "healthy broker failed");
+                    warn!("Request to healthy broker {} failed: {}", addr, e);
+                    self.broker_manager.mark_unhealthy(addr);
+                }
+            }
+        } else {
+            debug!("no healthy broker available");
+        }
+
+        // 尝试所有已知 broker 地址
+        let addresses: Vec<SocketAddr> = self.broker_manager.all_broker_addresses();
+        debug!(count = addresses.len(), "trying all broker addresses");
+        for addr in addresses {
+            debug!(broker = %addr, "trying broker");
+            let conn = self.broker_manager.get_connection(addr).await?;
+            let mut conn_guard = conn.lock().await;
+            match conn_guard.send_request(request).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    debug!(broker = %addr, error = ?e, "broker failed");
+                    warn!("Request to broker {} failed: {}", addr, e);
+                    self.broker_manager.mark_unhealthy(addr);
+                }
+            }
+        }
+
+        Err(KafkaError::NoBrokerAvailable)
     }
 
     pub fn metadata(&self) -> &MetadataCache {
@@ -151,14 +238,6 @@ impl KafkaClient {
 
     /// 关闭所有连接
     pub async fn close(mut self) -> Result<()> {
-        for (addr, conn) in self.connections.drain() {
-            if let Ok(conn) = Arc::try_unwrap(conn) {
-                let conn = conn.into_inner();
-                if let Err(e) = conn.close().await {
-                    warn!("Error closing connection to {}: {}", addr, e);
-                }
-            }
-        }
-        Ok(())
+        self.broker_manager.close().await
     }
 }

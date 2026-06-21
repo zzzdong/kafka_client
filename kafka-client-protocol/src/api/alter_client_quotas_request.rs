@@ -2,8 +2,8 @@
 //! Message: AlterClientQuotasRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct EntityData {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub entity_name: Option<String>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OpData {
@@ -30,7 +29,6 @@ pub struct OpData {
     pub remove: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct EntryData {
     /// The quota entity to alter.
@@ -41,9 +39,13 @@ pub struct EntryData {
     pub ops: Vec<OpData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 49, msg_type = "request", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 49,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct AlterClientQuotasRequest {
     /// The quota configuration entries to alter.
     #[kafka(versions = "0+")]
@@ -52,4 +54,3 @@ pub struct AlterClientQuotasRequest {
     #[kafka(versions = "0+")]
     pub validate_only: bool,
 }
-

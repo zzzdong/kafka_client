@@ -2,8 +2,8 @@
 //! Message: OffsetCommitResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct OffsetCommitResponsePartition {
     #[kafka(versions = "0+")]
     pub error_code: i16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetCommitResponseTopic {
@@ -30,9 +29,13 @@ pub struct OffsetCommitResponseTopic {
     pub partitions: Vec<OffsetCommitResponsePartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 8, msg_type = "response", valid_versions = "2-10", flexible_versions = "8+")]
+#[kafka(
+    api_key = 8,
+    msg_type = "response",
+    valid_versions = "2-10",
+    flexible_versions = "8+"
+)]
 pub struct OffsetCommitResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "3+", nullable_versions = "3+")]
@@ -41,4 +44,3 @@ pub struct OffsetCommitResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetCommitResponseTopic>,
 }
-

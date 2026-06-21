@@ -2,8 +2,8 @@
 //! Message: DescribeTransactionsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct TopicData {
     #[kafka(versions = "0+")]
     pub partitions: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TransactionState {
@@ -45,9 +44,13 @@ pub struct TransactionState {
     pub topics: Vec<TopicData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 65, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 65,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DescribeTransactionsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -56,4 +59,3 @@ pub struct DescribeTransactionsResponse {
     #[kafka(versions = "0+")]
     pub transaction_states: Vec<TransactionState>,
 }
-

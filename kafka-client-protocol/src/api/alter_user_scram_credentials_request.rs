@@ -2,8 +2,8 @@
 //! Message: AlterUserScramCredentialsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct ScramCredentialDeletion {
     #[kafka(versions = "0+")]
     pub mechanism: i8,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ScramCredentialUpsertion {
@@ -36,9 +35,13 @@ pub struct ScramCredentialUpsertion {
     pub salted_password: Bytes,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 51, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 51,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct AlterUserScramCredentialsRequest {
     /// The SCRAM credentials to remove.
     #[kafka(versions = "0+")]
@@ -47,4 +50,3 @@ pub struct AlterUserScramCredentialsRequest {
     #[kafka(versions = "0+")]
     pub upsertions: Vec<ScramCredentialUpsertion>,
 }
-

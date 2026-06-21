@@ -2,8 +2,8 @@
 //! Message: VoteRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -34,7 +34,6 @@ pub struct PartitionData {
     pub pre_vote: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The topic name.
@@ -45,9 +44,13 @@ pub struct TopicData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 52, msg_type = "request", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 52,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct VoteRequest {
     /// The cluster id.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
@@ -59,4 +62,3 @@ pub struct VoteRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicData>,
 }
-

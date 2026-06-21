@@ -2,8 +2,8 @@
 //! Message: DeleteShareGroupOffsetsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,9 +22,13 @@ pub struct DeleteShareGroupOffsetsResponseTopic {
     pub error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 92, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 92,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DeleteShareGroupOffsetsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -39,4 +43,3 @@ pub struct DeleteShareGroupOffsetsResponse {
     #[kafka(versions = "0+")]
     pub responses: Vec<DeleteShareGroupOffsetsResponseTopic>,
 }
-

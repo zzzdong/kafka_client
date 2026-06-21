@@ -2,8 +2,8 @@
 //! Message: CreateTopicsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -25,7 +25,6 @@ pub struct CreatableTopicConfigs {
     pub is_sensitive: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct CreatableTopicResult {
     /// The topic name.
@@ -41,7 +40,12 @@ pub struct CreatableTopicResult {
     #[kafka(versions = "1+", nullable_versions = "0+")]
     pub error_message: Option<String>,
     /// Optional topic config error returned if configs are not returned in the response.
-    #[kafka(versions = "5+", nullable_versions = "5+", tag = 0, tagged_versions = "5+")]
+    #[kafka(
+        versions = "5+",
+        nullable_versions = "5+",
+        tag = 0,
+        tagged_versions = "5+"
+    )]
     pub topic_config_error_code: i16,
     /// Number of partitions of the topic.
     #[kafka(versions = "5+", nullable_versions = "5+", default = -1)]
@@ -54,9 +58,13 @@ pub struct CreatableTopicResult {
     pub configs: Option<Vec<CreatableTopicConfigs>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 19, msg_type = "response", valid_versions = "2-7", flexible_versions = "5+")]
+#[kafka(
+    api_key = 19,
+    msg_type = "response",
+    valid_versions = "2-7",
+    flexible_versions = "5+"
+)]
 pub struct CreateTopicsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "2+", nullable_versions = "2+")]
@@ -65,4 +73,3 @@ pub struct CreateTopicsResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<CreatableTopicResult>,
 }
-

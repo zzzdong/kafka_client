@@ -2,8 +2,8 @@
 //! Message: DeleteShareGroupStateRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -12,7 +12,6 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub partition: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DeleteStateData {
@@ -24,9 +23,13 @@ pub struct DeleteStateData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 86, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 86,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DeleteShareGroupStateRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -35,4 +38,3 @@ pub struct DeleteShareGroupStateRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<DeleteStateData>,
 }
-

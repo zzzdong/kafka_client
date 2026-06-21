@@ -2,18 +2,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 分区路由策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum PartitionRouting {
+    #[default]
     RoundRobin,
     HashKey,
     Fixed(i32),
     Random,
 }
 
-impl Default for PartitionRouting {
-    fn default() -> Self {
-        PartitionRouting::RoundRobin
-    }
-}
 
 /// 分区路由器
 pub struct PartitionRouter {
@@ -40,25 +37,18 @@ impl PartitionRouter {
                 let c = self.counter.fetch_add(1, Ordering::SeqCst);
                 (c as usize) % partition_count
             }
-            PartitionRouting::HashKey => {
-                match key {
-                    Some(k) => {
-                        let hash = murmur2(k);
-                        ((hash as i32).wrapping_abs() as usize) % partition_count
-                    }
-                    None => {
-                        let c = self.counter.fetch_add(1, Ordering::SeqCst);
-                        (c as usize) % partition_count
-                    }
+            PartitionRouting::HashKey => match key {
+                Some(k) => {
+                    let hash = murmur2(k);
+                    ((hash as i32).wrapping_abs() as usize) % partition_count
                 }
-            }
-            PartitionRouting::Fixed(p) => {
-                (p as usize) % partition_count
-            }
-            PartitionRouting::Random => {
-                use rand::Rng;
-                rand::random_range(0..partition_count)
-            }
+                None => {
+                    let c = self.counter.fetch_add(1, Ordering::SeqCst);
+                    (c as usize) % partition_count
+                }
+            },
+            PartitionRouting::Fixed(p) => (p as usize) % partition_count,
+            PartitionRouting::Random => rand::random_range(0..partition_count),
         };
 
         idx as i32
@@ -76,7 +66,7 @@ fn murmur2(data: &[u8]) -> u32 {
     let mut i = 0;
 
     while i + 4 <= len {
-        let mut k = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let mut k = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         k = k.wrapping_mul(M);
         k ^= k >> R;
         k = k.wrapping_mul(M);
@@ -128,7 +118,7 @@ mod tests {
     fn test_partition_router_round_robin() {
         let router = PartitionRouter::new(PartitionRouting::RoundRobin);
 
-        for i in 0..10 {
+        for _ in 0..10 {
             let partition = router.select_partition(None, 3);
             assert!(partition >= 0 && partition < 3);
         }

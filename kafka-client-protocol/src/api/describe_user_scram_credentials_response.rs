@@ -2,8 +2,8 @@
 //! Message: DescribeUserScramCredentialsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct CredentialInfo {
     #[kafka(versions = "0+")]
     pub iterations: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeUserScramCredentialsResult {
@@ -33,9 +32,13 @@ pub struct DescribeUserScramCredentialsResult {
     pub credential_infos: Vec<CredentialInfo>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 50, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 50,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DescribeUserScramCredentialsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -50,4 +53,3 @@ pub struct DescribeUserScramCredentialsResponse {
     #[kafka(versions = "0+")]
     pub results: Vec<DescribeUserScramCredentialsResult>,
 }
-

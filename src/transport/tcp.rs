@@ -1,10 +1,10 @@
-use tokio::net::TcpStream;
+use super::NetworkStream;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use super::NetworkStream;
+use tokio::net::TcpStream;
 
 /// TCP 网络流
 pub struct TcpNetworkStream {

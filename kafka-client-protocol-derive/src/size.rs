@@ -1,8 +1,8 @@
 // src/size.rs
-use quote::quote;
-use proc_macro2::TokenStream;
 use crate::field::FieldInfo;
 use crate::version_range::VersionRange;
+use proc_macro2::TokenStream;
+use quote::quote;
 
 /// 判断字段是否应该使用 flexible format
 fn should_use_flexible(field: &FieldInfo, flexible_version: Option<i16>) -> bool {
@@ -21,11 +21,11 @@ pub fn generate_size(fields: &[FieldInfo], flexible_version: Option<i16>) -> Tok
         .iter()
         .map(|field| generate_size_field(field, flexible_version))
         .collect();
-    
+
     quote! {
         fn size(&self, version: i16) -> usize {
             use kafka_client_protocol_core::codec::*;
-            
+
             let mut total = 0;
             #(#size_fields)*
             total
@@ -38,7 +38,7 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
     let field_name = &field.name;
     let condition = field.versions.as_check_expr();
     let use_flexible = should_use_flexible(field, flexible_version);
-    
+
     // 标签字段
     if field.tagged_versions.is_some() {
         return quote! {
@@ -50,11 +50,11 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
             }
         };
     }
-    
+
     // 可空字段 - 只有当类型是 Option 时才生成 is_none 检查
     if let Some(nullable_versions) = &field.nullable_versions {
         let null_condition = nullable_versions.as_check_expr();
-        
+
         if field.is_option() {
             // Option 类型：检查 is_none()
             return quote! {
@@ -80,7 +80,7 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
             };
         }
     }
-    
+
     // 普通字段
     if field.versions == VersionRange::All {
         quote! { total += self.#field_name.size(version); }

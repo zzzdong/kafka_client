@@ -2,8 +2,8 @@
 //! Message: ListConfigResourcesResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct ConfigResource {
     pub resource_type: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 74, msg_type = "response", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 74,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct ListConfigResourcesResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -30,4 +34,3 @@ pub struct ListConfigResourcesResponse {
     #[kafka(versions = "0+")]
     pub config_resources: Vec<ConfigResource>,
 }
-

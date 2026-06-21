@@ -2,8 +2,8 @@
 //! Message: DeleteGroupsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct DeletableGroupResult {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 42, msg_type = "response", valid_versions = "0-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 42,
+    msg_type = "response",
+    valid_versions = "0-2",
+    flexible_versions = "2+"
+)]
 pub struct DeleteGroupsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -27,4 +31,3 @@ pub struct DeleteGroupsResponse {
     #[kafka(versions = "0+")]
     pub results: Vec<DeletableGroupResult>,
 }
-

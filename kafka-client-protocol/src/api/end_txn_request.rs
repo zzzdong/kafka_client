@@ -2,12 +2,17 @@
 //! Message: EndTxnRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 26, msg_type = "request", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 26,
+    msg_type = "request",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct EndTxnRequest {
     /// The ID of the transaction to end.
     #[kafka(versions = "0+")]
@@ -22,4 +27,3 @@ pub struct EndTxnRequest {
     #[kafka(versions = "0+")]
     pub committed: bool,
 }
-

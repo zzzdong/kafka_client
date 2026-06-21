@@ -106,11 +106,7 @@ fn parse_message(def: MessageDef) -> ParsedMessage {
 fn parse_struct(def: StructDef) -> ParsedStruct {
     let struct_name = to_pascal_case(&def.name);
 
-    let fields = def
-        .fields
-        .iter()
-        .map(|f| parse_field_simple(f))
-        .collect();
+    let fields = def.fields.iter().map(|f| parse_field_simple(f)).collect();
 
     ParsedStruct {
         name: def.name,
@@ -145,10 +141,7 @@ fn parse_fields_simple_list(
     inline_structs: &mut Vec<InlineStructInfo>,
     visited: &mut HashSet<String>,
 ) -> Vec<ParsedField> {
-    fields
-        .iter()
-        .map(|f| parse_field_simple(f))
-        .collect()
+    fields.iter().map(|f| parse_field_simple(f)).collect()
 }
 
 /// 递归解析字段（支持嵌套内联结构体）

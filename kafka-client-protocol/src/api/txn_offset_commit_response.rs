@@ -2,8 +2,8 @@
 //! Message: TxnOffsetCommitResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct TxnOffsetCommitResponsePartition {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TxnOffsetCommitResponseTopic {
     /// The topic name.
@@ -27,9 +26,13 @@ pub struct TxnOffsetCommitResponseTopic {
     pub partitions: Vec<TxnOffsetCommitResponsePartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 28, msg_type = "response", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 28,
+    msg_type = "response",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct TxnOffsetCommitResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct TxnOffsetCommitResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<TxnOffsetCommitResponseTopic>,
 }
-

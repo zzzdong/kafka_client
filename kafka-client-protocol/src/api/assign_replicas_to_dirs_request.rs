@@ -2,8 +2,8 @@
 //! Message: AssignReplicasToDirsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -12,7 +12,6 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub partition_index: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
@@ -24,7 +23,6 @@ pub struct TopicData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DirectoryData {
     /// The ID of the directory.
@@ -35,9 +33,13 @@ pub struct DirectoryData {
     pub topics: Vec<TopicData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 73, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 73,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct AssignReplicasToDirsRequest {
     /// The ID of the requesting broker.
     #[kafka(versions = "0+")]
@@ -49,4 +51,3 @@ pub struct AssignReplicasToDirsRequest {
     #[kafka(versions = "0+")]
     pub directories: Vec<DirectoryData>,
 }
-

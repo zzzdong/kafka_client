@@ -2,8 +2,8 @@
 //! Message: OffsetForLeaderEpochResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct EpochEndOffset {
     pub end_offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetForLeaderTopicResult {
     /// The topic name.
@@ -33,9 +32,13 @@ pub struct OffsetForLeaderTopicResult {
     pub partitions: Vec<EpochEndOffset>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 23, msg_type = "response", valid_versions = "2-4", flexible_versions = "4+")]
+#[kafka(
+    api_key = 23,
+    msg_type = "response",
+    valid_versions = "2-4",
+    flexible_versions = "4+"
+)]
 pub struct OffsetForLeaderEpochResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "2+", nullable_versions = "2+")]
@@ -44,4 +47,3 @@ pub struct OffsetForLeaderEpochResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetForLeaderTopicResult>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: MetadataRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct MetadataRequestTopic {
     pub name: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 3, msg_type = "request", valid_versions = "0-13", flexible_versions = "9+")]
+#[kafka(
+    api_key = 3,
+    msg_type = "request",
+    valid_versions = "0-13",
+    flexible_versions = "9+"
+)]
 pub struct MetadataRequest {
     /// The topics to fetch metadata for.
     #[kafka(versions = "0+", nullable_versions = "1+")]
@@ -33,4 +37,3 @@ pub struct MetadataRequest {
     #[kafka(versions = "8+")]
     pub include_topic_authorized_operations: bool,
 }
-

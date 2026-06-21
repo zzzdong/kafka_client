@@ -2,8 +2,8 @@
 //! Message: WriteShareGroupStateRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -21,7 +21,6 @@ pub struct StateBatch {
     #[kafka(versions = "0+")]
     pub delivery_count: i16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -45,7 +44,6 @@ pub struct PartitionData {
     pub state_batches: Vec<StateBatch>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct WriteStateData {
     /// The topic identifier.
@@ -56,9 +54,13 @@ pub struct WriteStateData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 85, msg_type = "request", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 85,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct WriteShareGroupStateRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -67,4 +69,3 @@ pub struct WriteShareGroupStateRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<WriteStateData>,
 }
-

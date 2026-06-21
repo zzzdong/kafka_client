@@ -1,12 +1,11 @@
 use std::collections::HashMap;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::debug;
-use std::net::SocketAddr;
 
-use crate::protocol::api::metadata::{Broker, Topic, Partition, MetadataResponse};
-use crate::error::Result;
+use crate::protocol::{MetadataResponse, MetadataResponseBroker, MetadataResponseTopic};
 
 /// 元数据缓存
 #[derive(Debug, Clone)]
@@ -20,8 +19,8 @@ struct CachedMetadata {
     fetched_at: Option<Instant>,
     cluster_id: Option<String>,
     controller_id: Option<i32>,
-    brokers: HashMap<i32, Broker>,
-    topics: HashMap<String, Topic>,
+    brokers: HashMap<i32, MetadataResponseBroker>,
+    topics: HashMap<String, MetadataResponseTopic>,
     broker_addresses: HashMap<String, i32>,
 }
 
@@ -54,10 +53,16 @@ impl CachedMetadata {
         // Update topics
         self.topics.clear();
         for topic in response.topics {
-            self.topics.insert(topic.name.clone(), topic);
+            if let Some(name) = topic.name.clone() {
+                self.topics.insert(name, topic);
+            }
         }
 
-        debug!("Metadata cache updated: {} brokers, {} topics", self.brokers.len(), self.topics.len());
+        debug!(
+            "Metadata cache updated: {} brokers, {} topics",
+            self.brokers.len(),
+            self.topics.len()
+        );
     }
 
     fn is_expired(&self, ttl: Duration) -> bool {
@@ -69,9 +74,13 @@ impl CachedMetadata {
 
     fn get_partition_leader(&self, topic: &str, partition: i32) -> Option<SocketAddr> {
         let topic = self.topics.get(topic)?;
-        let partition = topic.partitions.iter().find(|p| p.partition_index == partition)?;
+        let partition = topic
+            .partitions
+            .iter()
+            .find(|p| p.partition_index == partition)?;
         let broker = self.brokers.get(&partition.leader_id)?;
-        broker.socket_addr()
+        let addr_str = format!("{}:{}", broker.host, broker.port);
+        addr_str.to_socket_addrs().ok()?.next()
     }
 
     fn get_partition_count(&self, topic: &str) -> Option<usize> {
@@ -122,17 +131,17 @@ impl MetadataCache {
         inner.get_partitions(topic)
     }
 
-    pub async fn get_broker(&self, node_id: i32) -> Option<Broker> {
+    pub async fn get_broker(&self, node_id: i32) -> Option<MetadataResponseBroker> {
         let inner = self.inner.read().await;
         inner.brokers.get(&node_id).cloned()
     }
 
-    pub async fn get_topic(&self, name: &str) -> Option<Topic> {
+    pub async fn get_topic(&self, name: &str) -> Option<MetadataResponseTopic> {
         let inner = self.inner.read().await;
         inner.topics.get(name).cloned()
     }
 
-    pub async fn get_all_brokers(&self) -> Vec<Broker> {
+    pub async fn get_all_brokers(&self) -> Vec<MetadataResponseBroker> {
         let inner = self.inner.read().await;
         inner.brokers.values().cloned().collect()
     }

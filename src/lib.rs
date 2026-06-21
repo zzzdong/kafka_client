@@ -6,11 +6,11 @@
 //! and high-level producer/consumer API.
 
 pub mod client;
+mod codec;
 pub mod connection;
 pub mod error;
 pub mod sasl;
 pub mod transport;
-mod codec;
 
 // Re-export commonly used types
 pub use connection::{Connection, NegotiatedVersions};
@@ -19,28 +19,28 @@ pub use kafka_client_protocol as protocol;
 pub use sasl::{SaslCredentials, SaslMechanismType};
 pub use transport::{SecurityProtocol, TlsConfigData};
 
-// // Re-export client types
-// pub use client::{KafkaClientBuilder, builder};
+// Re-export client types
+pub use client::{KafkaClientBuilder, builder};
 
-// pub use client::low_level::{ClientConfig, KafkaClient as LowLevelClient};
+pub use client::low_level::{ClientConfig, KafkaClient as LowLevelClient};
 
-// pub use client::metadata::MetadataCache;
+pub use client::metadata::MetadataCache;
 
-// pub use client::high_level::{
-//     AutoOffsetReset,
-//     // Consumer
-//     Consumer,
-//     ConsumerConfig,
-//     Header,
-//     // Partition routing
-//     PartitionRouter,
-//     PartitionRouting,
-//     // Producer
-//     Producer,
-//     ProducerConfig,
-//     ProducerRecord,
-//     RecordMetadata,
-// };
+pub use client::high_level::{
+    AutoOffsetReset,
+    // Consumer
+    Consumer,
+    ConsumerConfig,
+    Header,
+    // Partition routing
+    PartitionRouter,
+    PartitionRouting,
+    // Producer
+    Producer,
+    ProducerConfig,
+    ProducerRecord,
+    RecordMetadata,
+};
 
 /// Library name
 pub const NAME: &str = env!("CARGO_PKG_NAME");

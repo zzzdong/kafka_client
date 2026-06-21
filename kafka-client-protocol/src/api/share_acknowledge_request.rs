@@ -2,8 +2,8 @@
 //! Message: ShareAcknowledgeRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct AcknowledgementBatch {
     pub acknowledge_types: Vec<i8>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AcknowledgePartition {
     /// The partition index.
@@ -29,7 +28,6 @@ pub struct AcknowledgePartition {
     #[kafka(versions = "0+")]
     pub acknowledgement_batches: Vec<AcknowledgementBatch>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AcknowledgeTopic {
@@ -41,9 +39,13 @@ pub struct AcknowledgeTopic {
     pub partitions: Vec<AcknowledgePartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 79, msg_type = "request", valid_versions = "1-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 79,
+    msg_type = "request",
+    valid_versions = "1-2",
+    flexible_versions = "0+"
+)]
 pub struct ShareAcknowledgeRequest {
     /// The group identifier.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
@@ -61,4 +63,3 @@ pub struct ShareAcknowledgeRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<AcknowledgeTopic>,
 }
-

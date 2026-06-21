@@ -2,8 +2,8 @@
 //! Message: DescribeConfigsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -18,7 +18,6 @@ pub struct DescribeConfigsSynonym {
     #[kafka(versions = "1+")]
     pub source: i8,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeConfigsResourceResult {
@@ -48,7 +47,6 @@ pub struct DescribeConfigsResourceResult {
     pub documentation: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeConfigsResult {
     /// The error code, or 0 if we were able to successfully describe the configurations.
@@ -68,9 +66,13 @@ pub struct DescribeConfigsResult {
     pub configs: Vec<DescribeConfigsResourceResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 32, msg_type = "response", valid_versions = "1-4", flexible_versions = "4+")]
+#[kafka(
+    api_key = 32,
+    msg_type = "response",
+    valid_versions = "1-4",
+    flexible_versions = "4+"
+)]
 pub struct DescribeConfigsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -79,4 +81,3 @@ pub struct DescribeConfigsResponse {
     #[kafka(versions = "0+")]
     pub results: Vec<DescribeConfigsResult>,
 }
-

@@ -1,0 +1,35 @@
+//! 批量消息测试
+//!
+//! 验证 100 条消息的批量生产和消费。
+//!
+//! 运行: KAFKA_RUNTIME=direct cargo test --test large_batch -- --nocapture
+
+mod common;
+
+use common::KafkaInstance;
+use kafka_client::client::low_level::KafkaClient;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[tokio::test]
+async fn test_large_batch() {
+    let server = KafkaInstance::start().await;
+    let client = Arc::new(Mutex::new(
+        KafkaClient::connect(server.client_config()).await.unwrap(),
+    ));
+
+    {
+        let mut c = client.lock().await;
+        common::create_topic(&mut c, "tc-large", 3).await;
+    }
+
+    common::produce_messages(&client, "tc-large", 100).await;
+
+    let records = common::consume_all(&client, "cg-large", "tc-large", 100).await;
+    println!("  Consumed {} messages from 'tc-large'", records.len());
+    assert!(
+        records.len() >= 100,
+        "Expected at least 100, got {}",
+        records.len()
+    );
+}

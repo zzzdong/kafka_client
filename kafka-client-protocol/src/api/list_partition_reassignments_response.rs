@@ -2,8 +2,8 @@
 //! Message: ListPartitionReassignmentsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct OngoingPartitionReassignment {
     pub removing_replicas: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OngoingTopicReassignment {
     /// The topic name.
@@ -33,9 +32,13 @@ pub struct OngoingTopicReassignment {
     pub partitions: Vec<OngoingPartitionReassignment>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 46, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 46,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct ListPartitionReassignmentsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -50,4 +53,3 @@ pub struct ListPartitionReassignmentsResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<OngoingTopicReassignment>,
 }
-

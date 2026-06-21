@@ -2,8 +2,8 @@
 //! Message: LeaderChangeMessage
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct Voter {
     #[kafka(versions = "1+")]
     pub voter_directory_id: Uuid,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 #[kafka(msg_type = "data", valid_versions = "0-1", flexible_versions = "0+")]
@@ -33,4 +32,3 @@ pub struct LeaderChangeMessage {
     #[kafka(versions = "0+")]
     pub granting_voters: Vec<Voter>,
 }
-

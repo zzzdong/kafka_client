@@ -2,8 +2,8 @@
 //! Message: VotersRecord
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct Endpoint {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct KRaftVersionFeature {
     /// The minimum supported KRaft protocol version.
@@ -29,7 +28,6 @@ pub struct KRaftVersionFeature {
     #[kafka(versions = "0+")]
     pub max_supported_version: i16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Voter {
@@ -47,7 +45,6 @@ pub struct Voter {
     pub kraft_version_feature: KRaftVersionFeature,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 #[kafka(msg_type = "data", valid_versions = "0", flexible_versions = "0+")]
 pub struct VotersRecord {
@@ -58,4 +55,3 @@ pub struct VotersRecord {
     #[kafka(versions = "0+")]
     pub voters: Vec<Voter>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: DescribeTopicPartitionsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -37,7 +37,6 @@ pub struct DescribeTopicPartitionsResponsePartition {
     pub offline_replicas: Option<Vec<i32>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeTopicPartitionsResponseTopic {
     /// The topic error, or 0 if there was no error.
@@ -60,7 +59,6 @@ pub struct DescribeTopicPartitionsResponseTopic {
     pub topic_authorized_operations: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Cursor {
     /// The name for the first topic to process.
@@ -71,9 +69,13 @@ pub struct Cursor {
     pub partition_index: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 75, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 75,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DescribeTopicPartitionsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+", nullable_versions = "0+")]
@@ -85,4 +87,3 @@ pub struct DescribeTopicPartitionsResponse {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub next_cursor: Option<Cursor>,
 }
-

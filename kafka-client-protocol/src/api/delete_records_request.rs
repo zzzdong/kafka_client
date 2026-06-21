@@ -2,8 +2,8 @@
 //! Message: DeleteRecordsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct DeleteRecordsPartition {
     pub offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DeleteRecordsTopic {
     /// The topic name.
@@ -27,9 +26,13 @@ pub struct DeleteRecordsTopic {
     pub partitions: Vec<DeleteRecordsPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 21, msg_type = "request", valid_versions = "0-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 21,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "2+"
+)]
 pub struct DeleteRecordsRequest {
     /// Each topic that we want to delete records from.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct DeleteRecordsRequest {
     #[kafka(versions = "0+")]
     pub timeout_ms: i32,
 }
-

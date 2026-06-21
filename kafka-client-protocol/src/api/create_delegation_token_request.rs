@@ -2,8 +2,8 @@
 //! Message: CreateDelegationTokenRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct CreatableRenewers {
     pub principal_name: String,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 38, msg_type = "request", valid_versions = "1-3", flexible_versions = "2+")]
+#[kafka(
+    api_key = 38,
+    msg_type = "request",
+    valid_versions = "1-3",
+    flexible_versions = "2+"
+)]
 pub struct CreateDelegationTokenRequest {
     /// The principal type of the owner of the token. If it's null it defaults to the token request principal.
     #[kafka(versions = "3+", nullable_versions = "3+")]
@@ -33,4 +37,3 @@ pub struct CreateDelegationTokenRequest {
     #[kafka(versions = "0+")]
     pub max_lifetime_ms: i64,
 }
-

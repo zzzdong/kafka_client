@@ -2,12 +2,17 @@
 //! Message: HeartbeatRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 12, msg_type = "request", valid_versions = "0-4", flexible_versions = "4+")]
+#[kafka(
+    api_key = 12,
+    msg_type = "request",
+    valid_versions = "0-4",
+    flexible_versions = "4+"
+)]
 pub struct HeartbeatRequest {
     /// The group id.
     #[kafka(versions = "0+")]
@@ -22,4 +27,3 @@ pub struct HeartbeatRequest {
     #[kafka(versions = "3+", nullable_versions = "3+", default = None)]
     pub group_instance_id: Option<String>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: OffsetDeleteRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -12,7 +12,6 @@ pub struct OffsetDeleteRequestPartition {
     #[kafka(versions = "0+")]
     pub partition_index: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetDeleteRequestTopic {
@@ -24,9 +23,13 @@ pub struct OffsetDeleteRequestTopic {
     pub partitions: Vec<OffsetDeleteRequestPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 47, msg_type = "request", valid_versions = "0", flexible_versions = "none")]
+#[kafka(
+    api_key = 47,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "none"
+)]
 pub struct OffsetDeleteRequest {
     /// The unique group identifier.
     #[kafka(versions = "0+")]
@@ -35,4 +38,3 @@ pub struct OffsetDeleteRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetDeleteRequestTopic>,
 }
-

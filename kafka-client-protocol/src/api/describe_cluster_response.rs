@@ -2,8 +2,8 @@
 //! Message: DescribeClusterResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -25,9 +25,13 @@ pub struct DescribeClusterBroker {
     pub is_fenced: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 60, msg_type = "response", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 60,
+    msg_type = "response",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct DescribeClusterResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -54,4 +58,3 @@ pub struct DescribeClusterResponse {
     #[kafka(versions = "0+", default = -2147483648)]
     pub cluster_authorized_operations: i32,
 }
-

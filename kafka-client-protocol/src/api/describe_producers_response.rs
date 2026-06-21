@@ -2,8 +2,8 @@
 //! Message: DescribeProducersResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -28,7 +28,6 @@ pub struct ProducerState {
     pub current_txn_start_offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionResponse {
     /// The partition index.
@@ -45,7 +44,6 @@ pub struct PartitionResponse {
     pub active_producers: Vec<ProducerState>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicResponse {
     /// The topic name.
@@ -56,9 +54,13 @@ pub struct TopicResponse {
     pub partitions: Vec<PartitionResponse>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 61, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 61,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DescribeProducersResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -67,4 +69,3 @@ pub struct DescribeProducersResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicResponse>,
 }
-

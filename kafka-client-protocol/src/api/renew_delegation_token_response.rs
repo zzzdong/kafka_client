@@ -2,12 +2,17 @@
 //! Message: RenewDelegationTokenResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 39, msg_type = "response", valid_versions = "1-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 39,
+    msg_type = "response",
+    valid_versions = "1-2",
+    flexible_versions = "2+"
+)]
 pub struct RenewDelegationTokenResponse {
     /// The error code, or 0 if there was no error.
     #[kafka(versions = "0+")]
@@ -19,4 +24,3 @@ pub struct RenewDelegationTokenResponse {
     #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
 }
-

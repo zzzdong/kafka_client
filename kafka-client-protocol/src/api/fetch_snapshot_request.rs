@@ -2,8 +2,8 @@
 //! Message: FetchSnapshotRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct SnapshotId {
     #[kafka(versions = "0+")]
     pub epoch: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionSnapshot {
@@ -32,10 +31,14 @@ pub struct PartitionSnapshot {
     #[kafka(versions = "0+")]
     pub position: i64,
     /// The directory id of the follower fetching.
-    #[kafka(versions = "1+", nullable_versions = "1+", tag = 0, tagged_versions = "1+")]
+    #[kafka(
+        versions = "1+",
+        nullable_versions = "1+",
+        tag = 0,
+        tagged_versions = "1+"
+    )]
     pub replica_directory_id: Option<Uuid>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicSnapshot {
@@ -47,9 +50,13 @@ pub struct TopicSnapshot {
     pub partitions: Vec<PartitionSnapshot>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 59, msg_type = "request", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 59,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct FetchSnapshotRequest {
     /// The clusterId if known, this is used to validate metadata fetches prior to broker registration.
     #[kafka(versions = "0+", nullable_versions = "0+", tag = 0, tagged_versions = "0+", default = None)]
@@ -64,4 +71,3 @@ pub struct FetchSnapshotRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicSnapshot>,
 }
-

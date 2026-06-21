@@ -2,8 +2,8 @@
 //! Message: JoinGroupResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,9 +19,13 @@ pub struct JoinGroupResponseMember {
     pub metadata: Bytes,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 11, msg_type = "response", valid_versions = "0-9", flexible_versions = "6+")]
+#[kafka(
+    api_key = 11,
+    msg_type = "response",
+    valid_versions = "0-9",
+    flexible_versions = "6+"
+)]
 pub struct JoinGroupResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "2+", nullable_versions = "2+")]
@@ -51,4 +55,3 @@ pub struct JoinGroupResponse {
     #[kafka(versions = "0+")]
     pub members: Vec<JoinGroupResponseMember>,
 }
-

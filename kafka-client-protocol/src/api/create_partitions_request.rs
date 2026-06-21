@@ -2,8 +2,8 @@
 //! Message: CreatePartitionsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -12,7 +12,6 @@ pub struct CreatePartitionsAssignment {
     #[kafka(versions = "0+")]
     pub broker_ids: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct CreatePartitionsTopic {
@@ -27,9 +26,13 @@ pub struct CreatePartitionsTopic {
     pub assignments: Option<Vec<CreatePartitionsAssignment>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 37, msg_type = "request", valid_versions = "0-3", flexible_versions = "2+")]
+#[kafka(
+    api_key = 37,
+    msg_type = "request",
+    valid_versions = "0-3",
+    flexible_versions = "2+"
+)]
 pub struct CreatePartitionsRequest {
     /// Each topic that we want to create new partitions inside.
     #[kafka(versions = "0+")]
@@ -41,4 +44,3 @@ pub struct CreatePartitionsRequest {
     #[kafka(versions = "0+")]
     pub validate_only: bool,
 }
-

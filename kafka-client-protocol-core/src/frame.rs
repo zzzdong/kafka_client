@@ -3,8 +3,8 @@
 //!
 //! 提供与协议无关的通用帧编码/解码功能
 
+use crate::error::{ProtocolError, ProtocolResult};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use crate::error::{ProtocolResult, ProtocolError};
 
 /// 编码原始帧（仅长度前缀）
 ///
@@ -31,16 +31,21 @@ pub fn decode_raw_frame(buf: &mut Bytes) -> ProtocolResult<Bytes> {
     if buf.remaining() < 4 {
         return Err(ProtocolError::insufficient_data(4, buf.remaining()));
     }
-    
+
     let len = buf.get_i32();
     if len < 0 {
-        return Err(ProtocolError::invalid_data("Negative frame size".to_string()));
+        return Err(ProtocolError::invalid_data(
+            "Negative frame size".to_string(),
+        ));
     }
-    
+
     if buf.remaining() < len as usize {
-        return Err(ProtocolError::insufficient_data(len as usize, buf.remaining()));
+        return Err(ProtocolError::insufficient_data(
+            len as usize,
+            buf.remaining(),
+        ));
     }
-    
+
     Ok(buf.copy_to_bytes(len as usize))
 }
 
@@ -57,7 +62,7 @@ mod tests {
     fn test_encode_decode_raw_frame() {
         let data = b"hello world";
         let mut frame = encode_raw_frame(data);
-        
+
         let decoded = decode_raw_frame(&mut frame.freeze()).unwrap();
         assert_eq!(&decoded[..], data);
     }

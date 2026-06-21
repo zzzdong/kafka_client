@@ -2,8 +2,8 @@
 //! Message: ListOffsetsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct ListOffsetsPartition {
     pub timestamp: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ListOffsetsTopic {
     /// The topic name.
@@ -30,9 +29,13 @@ pub struct ListOffsetsTopic {
     pub partitions: Vec<ListOffsetsPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 2, msg_type = "request", valid_versions = "1-11", flexible_versions = "6+")]
+#[kafka(
+    api_key = 2,
+    msg_type = "request",
+    valid_versions = "1-11",
+    flexible_versions = "6+"
+)]
 pub struct ListOffsetsRequest {
     /// The broker ID of the requester, or -1 if this request is being made by a normal consumer.
     #[kafka(versions = "0+")]
@@ -47,4 +50,3 @@ pub struct ListOffsetsRequest {
     #[kafka(versions = "10+", nullable_versions = "10+")]
     pub timeout_ms: i32,
 }
-

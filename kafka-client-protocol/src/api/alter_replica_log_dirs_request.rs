@@ -2,8 +2,8 @@
 //! Message: AlterReplicaLogDirsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct AlterReplicaLogDirTopic {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AlterReplicaLogDir {
     /// The absolute directory path.
@@ -27,12 +26,15 @@ pub struct AlterReplicaLogDir {
     pub topics: Vec<AlterReplicaLogDirTopic>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 34, msg_type = "request", valid_versions = "1-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 34,
+    msg_type = "request",
+    valid_versions = "1-2",
+    flexible_versions = "2+"
+)]
 pub struct AlterReplicaLogDirsRequest {
     /// The alterations to make for each directory.
     #[kafka(versions = "0+")]
     pub dirs: Vec<AlterReplicaLogDir>,
 }
-

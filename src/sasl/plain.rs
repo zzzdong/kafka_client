@@ -1,7 +1,7 @@
-use bytes::{Bytes, BytesMut, BufMut};
-use async_trait::async_trait;
-use super::{SaslMechanism, SaslCredentials};
+use super::{SaslCredentials, SaslMechanism};
 use crate::error::SaslError;
+use async_trait::async_trait;
+use bytes::{BufMut, Bytes, BytesMut};
 
 pub struct PlainMechanism {
     complete: bool,
@@ -10,7 +10,10 @@ pub struct PlainMechanism {
 
 impl PlainMechanism {
     pub fn new() -> Self {
-        Self { complete: false, success: false }
+        Self {
+            complete: false,
+            success: false,
+        }
     }
 }
 
@@ -30,8 +33,10 @@ impl SaslMechanism for PlainMechanism {
         true
     }
 
-    async fn initial_response(&mut self, credentials: &SaslCredentials)
-        -> Result<Option<Bytes>, SaslError> {
+    async fn initial_response(
+        &mut self,
+        credentials: &SaslCredentials,
+    ) -> Result<Option<Bytes>, SaslError> {
         // 格式: authzid\0authcid\0passwd
         let authzid = credentials.authzid.as_deref().unwrap_or("");
         let mut buf = BytesMut::new();
@@ -47,7 +52,9 @@ impl SaslMechanism for PlainMechanism {
     }
 
     async fn challenge(&mut self, _challenge: &[u8]) -> Result<Option<Bytes>, SaslError> {
-        Err(SaslError::ProtocolError("PLAIN should not receive challenge".to_string()))
+        Err(SaslError::ProtocolError(
+            "PLAIN should not receive challenge".to_string(),
+        ))
     }
 
     fn is_complete(&self) -> bool {

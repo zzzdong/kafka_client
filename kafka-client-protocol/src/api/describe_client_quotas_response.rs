@@ -2,8 +2,8 @@
 //! Message: DescribeClientQuotasResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct EntityData {
     pub entity_name: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ValueData {
     /// The quota configuration key.
@@ -26,7 +25,6 @@ pub struct ValueData {
     #[kafka(versions = "0+")]
     pub value: f64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct EntryData {
@@ -38,9 +36,13 @@ pub struct EntryData {
     pub values: Vec<ValueData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 48, msg_type = "response", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 48,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct DescribeClientQuotasResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -55,4 +57,3 @@ pub struct DescribeClientQuotasResponse {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub entries: Option<Vec<EntryData>>,
 }
-

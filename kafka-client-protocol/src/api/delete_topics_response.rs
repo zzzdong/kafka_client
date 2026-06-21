@@ -2,8 +2,8 @@
 //! Message: DeleteTopicsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,9 +22,13 @@ pub struct DeletableTopicResult {
     pub error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 20, msg_type = "response", valid_versions = "1-6", flexible_versions = "4+")]
+#[kafka(
+    api_key = 20,
+    msg_type = "response",
+    valid_versions = "1-6",
+    flexible_versions = "4+"
+)]
 pub struct DeleteTopicsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "1+", nullable_versions = "1+")]
@@ -33,4 +37,3 @@ pub struct DeleteTopicsResponse {
     #[kafka(versions = "0+")]
     pub responses: Vec<DeletableTopicResult>,
 }
-

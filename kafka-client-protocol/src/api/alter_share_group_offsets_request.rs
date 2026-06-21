@@ -2,8 +2,8 @@
 //! Message: AlterShareGroupOffsetsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct AlterShareGroupOffsetsRequestPartition {
     pub start_offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AlterShareGroupOffsetsRequestTopic {
     /// The topic name.
@@ -27,9 +26,13 @@ pub struct AlterShareGroupOffsetsRequestTopic {
     pub partitions: Vec<AlterShareGroupOffsetsRequestPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 91, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 91,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct AlterShareGroupOffsetsRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct AlterShareGroupOffsetsRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<AlterShareGroupOffsetsRequestTopic>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: ConsumerProtocolSubscription
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct TopicPartition {
     #[kafka(versions = "1+")]
     pub partitions: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 #[kafka(msg_type = "data", valid_versions = "0-3", flexible_versions = "none")]
@@ -36,4 +35,3 @@ pub struct ConsumerProtocolSubscription {
     #[kafka(versions = "3+", nullable_versions = "3+", default = None)]
     pub rack_id: Option<String>,
 }
-

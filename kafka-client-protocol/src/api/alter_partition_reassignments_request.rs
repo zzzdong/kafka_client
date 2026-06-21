@@ -2,8 +2,8 @@
 //! Message: AlterPartitionReassignmentsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct ReassignablePartition {
     pub replicas: Option<Vec<i32>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ReassignableTopic {
     /// The topic name.
@@ -27,9 +26,13 @@ pub struct ReassignableTopic {
     pub partitions: Vec<ReassignablePartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 45, msg_type = "request", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 45,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct AlterPartitionReassignmentsRequest {
     /// The time in ms to wait for the request to complete.
     #[kafka(versions = "0+", default = 60000)]
@@ -41,4 +44,3 @@ pub struct AlterPartitionReassignmentsRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<ReassignableTopic>,
 }
-

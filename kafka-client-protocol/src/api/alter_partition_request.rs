@@ -2,8 +2,8 @@
 //! Message: AlterPartitionRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct BrokerState {
     #[kafka(versions = "3+", default = -1)]
     pub broker_epoch: i64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -39,7 +38,6 @@ pub struct PartitionData {
     pub partition_epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The ID of the topic to alter ISRs for.
@@ -50,9 +48,13 @@ pub struct TopicData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 56, msg_type = "request", valid_versions = "2-3", flexible_versions = "0+")]
+#[kafka(
+    api_key = 56,
+    msg_type = "request",
+    valid_versions = "2-3",
+    flexible_versions = "0+"
+)]
 pub struct AlterPartitionRequest {
     /// The ID of the requesting broker.
     #[kafka(versions = "0+")]
@@ -64,4 +66,3 @@ pub struct AlterPartitionRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicData>,
 }
-

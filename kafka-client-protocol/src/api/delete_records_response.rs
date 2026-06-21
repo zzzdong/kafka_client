@@ -2,8 +2,8 @@
 //! Message: DeleteRecordsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct DeleteRecordsPartitionResult {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DeleteRecordsTopicResult {
     /// The topic name.
@@ -30,9 +29,13 @@ pub struct DeleteRecordsTopicResult {
     pub partitions: Vec<DeleteRecordsPartitionResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 21, msg_type = "response", valid_versions = "0-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 21,
+    msg_type = "response",
+    valid_versions = "0-2",
+    flexible_versions = "2+"
+)]
 pub struct DeleteRecordsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -41,4 +44,3 @@ pub struct DeleteRecordsResponse {
     #[kafka(versions = "0+")]
     pub topics: Vec<DeleteRecordsTopicResult>,
 }
-

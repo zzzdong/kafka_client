@@ -2,8 +2,8 @@
 //! Message: OffsetFetchResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -25,7 +25,6 @@ pub struct OffsetFetchResponsePartition {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchResponseTopic {
     /// The topic name.
@@ -35,7 +34,6 @@ pub struct OffsetFetchResponseTopic {
     #[kafka(versions = "0-7")]
     pub partitions: Vec<OffsetFetchResponsePartition>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchResponsePartitions {
@@ -56,7 +54,6 @@ pub struct OffsetFetchResponsePartitions {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchResponseTopics {
     /// The topic name.
@@ -69,7 +66,6 @@ pub struct OffsetFetchResponseTopics {
     #[kafka(versions = "8+")]
     pub partitions: Vec<OffsetFetchResponsePartitions>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchResponseGroup {
@@ -84,9 +80,13 @@ pub struct OffsetFetchResponseGroup {
     pub error_code: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 9, msg_type = "response", valid_versions = "1-10", flexible_versions = "6+")]
+#[kafka(
+    api_key = 9,
+    msg_type = "response",
+    valid_versions = "1-10",
+    flexible_versions = "6+"
+)]
 pub struct OffsetFetchResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "3+", nullable_versions = "3+")]
@@ -101,4 +101,3 @@ pub struct OffsetFetchResponse {
     #[kafka(versions = "8+")]
     pub groups: Vec<OffsetFetchResponseGroup>,
 }
-

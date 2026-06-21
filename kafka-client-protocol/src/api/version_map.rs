@@ -23,7 +23,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (29, 1, 3), // DescribeAclsResponse
     (74, 0, 1), // ListConfigResourcesResponse
     (32, 1, 4), // DescribeConfigsRequest
-    (6, 0, 0), // UpdateMetadataRequest
+    (6, 0, 0),  // UpdateMetadataRequest
     (27, 1, 2), // WriteTxnMarkersRequest
     (69, 0, 1), // ConsumerGroupDescribeResponse
     (53, 0, 1), // BeginQuorumEpochResponse
@@ -77,7 +77,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (80, 0, 1), // AddRaftVoterRequest
     (82, 0, 0), // UpdateRaftVoterResponse
     (42, 0, 2), // DeleteGroupsRequest
-    (6, 0, 0), // UpdateMetadataResponse
+    (6, 0, 0),  // UpdateMetadataResponse
     (91, 0, 0), // AlterShareGroupOffsetsRequest
     (46, 0, 0), // ListPartitionReassignmentsRequest
     (12, 0, 4), // HeartbeatRequest
@@ -86,13 +86,13 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (12, 0, 4), // HeartbeatResponse
     (22, 0, 6), // InitProducerIdResponse
     (41, 1, 3), // DescribeDelegationTokenResponse
-    (4, 0, 0), // LeaderAndIsrRequest
+    (4, 0, 0),  // LeaderAndIsrRequest
     (46, 0, 0), // ListPartitionReassignmentsResponse
     (79, 1, 2), // ShareAcknowledgeRequest
     (75, 0, 0), // DescribeTopicPartitionsResponse
     (81, 0, 0), // RemoveRaftVoterRequest
     (62, 0, 4), // BrokerRegistrationResponse
-    (5, 0, 0), // StopReplicaResponse
+    (5, 0, 0),  // StopReplicaResponse
     (16, 0, 5), // ListGroupsResponse
     (32, 1, 4), // DescribeConfigsResponse
     (0, 3, 13), // ProduceResponse
@@ -101,7 +101,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (76, 1, 1), // ShareGroupHeartbeatRequest
     (48, 0, 1), // DescribeClientQuotasResponse
     (70, 0, 0), // ControllerRegistrationResponse
-    (5, 0, 0), // StopReplicaRequest
+    (5, 0, 0),  // StopReplicaRequest
     (23, 2, 4), // OffsetForLeaderEpochRequest
     (18, 0, 4), // ApiVersionsRequest
     (84, 0, 0), // ReadShareGroupStateResponse
@@ -111,7 +111,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (22, 0, 6), // InitProducerIdRequest
     (26, 0, 5), // EndTxnResponse
     (74, 0, 1), // ListConfigResourcesRequest
-    (4, 0, 0), // LeaderAndIsrResponse
+    (4, 0, 0),  // LeaderAndIsrResponse
     (30, 1, 3), // CreateAclsRequest
     (75, 0, 0), // DescribeTopicPartitionsRequest
     (28, 0, 5), // TxnOffsetCommitResponse
@@ -146,7 +146,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (88, 0, 0), // StreamsGroupHeartbeatRequest
     (2, 1, 11), // ListOffsetsRequest
     (11, 0, 9), // JoinGroupResponse
-    (7, 0, 0), // ControlledShutdownResponse
+    (7, 0, 0),  // ControlledShutdownResponse
     (18, 0, 4), // ApiVersionsResponse
     (35, 1, 4), // DescribeLogDirsRequest
     (83, 0, 0), // InitializeShareGroupStateResponse
@@ -172,7 +172,7 @@ pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (44, 0, 1), // IncrementalAlterConfigsResponse
     (91, 0, 0), // AlterShareGroupOffsetsResponse
     (15, 0, 6), // DescribeGroupsRequest
-    (7, 0, 0), // ControlledShutdownRequest
+    (7, 0, 0),  // ControlledShutdownRequest
     (61, 0, 0), // DescribeProducersResponse
     (68, 0, 1), // ConsumerGroupHeartbeatRequest
     (54, 0, 1), // EndQuorumEpochRequest
@@ -205,4 +205,43 @@ pub fn supports_version(api_key: i16, version: i16) -> bool {
         .iter()
         .find(|&&(key, _, _)| key == api_key)
         .map_or(false, |&(_, min, max)| version >= min && version <= max)
+}
+
+/// 返回指定 API 开始启用 flexible 编码/解码的版本号。
+///
+/// 这些值来自 `kafka-client-protocol/src/api/*_request/response.rs` 中各消息定义的
+/// `flexible_versions` 属性。当前测试 broker 对 flexible 响应的支持不稳定，因此
+/// 客户端在协商版本时会降到 `flex - 1` 的非 flexible 版本。
+pub fn get_flexible_version(api_key: i16) -> Option<i16> {
+    match api_key {
+        0 => Some(9),  // Produce
+        1 => Some(12), // Fetch
+        2 => Some(6),  // ListOffsets
+        3 => Some(9),  // Metadata
+        8 => Some(8),  // OffsetCommit
+        9 => Some(6),  // OffsetFetch
+        10 => Some(3), // FindCoordinator
+        11 => Some(6), // JoinGroup
+        12 => Some(4), // Heartbeat
+        13 => Some(4), // LeaveGroup
+        14 => Some(4), // SyncGroup
+        15 => Some(5), // DescribeGroups
+        16 => Some(3), // ListGroups
+        18 => Some(3), // ApiVersions
+        19 => Some(5), // CreateTopics
+        20 => Some(4), // DeleteTopics
+        22 => Some(2), // InitProducerId
+        25 => Some(3), // AddOffsetsToTxn
+        26 => Some(3), // EndTxn
+        28 => Some(3), // TxnOffsetCommit
+        32 => Some(4), // DescribeConfigs
+        33 => Some(2), // AlterConfigs
+        36 => Some(2), // SaslAuthenticate
+        37 => Some(3), // CreatePartitions
+        42 => Some(2), // DeleteGroups
+        44 => Some(1), // IncrementalAlterConfigs
+        56 => Some(3), // AlterPartition
+        61 => Some(0), // DescribeProducers (flexible from inception)
+        _ => None,
+    }
 }

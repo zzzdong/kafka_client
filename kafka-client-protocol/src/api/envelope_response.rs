@@ -2,12 +2,17 @@
 //! Message: EnvelopeResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 58, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 58,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct EnvelopeResponse {
     /// The embedded response header and data.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
@@ -16,4 +21,3 @@ pub struct EnvelopeResponse {
     #[kafka(versions = "0+")]
     pub error_code: i16,
 }
-

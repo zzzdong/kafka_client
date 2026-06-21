@@ -2,8 +2,8 @@
 //! Message: AlterClientQuotasResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct EntityData {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub entity_name: Option<String>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct EntryData {
@@ -30,9 +29,13 @@ pub struct EntryData {
     pub entity: Vec<EntityData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 49, msg_type = "response", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 49,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct AlterClientQuotasResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -41,4 +44,3 @@ pub struct AlterClientQuotasResponse {
     #[kafka(versions = "0+")]
     pub entries: Vec<EntryData>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: FetchRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct ReplicaState {
     #[kafka(versions = "15+", default = -1)]
     pub replica_epoch: i64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchPartition {
@@ -38,13 +37,23 @@ pub struct FetchPartition {
     #[kafka(versions = "0+")]
     pub partition_max_bytes: i32,
     /// The directory id of the follower fetching.
-    #[kafka(versions = "17+", nullable_versions = "17+", tag = 0, tagged_versions = "17+")]
+    #[kafka(
+        versions = "17+",
+        nullable_versions = "17+",
+        tag = 0,
+        tagged_versions = "17+"
+    )]
     pub replica_directory_id: Option<Uuid>,
     /// The high-watermark known by the replica. -1 if the high-watermark is not known and 9223372036854775807 if the feature is not supported.
-    #[kafka(versions = "18+", nullable_versions = "18+", tag = 1, tagged_versions = "18+", default = 9223372036854775807)]
+    #[kafka(
+        versions = "18+",
+        nullable_versions = "18+",
+        tag = 1,
+        tagged_versions = "18+",
+        default = 9223372036854775807
+    )]
     pub high_watermark: i64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchTopic {
@@ -59,7 +68,6 @@ pub struct FetchTopic {
     pub partitions: Vec<FetchPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ForgottenTopic {
     /// The topic name.
@@ -73,9 +81,13 @@ pub struct ForgottenTopic {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 1, msg_type = "request", valid_versions = "4-18", flexible_versions = "12+")]
+#[kafka(
+    api_key = 1,
+    msg_type = "request",
+    valid_versions = "4-18",
+    flexible_versions = "12+"
+)]
 pub struct FetchRequest {
     /// The clusterId if known. This is used to validate metadata fetches prior to broker registration.
     #[kafka(versions = "12+", nullable_versions = "12+", tag = 0, tagged_versions = "12+", default = None)]
@@ -114,4 +126,3 @@ pub struct FetchRequest {
     #[kafka(versions = "11+", nullable_versions = "11+", default = Some(""))]
     pub rack_id: Option<String>,
 }
-

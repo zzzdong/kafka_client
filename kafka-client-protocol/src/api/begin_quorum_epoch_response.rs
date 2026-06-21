@@ -2,8 +2,8 @@
 //! Message: BeginQuorumEpochResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct PartitionData {
     pub leader_epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The topic name.
@@ -32,7 +31,6 @@ pub struct TopicData {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -47,9 +45,13 @@ pub struct NodeEndpoint {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 53, msg_type = "response", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 53,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct BeginQuorumEpochResponse {
     /// The top level error code.
     #[kafka(versions = "0+")]
@@ -61,4 +63,3 @@ pub struct BeginQuorumEpochResponse {
     #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

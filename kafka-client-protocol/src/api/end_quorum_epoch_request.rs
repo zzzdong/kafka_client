@@ -2,8 +2,8 @@
 //! Message: EndQuorumEpochRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct ReplicaInfo {
     #[kafka(versions = "1+")]
     pub candidate_directory_id: Uuid,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -36,7 +35,6 @@ pub struct PartitionData {
     pub preferred_candidates: Option<Vec<ReplicaInfo>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The topic name.
@@ -46,7 +44,6 @@ pub struct TopicData {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct LeaderEndpoint {
@@ -61,9 +58,13 @@ pub struct LeaderEndpoint {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 54, msg_type = "request", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 54,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct EndQuorumEpochRequest {
     /// The cluster id.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
@@ -75,4 +76,3 @@ pub struct EndQuorumEpochRequest {
     #[kafka(versions = "1+", nullable_versions = "1+")]
     pub leader_endpoints: Option<Vec<LeaderEndpoint>>,
 }
-

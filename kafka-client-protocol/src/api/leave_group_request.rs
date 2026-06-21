@@ -2,8 +2,8 @@
 //! Message: LeaveGroupRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,9 +19,13 @@ pub struct MemberIdentity {
     pub reason: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 13, msg_type = "request", valid_versions = "0-5", flexible_versions = "4+")]
+#[kafka(
+    api_key = 13,
+    msg_type = "request",
+    valid_versions = "0-5",
+    flexible_versions = "4+"
+)]
 pub struct LeaveGroupRequest {
     /// The ID of the group to leave.
     #[kafka(versions = "0+")]
@@ -33,4 +37,3 @@ pub struct LeaveGroupRequest {
     #[kafka(versions = "3+")]
     pub members: Vec<MemberIdentity>,
 }
-

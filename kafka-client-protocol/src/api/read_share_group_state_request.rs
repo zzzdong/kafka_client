@@ -2,8 +2,8 @@
 //! Message: ReadShareGroupStateRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct PartitionData {
     pub leader_epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ReadStateData {
     /// The topic identifier.
@@ -27,9 +26,13 @@ pub struct ReadStateData {
     pub partitions: Vec<PartitionData>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 84, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 84,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct ReadShareGroupStateRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct ReadShareGroupStateRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<ReadStateData>,
 }
-

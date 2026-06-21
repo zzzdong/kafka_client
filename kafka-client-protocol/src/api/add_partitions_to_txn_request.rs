@@ -2,8 +2,8 @@
 //! Message: AddPartitionsToTxnRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct AddPartitionsToTxnTopic {
     #[kafka(versions = "0+")]
     pub partitions: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AddPartitionsToTxnTransaction {
@@ -36,9 +35,13 @@ pub struct AddPartitionsToTxnTransaction {
     pub topics: Vec<AddPartitionsToTxnTopic>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 24, msg_type = "request", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 24,
+    msg_type = "request",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct AddPartitionsToTxnRequest {
     /// List of transactions to add partitions to.
     #[kafka(versions = "4+")]
@@ -56,4 +59,3 @@ pub struct AddPartitionsToTxnRequest {
     #[kafka(versions = "0-3")]
     pub v3_and_below_topics: Vec<AddPartitionsToTxnTopic>,
 }
-

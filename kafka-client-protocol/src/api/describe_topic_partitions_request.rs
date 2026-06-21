@@ -2,8 +2,8 @@
 //! Message: DescribeTopicPartitionsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -12,7 +12,6 @@ pub struct TopicRequest {
     #[kafka(versions = "0+")]
     pub name: String,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Cursor {
@@ -24,9 +23,13 @@ pub struct Cursor {
     pub partition_index: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 75, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 75,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct DescribeTopicPartitionsRequest {
     /// The topics to fetch details for.
     #[kafka(versions = "0+")]
@@ -38,4 +41,3 @@ pub struct DescribeTopicPartitionsRequest {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub cursor: Option<Cursor>,
 }
-

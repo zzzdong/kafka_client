@@ -168,9 +168,9 @@ impl RecordBatch {
         CompressionType::from_attributes(self.attributes)
     }
 
-    /// 计算 CRC32 校验值
+    /// 计算 CRC32C（Castagnoli）校验值
     fn calculate_crc(data: &[u8]) -> u32 {
-        crc32fast::hash(data)
+        crc32c::crc32c(data)
     }
 
     /// 编码为字节数组（用于计算 CRC）
@@ -202,8 +202,8 @@ impl RecordBatch {
         buf.put_i32(self.records_count);
         buf.extend_from_slice(&records_buf);
 
-        // 计算 CRC（从 partition_leader_epoch 开始）
-        let crc_data = &buf[4..]; // 跳过 CRC 字段本身
+        // 计算 CRC：从 attributes 开始（跳过 partition_leader_epoch、magic 和 CRC 本身）
+        let crc_data = &buf[9..];
         let crc = Self::calculate_crc(crc_data);
 
         // 回填 CRC
@@ -295,7 +295,7 @@ impl RecordBatch {
         // }
 
         Ok(RecordBatch {
-            base_offset: 0, // 由外层设置
+            base_offset: 0,  // 由外层设置
             batch_length: 0, // 由外层计算
             partition_leader_epoch,
             magic,

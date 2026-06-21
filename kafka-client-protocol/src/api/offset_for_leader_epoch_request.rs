@@ -2,8 +2,8 @@
 //! Message: OffsetForLeaderEpochRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct OffsetForLeaderPartition {
     pub leader_epoch: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetForLeaderTopic {
     /// The topic name.
@@ -30,9 +29,13 @@ pub struct OffsetForLeaderTopic {
     pub partitions: Vec<OffsetForLeaderPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 23, msg_type = "request", valid_versions = "2-4", flexible_versions = "4+")]
+#[kafka(
+    api_key = 23,
+    msg_type = "request",
+    valid_versions = "2-4",
+    flexible_versions = "4+"
+)]
 pub struct OffsetForLeaderEpochRequest {
     /// The broker ID of the follower, of -1 if this request is from a consumer.
     #[kafka(versions = "3+", nullable_versions = "3+", default = -2)]
@@ -41,4 +44,3 @@ pub struct OffsetForLeaderEpochRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetForLeaderTopic>,
 }
-

@@ -2,8 +2,8 @@
 //! Message: ShareGroupHeartbeatResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct TopicPartitions {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Assignment {
     /// The partitions assigned to the member.
@@ -24,9 +23,13 @@ pub struct Assignment {
     pub topic_partitions: Vec<TopicPartitions>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 76, msg_type = "response", valid_versions = "1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 76,
+    msg_type = "response",
+    valid_versions = "1",
+    flexible_versions = "0+"
+)]
 pub struct ShareGroupHeartbeatResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -50,4 +53,3 @@ pub struct ShareGroupHeartbeatResponse {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub assignment: Option<Assignment>,
 }
-

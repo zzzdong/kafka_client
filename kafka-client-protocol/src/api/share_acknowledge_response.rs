@@ -2,8 +2,8 @@
 //! Message: ShareAcknowledgeResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct LeaderIdAndEpoch {
     #[kafka(versions = "0+")]
     pub leader_epoch: i32,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -33,7 +32,6 @@ pub struct PartitionData {
     pub current_leader: LeaderIdAndEpoch,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ShareAcknowledgeTopicResponse {
     /// The unique topic ID.
@@ -43,7 +41,6 @@ pub struct ShareAcknowledgeTopicResponse {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -61,9 +58,13 @@ pub struct NodeEndpoint {
     pub rack: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 79, msg_type = "response", valid_versions = "1-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 79,
+    msg_type = "response",
+    valid_versions = "1-2",
+    flexible_versions = "0+"
+)]
 pub struct ShareAcknowledgeResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -84,4 +85,3 @@ pub struct ShareAcknowledgeResponse {
     #[kafka(versions = "0+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

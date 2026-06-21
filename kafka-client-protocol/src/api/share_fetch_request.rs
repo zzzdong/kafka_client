@@ -2,8 +2,8 @@
 //! Message: ShareFetchRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct AcknowledgementBatch {
     pub acknowledge_types: Vec<i8>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchPartition {
     /// The partition index.
@@ -33,7 +32,6 @@ pub struct FetchPartition {
     pub acknowledgement_batches: Vec<AcknowledgementBatch>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchTopic {
     /// The unique topic ID.
@@ -43,7 +41,6 @@ pub struct FetchTopic {
     #[kafka(versions = "0+")]
     pub partitions: Vec<FetchPartition>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct ForgottenTopic {
@@ -55,9 +52,13 @@ pub struct ForgottenTopic {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 78, msg_type = "request", valid_versions = "1-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 78,
+    msg_type = "request",
+    valid_versions = "1-2",
+    flexible_versions = "0+"
+)]
 pub struct ShareFetchRequest {
     /// The group identifier.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
@@ -96,4 +97,3 @@ pub struct ShareFetchRequest {
     #[kafka(versions = "0+")]
     pub forgotten_topics_data: Vec<ForgottenTopic>,
 }
-

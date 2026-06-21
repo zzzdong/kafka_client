@@ -1,10 +1,10 @@
-use bytes::Bytes;
-use base64::{Engine as _, engine::general_purpose};
-use sha2::{Sha256, Sha512, Digest};
-use hmac::{Hmac, Mac};
-use pbkdf2::pbkdf2_hmac;
 use super::{SaslCredentials, SaslMechanismType};
 use crate::error::SaslError;
+use base64::{Engine as _, engine::general_purpose};
+use bytes::Bytes;
+use hmac::{Hmac, Mac};
+use pbkdf2::pbkdf2_hmac;
+use sha2::{Digest, Sha256, Sha512};
 
 /// SCRAM 状态
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -59,7 +59,7 @@ impl ScramMechanism {
         use rand::RngCore;
         let mut bytes = [0u8; 24];
         rand::rng().fill_bytes(&mut bytes);
-        general_purpose::STANDARD.encode(&bytes)
+        general_purpose::STANDARD.encode(bytes)
     }
 
     /// 获取机制名称
@@ -120,7 +120,7 @@ impl ScramMechanism {
         self.parse_server_first(&challenge_str)?;
         let client_final = self.generate_client_final()?;
         self.state = ScramState::WaitingServerFinal;
-        
+
         Ok(Bytes::from(client_final))
     }
 
@@ -131,14 +131,16 @@ impl ScramMechanism {
         }
 
         let challenge_str = String::from_utf8(server_final.to_vec())?;
-        
+
         if let Some(sig) = challenge_str.strip_prefix("v=") {
             self.verify_server_signature(sig)?;
             self.state = ScramState::Complete;
             self.success = true;
             Ok(())
         } else {
-            Err(SaslError::InvalidChallenge("Missing server signature".to_string()))
+            Err(SaslError::InvalidChallenge(
+                "Missing server signature".to_string(),
+            ))
         }
     }
 
@@ -204,21 +206,27 @@ impl ScramMechanism {
             if let Some(value) = part.strip_prefix("r=") {
                 nonce = Some(value.to_string());
             } else if let Some(value) = part.strip_prefix("s=") {
-                salt = Some(general_purpose::STANDARD.decode(value)
-                    .map_err(|e| SaslError::InvalidChallenge(format!("Invalid base64 salt: {}", e)))?);
+                salt = Some(general_purpose::STANDARD.decode(value).map_err(|e| {
+                    SaslError::InvalidChallenge(format!("Invalid base64 salt: {}", e))
+                })?);
             } else if let Some(value) = part.strip_prefix("i=") {
-                iterations = Some(value.parse()
-                    .map_err(|e| SaslError::InvalidChallenge(format!("Invalid iterations: {}", e)))?);
+                iterations = Some(value.parse().map_err(|e| {
+                    SaslError::InvalidChallenge(format!("Invalid iterations: {}", e))
+                })?);
             }
         }
 
-        let nonce = nonce.ok_or_else(|| SaslError::InvalidChallenge("Missing nonce".to_string()))?;
+        let nonce =
+            nonce.ok_or_else(|| SaslError::InvalidChallenge("Missing nonce".to_string()))?;
         let salt = salt.ok_or_else(|| SaslError::InvalidChallenge("Missing salt".to_string()))?;
-        let iterations = iterations.ok_or_else(|| SaslError::InvalidChallenge("Missing iterations".to_string()))?;
+        let iterations = iterations
+            .ok_or_else(|| SaslError::InvalidChallenge("Missing iterations".to_string()))?;
 
         // Verify that server nonce starts with client nonce
         if !nonce.starts_with(&self.client_nonce) {
-            return Err(SaslError::InvalidChallenge("Server nonce does not start with client nonce".to_string()));
+            return Err(SaslError::InvalidChallenge(
+                "Server nonce does not start with client nonce".to_string(),
+            ));
         }
 
         self.server_nonce = Some(nonce);
@@ -229,12 +237,12 @@ impl ScramMechanism {
     }
 
     fn generate_client_final(&mut self) -> Result<String, SaslError> {
-        let server_nonce = self.server_nonce.as_ref()
-            .ok_or_else(|| SaslError::InvalidState)?;
-        let salt = self.salt.as_ref()
-            .ok_or_else(|| SaslError::InvalidState)?;
-        let iterations = self.iterations
-            .ok_or_else(|| SaslError::InvalidState)?;
+        let server_nonce = self
+            .server_nonce
+            .as_ref()
+            .ok_or(SaslError::InvalidState)?;
+        let salt = self.salt.as_ref().ok_or(SaslError::InvalidState)?;
+        let iterations = self.iterations.ok_or(SaslError::InvalidState)?;
 
         // Calculate SaltedPassword
         let salted_password = self.hi(&self.password, salt, iterations);
@@ -250,38 +258,49 @@ impl ScramMechanism {
         let client_first_message_bare = format!("n={},r={}", self.username, self.client_nonce);
 
         // ServerFirstMessage = "r=", server_nonce, ",s=", base64(salt), ",i=", iterations
-        let server_first_message = format!("r={},s={},i={}",
+        let server_first_message = format!(
+            "r={},s={},i={}",
             server_nonce,
             general_purpose::STANDARD.encode(salt),
-            iterations);
+            iterations
+        );
 
         // ClientFinalMessageWithoutProof = "c=biws,r=", server_nonce
         let client_final_message_without_proof = format!("c=biws,r={}", server_nonce);
 
         // AuthMessage = ClientFirstMessageBare + "," + ServerFirstMessage + "," + ClientFinalMessageWithoutProof
-        let auth_message = format!("{},{},{}",
-            client_first_message_bare,
-            server_first_message,
-            client_final_message_without_proof);
+        let auth_message = format!(
+            "{},{},{}",
+            client_first_message_bare, server_first_message, client_final_message_without_proof
+        );
         self.auth_message = Some(auth_message.clone());
 
         // ClientSignature = HMAC(StoredKey, AuthMessage)
         let client_signature = self.hmac(&stored_key, auth_message.as_bytes());
 
         // ClientProof = ClientKey XOR ClientSignature
-        let client_proof: Vec<u8> = client_key.iter()
+        let client_proof: Vec<u8> = client_key
+            .iter()
             .zip(client_signature.iter())
             .map(|(k, s)| k ^ s)
             .collect();
 
-        Ok(format!("{},p={}", client_final_message_without_proof, general_purpose::STANDARD.encode(&client_proof)))
+        Ok(format!(
+            "{},p={}",
+            client_final_message_without_proof,
+            general_purpose::STANDARD.encode(&client_proof)
+        ))
     }
 
     fn verify_server_signature(&self, signature: &str) -> Result<(), SaslError> {
-        let salted_password = self.salted_password.as_ref()
-            .ok_or_else(|| SaslError::InvalidState)?;
-        let auth_message = self.auth_message.as_ref()
-            .ok_or_else(|| SaslError::InvalidState)?;
+        let salted_password = self
+            .salted_password
+            .as_ref()
+            .ok_or(SaslError::InvalidState)?;
+        let auth_message = self
+            .auth_message
+            .as_ref()
+            .ok_or(SaslError::InvalidState)?;
 
         // ServerKey = HMAC(SaltedPassword, "Server Key")
         let server_key = self.hmac(salted_password, b"Server Key");
@@ -291,7 +310,9 @@ impl ScramMechanism {
         let expected_signature_b64 = general_purpose::STANDARD.encode(&expected_signature);
 
         if signature != expected_signature_b64 {
-            return Err(SaslError::AuthenticationFailed("Server signature verification failed".to_string()));
+            return Err(SaslError::AuthenticationFailed(
+                "Server signature verification failed".to_string(),
+            ));
         }
 
         Ok(())
@@ -302,8 +323,8 @@ impl ScramMechanism {
 // 异步适配器（用于需要 async trait 的场景）
 // ============================================================================
 
-use async_trait::async_trait;
 use super::SaslMechanism;
+use async_trait::async_trait;
 
 pub struct AsyncScramMechanism {
     inner: ScramMechanism,
@@ -333,13 +354,14 @@ impl SaslMechanism for AsyncScramMechanism {
         self.inner.is_client_first()
     }
 
-    async fn initial_response(&mut self, credentials: &SaslCredentials)
-        -> Result<Option<Bytes>, SaslError> {
+    async fn initial_response(
+        &mut self,
+        credentials: &SaslCredentials,
+    ) -> Result<Option<Bytes>, SaslError> {
         self.inner.client_first(credentials).map(Some)
     }
 
-    async fn challenge(&mut self, challenge: &[u8])
-        -> Result<Option<Bytes>, SaslError> {
+    async fn challenge(&mut self, challenge: &[u8]) -> Result<Option<Bytes>, SaslError> {
         if self.inner.state == ScramState::WaitingServerFirst {
             self.inner.client_final(challenge).map(Some)
         } else if self.inner.state == ScramState::WaitingServerFinal {

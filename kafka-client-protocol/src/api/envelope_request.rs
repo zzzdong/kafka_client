@@ -2,12 +2,17 @@
 //! Message: EnvelopeRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 58, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 58,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct EnvelopeRequest {
     /// The embedded request header and data.
     #[kafka(versions = "0+")]
@@ -19,4 +24,3 @@ pub struct EnvelopeRequest {
     #[kafka(versions = "0+")]
     pub client_host_address: Bytes,
 }
-

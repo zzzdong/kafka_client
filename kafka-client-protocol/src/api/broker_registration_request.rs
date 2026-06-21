@@ -2,8 +2,8 @@
 //! Message: BrokerRegistrationRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct Listener {
     pub security_protocol: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Feature {
     /// The feature name.
@@ -36,9 +35,13 @@ pub struct Feature {
     pub max_supported_version: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 62, msg_type = "request", valid_versions = "0-4", flexible_versions = "0+")]
+#[kafka(
+    api_key = 62,
+    msg_type = "request",
+    valid_versions = "0-4",
+    flexible_versions = "0+"
+)]
 pub struct BrokerRegistrationRequest {
     /// The broker ID.
     #[kafka(versions = "0+")]
@@ -68,4 +71,3 @@ pub struct BrokerRegistrationRequest {
     #[kafka(versions = "3+", nullable_versions = "3+", default = -1)]
     pub previous_broker_epoch: i64,
 }
-

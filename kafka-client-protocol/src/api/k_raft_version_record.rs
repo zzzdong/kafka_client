@@ -2,8 +2,8 @@
 //! Message: KRaftVersionRecord
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,4 +16,3 @@ pub struct KraftVersionRecord {
     #[kafka(versions = "0+")]
     pub kraft_version: i16,
 }
-

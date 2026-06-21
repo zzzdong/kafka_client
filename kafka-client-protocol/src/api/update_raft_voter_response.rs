@@ -2,8 +2,8 @@
 //! Message: UpdateRaftVoterResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,9 +22,13 @@ pub struct CurrentLeader {
     pub port: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 82, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 82,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct UpdateRaftVoterResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -36,4 +40,3 @@ pub struct UpdateRaftVoterResponse {
     #[kafka(versions = "0+", tag = 0, tagged_versions = "0+")]
     pub current_leader: CurrentLeader,
 }
-

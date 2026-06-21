@@ -2,8 +2,8 @@
 //! Message: DescribeClientQuotasRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,9 +19,13 @@ pub struct ComponentData {
     pub r#match: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 48, msg_type = "request", valid_versions = "0-1", flexible_versions = "1+")]
+#[kafka(
+    api_key = 48,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "1+"
+)]
 pub struct DescribeClientQuotasRequest {
     /// Filter components to apply to quota entities.
     #[kafka(versions = "0+")]
@@ -30,4 +34,3 @@ pub struct DescribeClientQuotasRequest {
     #[kafka(versions = "0+")]
     pub strict: bool,
 }
-

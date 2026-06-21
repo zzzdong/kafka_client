@@ -2,8 +2,8 @@
 //! Message: CreateTopicsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct CreatableReplicaAssignment {
     pub broker_ids: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct CreatableTopicConfig {
     /// The configuration name.
@@ -26,7 +25,6 @@ pub struct CreatableTopicConfig {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub value: Option<String>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct CreatableTopic {
@@ -47,9 +45,13 @@ pub struct CreatableTopic {
     pub configs: Vec<CreatableTopicConfig>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 19, msg_type = "request", valid_versions = "2-7", flexible_versions = "5+")]
+#[kafka(
+    api_key = 19,
+    msg_type = "request",
+    valid_versions = "2-7",
+    flexible_versions = "5+"
+)]
 pub struct CreateTopicsRequest {
     /// The topics to create.
     #[kafka(versions = "0+")]
@@ -61,4 +63,3 @@ pub struct CreateTopicsRequest {
     #[kafka(versions = "1+", default = false)]
     pub validate_only: bool,
 }
-

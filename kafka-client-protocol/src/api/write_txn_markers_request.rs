@@ -2,8 +2,8 @@
 //! Message: WriteTxnMarkersRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct WritableTxnMarkerTopic {
     #[kafka(versions = "0+")]
     pub partition_indexes: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct WritableTxnMarker {
@@ -39,12 +38,15 @@ pub struct WritableTxnMarker {
     pub transaction_version: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 27, msg_type = "request", valid_versions = "1-2", flexible_versions = "1+")]
+#[kafka(
+    api_key = 27,
+    msg_type = "request",
+    valid_versions = "1-2",
+    flexible_versions = "1+"
+)]
 pub struct WriteTxnMarkersRequest {
     /// The transaction markers to be written.
     #[kafka(versions = "0+")]
     pub markers: Vec<WritableTxnMarker>,
 }
-

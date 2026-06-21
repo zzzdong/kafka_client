@@ -2,8 +2,8 @@
 //! Message: EndTxnMarker
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -13,4 +13,3 @@ pub struct EndTxnMarker {
     #[kafka(versions = "0+")]
     pub coordinator_epoch: i32,
 }
-

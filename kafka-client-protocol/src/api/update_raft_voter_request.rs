@@ -2,8 +2,8 @@
 //! Message: UpdateRaftVoterRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,6 @@ pub struct Listener {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct KRaftVersionFeature {
     /// The minimum supported KRaft protocol version.
@@ -30,9 +29,13 @@ pub struct KRaftVersionFeature {
     pub max_supported_version: i16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 82, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 82,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct UpdateRaftVoterRequest {
     /// The cluster id.
     #[kafka(versions = "0+", nullable_versions = "0+")]
@@ -53,4 +56,3 @@ pub struct UpdateRaftVoterRequest {
     #[kafka(versions = "0+")]
     pub kraft_version_feature: KRaftVersionFeature,
 }
-

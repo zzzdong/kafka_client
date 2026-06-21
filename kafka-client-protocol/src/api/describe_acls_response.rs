@@ -2,8 +2,8 @@
 //! Message: DescribeAclsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct AclDescription {
     pub permission_type: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeAclsResource {
     /// The resource type.
@@ -39,9 +38,13 @@ pub struct DescribeAclsResource {
     pub acls: Vec<AclDescription>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 29, msg_type = "response", valid_versions = "1-3", flexible_versions = "2+")]
+#[kafka(
+    api_key = 29,
+    msg_type = "response",
+    valid_versions = "1-3",
+    flexible_versions = "2+"
+)]
 pub struct DescribeAclsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -56,4 +59,3 @@ pub struct DescribeAclsResponse {
     #[kafka(versions = "0+")]
     pub resources: Vec<DescribeAclsResource>,
 }
-

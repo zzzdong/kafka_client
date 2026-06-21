@@ -2,8 +2,8 @@
 //! Message: StreamsGroupHeartbeatRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct KeyValue {
     #[kafka(versions = "0+")]
     pub value: String,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicInfo {
@@ -33,7 +32,6 @@ pub struct TopicInfo {
     pub topic_configs: Vec<KeyValue>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Endpoint {
     /// host of the endpoint
@@ -43,7 +41,6 @@ pub struct Endpoint {
     #[kafka(versions = "0+")]
     pub port: u16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TaskOffset {
@@ -58,7 +55,6 @@ pub struct TaskOffset {
     pub offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TaskIds {
     /// The subtopology identifier.
@@ -68,7 +64,6 @@ pub struct TaskIds {
     #[kafka(versions = "0+")]
     pub partitions: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct CopartitionGroup {
@@ -82,7 +77,6 @@ pub struct CopartitionGroup {
     #[kafka(versions = "0+")]
     pub repartition_source_topics: Vec<i16>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Subtopology {
@@ -109,7 +103,6 @@ pub struct Subtopology {
     pub copartition_groups: Vec<CopartitionGroup>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Topology {
     /// The epoch of the topology. Used to check if the topology corresponds to the topology initialized on the brokers.
@@ -120,9 +113,13 @@ pub struct Topology {
     pub subtopologies: Vec<Subtopology>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 88, msg_type = "request", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 88,
+    msg_type = "request",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct StreamsGroupHeartbeatRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -176,4 +173,3 @@ pub struct StreamsGroupHeartbeatRequest {
     #[kafka(versions = "0+", default = false)]
     pub shutdown_application: bool,
 }
-

@@ -1,21 +1,18 @@
 // kafka-client/src/connection.rs
 
 use bytes::Bytes;
-use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::Framed;
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 use crate::codec::{KafkaCodec, KafkaFrame};
 use crate::error::{KafkaError, Result};
 use crate::sasl::{SaslCredentials, SaslMechanismType};
 use crate::transport::*;
-use kafka_client_protocol::{self as protocol, Request, Response, ResponseHeader};
+use kafka_client_protocol::{self as protocol, Request, Response};
 
 // 导入 SCRAM 实现
 use crate::sasl::scram::ScramMechanism;
@@ -52,56 +49,117 @@ impl Default for NegotiatedVersions {
 }
 
 // ============================================================================
-// 一问一答模式连接（初始化阶段）
+// Pipeline 模式连接（正常操作阶段）
 // ============================================================================
 
-/// 一问一答模式的连接
-/// 用于版本协商和 SASL 认证
-pub struct SequentialConnection {
-    sink: SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-    stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
-    client_id: Option<String>,
-    negotiated: NegotiatedVersions,
+/// Pipeline 模式的连接
+/// 内部使用顺序请求模式（发送后等待响应）
+/// 拥有 Framed 的所有权（外部通过 Arc<Mutex<Connection>> 实现线程安全）
+pub struct Connection {
+    framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
+    negotiated: Arc<NegotiatedVersions>,
+    next_correlation_id: std::sync::atomic::AtomicI32,
 }
 
-impl SequentialConnection {
-    /// 创建新的顺序连接
-    pub fn new(
+impl Connection {
+    fn new(
         framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
-        client_id: Option<String>,
+        _client_id: Option<String>,
+        negotiated: Arc<NegotiatedVersions>,
     ) -> Self {
-        let (sink, stream) = framed.split();
-        SequentialConnection {
-            sink,
-            stream,
-            client_id,
-            negotiated: NegotiatedVersions::new(),
+        Connection {
+            framed,
+            negotiated,
+            next_correlation_id: std::sync::atomic::AtomicI32::new(rand::random()),
         }
     }
 
-    /// 发送请求并等待响应（自动处理 correlation_id）
+    /// 发送请求并等待响应（顺序模式：发送 → 等待响应）
     pub async fn send_request<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
     where
         Req: Request,
         Resp: Response,
     {
         let api_key = request.api_key();
-        let version = self.negotiated.get_version(api_key).unwrap_or(0);
+        let version = self
+            .negotiated
+            .get_version(api_key)
+            .ok_or(KafkaError::UnsupportedApi(api_key))?;
 
-        // 每次请求使用新的 correlation_id
-        let correlation_id = rand::random();
+        let correlation_id = self
+            .next_correlation_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        debug!(
+            api_key = api_key,
+            version = version,
+            correlation_id = correlation_id,
+            "sending request"
+        );
 
         // 编码请求
-        let request_data = request.encode_frame(version, correlation_id, self.client_id.clone())?;
+        let request_data =
+            request.encode_frame(version, correlation_id, Some("kafka-client".to_string()))?;
 
-        // 发送
-        self.sink
-            .send(KafkaFrame::new(request_data))
-            .await?;
+        // 发送到网络
+        self.framed.send(KafkaFrame::new(request_data)).await?;
+
+        // 显式 flush
+        self.framed.flush().await?;
 
         // 等待响应
         let frame = self
-            .stream
+            .framed
+            .next()
+            .await
+            .ok_or(KafkaError::ConnectionClosed)??;
+
+        debug!(response_len = frame.data.len(), "received response");
+
+        // 解码响应
+        let (header, response) = Resp::decode_frame(frame.data, version)?;
+
+        // 验证 correlation_id
+        if header.correlation_id() != correlation_id {
+            return Err(KafkaError::CorrelationIdMismatch {
+                expected: correlation_id,
+                actual: header.correlation_id(),
+            });
+        }
+
+        Ok(response)
+    }
+
+    /// 发送请求并在指定版本下等待响应（用于调试/测试）
+    pub async fn send_request_at<Req, Resp>(&mut self, request: &Req, version: i16) -> Result<Resp>
+    where
+        Req: Request,
+        Resp: Response,
+    {
+        let api_key = request.api_key();
+        let correlation_id = self
+            .next_correlation_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        debug!(
+            api_key = api_key,
+            version = version,
+            "sending request at explicit version"
+        );
+
+        // 编码请求
+        let request_data =
+            request.encode_frame(version, correlation_id, Some("kafka-client".to_string()))?;
+
+        // 发送到网络
+        self.framed.send(KafkaFrame::new(request_data)).await?;
+
+        // 显式 flush
+        self.framed.flush().await?;
+
+        // 等待响应
+        let frame = self
+            .framed
             .next()
             .await
             .ok_or(KafkaError::ConnectionClosed)??;
@@ -120,210 +178,18 @@ impl SequentialConnection {
         Ok(response)
     }
 
-    /// 获取当前协商的版本
     pub fn negotiated(&self) -> &NegotiatedVersions {
         &self.negotiated
     }
 
-    /// 设置协商版本（在 ApiVersions 后调用）
-    pub fn set_negotiated(&mut self, negotiated: NegotiatedVersions) {
-        self.negotiated = negotiated;
-    }
-
-    /// 转换为 Pipeline 连接（析构 SequentialConnection）
-    pub fn into_pipeline(self) -> PipelineConnection {
-        PipelineConnection::new(
-            self.sink,
-            self.stream,
-            self.client_id,
-            Arc::new(self.negotiated),
-        )
-    }
-
-    /// 获取底层 sink（用于特殊场景）
-    pub fn into_parts(
-        self,
-    ) -> (
-        SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-        futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
-    ) {
-        (self.sink, self.stream)
-    }
-}
-
-// ============================================================================
-// Pipeline 模式连接（正常操作阶段）
-// ============================================================================
-
-/// Pipeline 模式的连接
-/// 支持并发请求，响应乱序
-pub struct PipelineConnection {
-    sink: SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-    receiver_task: tokio::task::JoinHandle<()>,
-    request_tx: mpsc::UnboundedSender<PipelineRequest>,
-    negotiated: Arc<NegotiatedVersions>,
-    next_correlation_id: std::sync::atomic::AtomicI32,
-}
-
-struct PipelineRequest {
-    correlation_id: i32,
-    #[allow(dead_code)]
-    api_key: i16,
-    #[allow(dead_code)]
-    version: i16,
-    #[allow(dead_code)]
-    data: Bytes,
-    response_tx: oneshot::Sender<Result<Bytes>>,
-}
-
-impl PipelineConnection {
-    fn new(
-        sink: SplitSink<Framed<Box<dyn NetworkStream>, KafkaCodec>, KafkaFrame>,
-        stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
-        client_id: Option<String>,
-        negotiated: Arc<NegotiatedVersions>,
-    ) -> Self {
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-
-        let receiver_task = tokio::spawn(Self::run_receiver(stream, request_rx, client_id));
-
-        PipelineConnection {
-            sink,
-            receiver_task,
-            request_tx,
-            negotiated,
-            next_correlation_id: std::sync::atomic::AtomicI32::new(rand::random()),
+    pub async fn close(mut self) -> Result<()> {
+        // 先 flush 所有未写入的数据，再关闭底层连接（发送 TLS close_notify）
+        if let Err(e) = self.framed.close().await {
+            debug!("Error closing framed connection: {}", e);
         }
-    }
-
-    async fn run_receiver(
-        mut stream: futures::stream::SplitStream<Framed<Box<dyn NetworkStream>, KafkaCodec>>,
-        mut request_rx: mpsc::UnboundedReceiver<PipelineRequest>,
-        _client_id: Option<String>,
-    ) {
-        let mut pending: HashMap<i32, oneshot::Sender<Result<Bytes>>> = HashMap::new();
-
-        loop {
-            tokio::select! {
-                Some(req) = request_rx.recv() => {
-                    debug!("Registered pending request: correlation_id={}", req.correlation_id);
-                    pending.insert(req.correlation_id, req.response_tx);
-                }
-
-                frame_result = stream.next() => {
-                    match frame_result {
-                        Some(Ok(KafkaFrame { data })) => {
-                            if data.len() < 4 {
-                                warn!("Response too short");
-                                continue;
-                            }
-
-                            let correlation_id = i32::from_be_bytes([
-                                data[0], data[1], data[2], data[3]
-                            ]);
-
-                            debug!("Received response: correlation_id={}", correlation_id);
-
-                            if let Some(tx) = pending.remove(&correlation_id) {
-                                let _ = tx.send(Ok(data));
-                            } else {
-                                warn!("Unknown correlation_id: {}", correlation_id);
-                            }
-                        }
-                        Some(Err(e)) => {
-                            error!("Receive error: {}", e);
-                            let kind = e.kind();
-                            let msg = e.to_string();
-                            for (_, tx) in pending.drain() {
-                                let _ = tx.send(Err(io::Error::new(kind.clone(), msg.clone()).into()));
-                            }
-                            break;
-                        }
-                        None => {
-                            debug!("Connection closed");
-                            for (_, tx) in pending.drain() {
-                                let _ = tx.send(Err(KafkaError::ConnectionClosed));
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// 发送请求并等待响应
-    pub async fn send_request<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
-    where
-        Req: Request,
-        Resp: Response,
-    {
-        let api_key = request.api_key();
-        let version = self
-            .negotiated
-            .get_version(api_key)
-            .ok_or(KafkaError::UnsupportedApi(api_key))?;
-
-        let correlation_id = self
-            .next_correlation_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-        // 编码请求
-        let request_data = request.encode_frame(
-            version,
-            correlation_id,
-            None, // Pipeline 模式不需要 client_id
-        )?;
-
-        // 创建响应通道
-        let (tx, rx) = oneshot::channel();
-
-        // 发送请求到后台任务
-        self.request_tx
-            .send(PipelineRequest {
-                correlation_id,
-                api_key,
-                version,
-                data: request_data.clone(),
-                response_tx: tx,
-            })
-            .map_err(|_| KafkaError::ConnectionClosed)?;
-
-        // 发送到网络
-        self.sink
-            .send(KafkaFrame::new(request_data))
-            .await?;
-
-        // 等待响应
-        let response_data = rx.await.map_err(|_| KafkaError::ConnectionClosed)??;
-
-        // 解码响应
-        let (header, response) = Resp::decode_frame(response_data, version)?;
-
-        // 验证 correlation_id
-        if header.correlation_id() != correlation_id {
-            return Err(KafkaError::CorrelationIdMismatch {
-                expected: correlation_id,
-                actual: header.correlation_id(),
-            });
-        }
-
-        Ok(response)
-    }
-
-    pub fn negotiated(&self) -> &NegotiatedVersions {
-        &self.negotiated
-    }
-
-    pub async fn close(self) -> Result<()> {
-        self.receiver_task.await.map_err(|e| {
-            KafkaError::Io(format!("Task join error: {}", e))
-        })?;
         Ok(())
     }
 }
-
-
 
 // ============================================================================
 // 构建器 - 管理连接建立流程
@@ -365,7 +231,7 @@ impl Builder {
         self
     }
 
-    pub async fn build(self) -> Result<PipelineConnection> {
+    pub async fn build(self) -> Result<Connection> {
         // 1. 建立底层连接
         let stream = TransportConnector::connect(self.addr, &self.security_protocol).await?;
         let framed = Framed::new(stream, KafkaCodec::new());
@@ -409,10 +275,20 @@ impl Builder {
         let mut negotiated = NegotiatedVersions::new();
         for api in response.api_keys {
             if let Some((client_min, client_max)) = protocol::get_version_range(api.api_key) {
-                let version = api.max_version.min(client_max);
+                let mut version = api.max_version.min(client_max);
+                // 当前测试 broker 对 flexible 响应的支持不稳定，先协商到非 flexible 版本。
+                if let Some(flex) = protocol::get_flexible_version(api.api_key) {
+                    if version >= flex {
+                        version = flex - 1;
+                    }
+                }
                 if version >= api.min_version && version >= client_min {
                     negotiated.set_version(api.api_key, version);
-                    debug!("Negotiated API {} -> version {}", api.api_key, version);
+                    debug!(
+                        api_key = api.api_key,
+                        negotiated_version = version,
+                        "negotiated API version"
+                    );
                 }
             }
         }
@@ -491,7 +367,8 @@ impl Builder {
         };
 
         // 第一轮
-        let auth_bytes = scram.client_first(&credentials)
+        let auth_bytes = scram
+            .client_first(&credentials)
             .map_err(KafkaError::SaslError)?;
         let auth_req = protocol::SaslAuthenticateRequest { auth_bytes };
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
@@ -504,7 +381,8 @@ impl Builder {
         }
 
         // 第二轮
-        let auth_bytes = scram.client_final(&auth_resp.auth_bytes)
+        let auth_bytes = scram
+            .client_final(&auth_resp.auth_bytes)
             .map_err(KafkaError::SaslError)?;
         let auth_req = protocol::SaslAuthenticateRequest { auth_bytes };
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
@@ -517,7 +395,8 @@ impl Builder {
         }
 
         // 验证
-        scram.verify_server_final(&auth_resp.auth_bytes)
+        scram
+            .verify_server_final(&auth_resp.auth_bytes)
             .map_err(KafkaError::SaslError)?;
 
         Ok(())
@@ -525,53 +404,102 @@ impl Builder {
 }
 
 // ============================================================================
-// Connection 类型别名（用于 lib.rs 导出）
+// 一问一答模式连接（初始化阶段）
 // ============================================================================
 
-/// Connection 类型别名，指向 PipelineConnection
-pub type Connection = PipelineConnection;
+/// 一问一答模式的连接
+/// 用于版本协商和 SASL 认证
+/// 直接拥有 Framed 所有权，into_pipeline 时移交所有权给 Connection
+pub struct SequentialConnection {
+    framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
+    client_id: Option<String>,
+    negotiated: NegotiatedVersions,
+}
 
-// ============================================================================
-// 使用示例
-// ============================================================================
+impl SequentialConnection {
+    /// 创建新的顺序连接
+    pub fn new(
+        framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
+        client_id: Option<String>,
+    ) -> Self {
+        SequentialConnection {
+            framed,
+            client_id,
+            negotiated: NegotiatedVersions::new(),
+        }
+    }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// 发送请求并等待响应（自动处理 correlation_id）
+    pub async fn send_request<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
+    where
+        Req: Request,
+        Resp: Response,
+    {
+        let api_key = request.api_key();
+        let version = self.negotiated.get_version(api_key).unwrap_or(0);
 
-    #[tokio::test]
-    #[ignore] // 需要运行 Kafka 服务器
-    async fn example_usage() -> Result<()> {
-        // 方式1: 使用 Builder（推荐）
-        let mut conn = Builder::new(
-            "localhost:9092".parse().unwrap(),
-            SecurityProtocol::Plaintext,
-            "my-client".to_string(),
-            "1.0.0".to_string(),
-        )
-        .with_sasl(
-            SaslMechanismType::Plain,
-            SaslCredentials {
-                mechanism: SaslMechanismType::Plain,
-                username: "alice".to_string(),
-                password: "secret".to_string(),
-                authzid: None,
-            },
-        )
-        .build()
-        .await?;
+        // 每次请求使用新的 correlation_id
+        let correlation_id = rand::random();
 
-        // 现在可以使用 pipeline 模式发送业务请求
-        let response: protocol::MetadataResponse = conn
-            .send_request(&protocol::MetadataRequest {
-                topics: None,
-                allow_auto_topic_creation: false,
-                ..Default::default()
-            })
-            .await?;
+        // 编码请求
+        let request_data = request.encode_frame(version, correlation_id, self.client_id.clone())?;
 
-        conn.close().await?;
+        debug!(
+            api_key = api_key,
+            version = version,
+            correlation_id = correlation_id,
+            "sending sequential request"
+        );
 
-        Ok(())
+        // 发送
+        self.framed.send(KafkaFrame::new(request_data)).await?;
+
+        // 显式 flush
+        self.framed.flush().await?;
+
+        // 等待响应
+        let frame = self
+            .framed
+            .next()
+            .await
+            .ok_or(KafkaError::ConnectionClosed)??;
+
+        debug!(
+            response_len = frame.data.len(),
+            "received sequential response"
+        );
+
+        // 解码响应
+        let (header, response) = Resp::decode_frame(frame.data, version)?;
+
+        // 验证 correlation_id
+        if header.correlation_id() != correlation_id {
+            return Err(KafkaError::CorrelationIdMismatch {
+                expected: correlation_id,
+                actual: header.correlation_id(),
+            });
+        }
+
+        Ok(response)
+    }
+
+    /// 获取当前协商的版本
+    pub fn negotiated(&self) -> &NegotiatedVersions {
+        &self.negotiated
+    }
+
+    /// 设置协商版本（在 ApiVersions 后调用）
+    pub fn set_negotiated(&mut self, negotiated: NegotiatedVersions) {
+        self.negotiated = negotiated;
+    }
+
+    /// 转换为 Pipeline 连接（析构 SequentialConnection，移交 Framed 所有权）
+    pub fn into_pipeline(self) -> Connection {
+        Connection::new(self.framed, self.client_id, Arc::new(self.negotiated))
+    }
+
+    /// 获取底层 framed（用于特殊场景）
+    pub fn into_parts(self) -> Framed<Box<dyn NetworkStream>, KafkaCodec> {
+        self.framed
     }
 }

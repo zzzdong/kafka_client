@@ -2,8 +2,8 @@
 //! Message: UpdateFeaturesRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,9 +22,13 @@ pub struct FeatureUpdateKey {
     pub upgrade_type: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 57, msg_type = "request", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 57,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct UpdateFeaturesRequest {
     /// How long to wait in milliseconds before timing out the request.
     #[kafka(versions = "0+", default = 60000)]
@@ -36,4 +40,3 @@ pub struct UpdateFeaturesRequest {
     #[kafka(versions = "1+", default = false)]
     pub validate_only: bool,
 }
-

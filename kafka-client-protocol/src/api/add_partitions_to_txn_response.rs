@@ -2,8 +2,8 @@
 //! Message: AddPartitionsToTxnResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct AddPartitionsToTxnTopicResult {
     pub results_by_partition: Vec<AddPartitionsToTxnPartitionResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AddPartitionsToTxnPartitionResult {
     /// The partition indexes.
@@ -26,7 +25,6 @@ pub struct AddPartitionsToTxnPartitionResult {
     #[kafka(versions = "0+")]
     pub partition_error_code: i16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct AddPartitionsToTxnResult {
@@ -38,9 +36,13 @@ pub struct AddPartitionsToTxnResult {
     pub topic_results: Vec<AddPartitionsToTxnTopicResult>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 24, msg_type = "response", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 24,
+    msg_type = "response",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct AddPartitionsToTxnResponse {
     /// Duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -55,4 +57,3 @@ pub struct AddPartitionsToTxnResponse {
     #[kafka(versions = "0-3")]
     pub results_by_topic_v3_and_below: Vec<AddPartitionsToTxnTopicResult>,
 }
-

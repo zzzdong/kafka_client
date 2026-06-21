@@ -2,12 +2,17 @@
 //! Message: InitProducerIdRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 22, msg_type = "request", valid_versions = "0-6", flexible_versions = "2+")]
+#[kafka(
+    api_key = 22,
+    msg_type = "request",
+    valid_versions = "0-6",
+    flexible_versions = "2+"
+)]
 pub struct InitProducerIdRequest {
     /// The transactional id, or null if the producer is not transactional.
     #[kafka(versions = "0+", nullable_versions = "0+")]
@@ -28,4 +33,3 @@ pub struct InitProducerIdRequest {
     #[kafka(versions = "6+", default = false)]
     pub keep_prepared_txn: bool,
 }
-

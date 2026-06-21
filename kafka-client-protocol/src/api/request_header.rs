@@ -2,8 +2,8 @@
 //! Message: RequestHeader
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,4 +22,3 @@ pub struct RequestHeader {
     #[kafka(versions = "1+", nullable_versions = "1+")]
     pub client_id: Option<String>,
 }
-

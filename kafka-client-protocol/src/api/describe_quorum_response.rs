@@ -2,8 +2,8 @@
 //! Message: DescribeQuorumResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -24,7 +24,6 @@ pub struct ReplicaState {
     #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
     pub last_caught_up_timestamp: i64,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct PartitionData {
@@ -54,7 +53,6 @@ pub struct PartitionData {
     pub observers: Vec<ReplicaState>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The topic name.
@@ -64,7 +62,6 @@ pub struct TopicData {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Listener {
@@ -79,7 +76,6 @@ pub struct Listener {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Node {
     /// The ID of the associated node.
@@ -90,9 +86,13 @@ pub struct Node {
     pub listeners: Vec<Listener>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 55, msg_type = "response", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 55,
+    msg_type = "response",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct DescribeQuorumResponse {
     /// The top level error code.
     #[kafka(versions = "0+")]
@@ -107,4 +107,3 @@ pub struct DescribeQuorumResponse {
     #[kafka(versions = "2+")]
     pub nodes: Vec<Node>,
 }
-

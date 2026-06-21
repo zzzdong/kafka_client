@@ -2,8 +2,8 @@
 //! Message: ListGroupsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,9 +22,13 @@ pub struct ListedGroup {
     pub group_type: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 16, msg_type = "response", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 16,
+    msg_type = "response",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct ListGroupsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "1+", nullable_versions = "1+")]
@@ -36,4 +40,3 @@ pub struct ListGroupsResponse {
     #[kafka(versions = "0+")]
     pub groups: Vec<ListedGroup>,
 }
-

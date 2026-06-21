@@ -2,8 +2,8 @@
 //! Message: CreateAclsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -31,12 +31,15 @@ pub struct AclCreation {
     pub permission_type: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 30, msg_type = "request", valid_versions = "1-3", flexible_versions = "2+")]
+#[kafka(
+    api_key = 30,
+    msg_type = "request",
+    valid_versions = "1-3",
+    flexible_versions = "2+"
+)]
 pub struct CreateAclsRequest {
     /// The ACLs that we want to create.
     #[kafka(versions = "0+")]
     pub creations: Vec<AclCreation>,
 }
-

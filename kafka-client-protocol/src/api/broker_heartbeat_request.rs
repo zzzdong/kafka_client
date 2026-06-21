@@ -2,12 +2,17 @@
 //! Message: BrokerHeartbeatRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 63, msg_type = "request", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 63,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct BrokerHeartbeatRequest {
     /// The broker ID.
     #[kafka(versions = "0+")]
@@ -28,4 +33,3 @@ pub struct BrokerHeartbeatRequest {
     #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
     pub offline_log_dirs: Vec<Uuid>,
 }
-

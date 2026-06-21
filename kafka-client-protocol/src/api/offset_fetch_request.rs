@@ -2,8 +2,8 @@
 //! Message: OffsetFetchRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct OffsetFetchRequestTopic {
     #[kafka(versions = "0-7")]
     pub partition_indexes: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchRequestTopics {
@@ -29,7 +28,6 @@ pub struct OffsetFetchRequestTopics {
     #[kafka(versions = "8+")]
     pub partition_indexes: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchRequestGroup {
@@ -47,9 +45,13 @@ pub struct OffsetFetchRequestGroup {
     pub topics: Option<Vec<OffsetFetchRequestTopics>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 9, msg_type = "request", valid_versions = "1-10", flexible_versions = "6+")]
+#[kafka(
+    api_key = 9,
+    msg_type = "request",
+    valid_versions = "1-10",
+    flexible_versions = "6+"
+)]
 pub struct OffsetFetchRequest {
     /// The group to fetch offsets for.
     #[kafka(versions = "0-7")]
@@ -64,4 +66,3 @@ pub struct OffsetFetchRequest {
     #[kafka(versions = "7+", default = false)]
     pub require_stable: bool,
 }
-

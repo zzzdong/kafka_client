@@ -2,8 +2,8 @@
 //! Message: DescribeLogDirsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct DescribeLogDirsPartition {
     pub is_future_key: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeLogDirsTopic {
     /// The topic name.
@@ -32,7 +31,6 @@ pub struct DescribeLogDirsTopic {
     #[kafka(versions = "0+")]
     pub partitions: Vec<DescribeLogDirsPartition>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeLogDirsResult {
@@ -53,9 +51,13 @@ pub struct DescribeLogDirsResult {
     pub usable_bytes: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 35, msg_type = "response", valid_versions = "1-4", flexible_versions = "2+")]
+#[kafka(
+    api_key = 35,
+    msg_type = "response",
+    valid_versions = "1-4",
+    flexible_versions = "2+"
+)]
 pub struct DescribeLogDirsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -67,4 +69,3 @@ pub struct DescribeLogDirsResponse {
     #[kafka(versions = "0+")]
     pub results: Vec<DescribeLogDirsResult>,
 }
-

@@ -2,12 +2,17 @@
 //! Message: DescribeClusterRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 60, msg_type = "request", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 60,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct DescribeClusterRequest {
     /// Whether to include cluster authorized operations.
     #[kafka(versions = "0+")]
@@ -19,4 +24,3 @@ pub struct DescribeClusterRequest {
     #[kafka(versions = "2+")]
     pub include_fenced_brokers: bool,
 }
-

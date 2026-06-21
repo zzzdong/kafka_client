@@ -2,8 +2,8 @@
 //! Message: JoinGroupRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct JoinGroupRequestProtocol {
     pub metadata: Bytes,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 11, msg_type = "request", valid_versions = "0-9", flexible_versions = "6+")]
+#[kafka(
+    api_key = 11,
+    msg_type = "request",
+    valid_versions = "0-9",
+    flexible_versions = "6+"
+)]
 pub struct JoinGroupRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -45,4 +49,3 @@ pub struct JoinGroupRequest {
     #[kafka(versions = "8+", nullable_versions = "8+", default = None)]
     pub reason: Option<String>,
 }
-

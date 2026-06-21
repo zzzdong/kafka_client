@@ -2,8 +2,8 @@
 //! Message: DeleteAclsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -31,12 +31,15 @@ pub struct DeleteAclsFilter {
     pub permission_type: i8,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 31, msg_type = "request", valid_versions = "1-3", flexible_versions = "2+")]
+#[kafka(
+    api_key = 31,
+    msg_type = "request",
+    valid_versions = "1-3",
+    flexible_versions = "2+"
+)]
 pub struct DeleteAclsRequest {
     /// The filters to use when deleting ACLs.
     #[kafka(versions = "0+")]
     pub filters: Vec<DeleteAclsFilter>,
 }
-

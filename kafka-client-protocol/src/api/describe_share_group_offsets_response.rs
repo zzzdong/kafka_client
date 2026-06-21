@@ -2,8 +2,8 @@
 //! Message: DescribeShareGroupOffsetsResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -28,7 +28,6 @@ pub struct DescribeShareGroupOffsetsResponsePartition {
     pub error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeShareGroupOffsetsResponseTopic {
     /// The topic name.
@@ -40,7 +39,6 @@ pub struct DescribeShareGroupOffsetsResponseTopic {
     #[kafka(versions = "0+")]
     pub partitions: Vec<DescribeShareGroupOffsetsResponsePartition>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribeShareGroupOffsetsResponseGroup {
@@ -58,9 +56,13 @@ pub struct DescribeShareGroupOffsetsResponseGroup {
     pub error_message: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 90, msg_type = "response", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 90,
+    msg_type = "response",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct DescribeShareGroupOffsetsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -69,4 +71,3 @@ pub struct DescribeShareGroupOffsetsResponse {
     #[kafka(versions = "0+")]
     pub groups: Vec<DescribeShareGroupOffsetsResponseGroup>,
 }
-

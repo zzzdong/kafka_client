@@ -1,12 +1,12 @@
-use bytes::Bytes;
-use async_trait::async_trait;
 use crate::error::SaslError;
+use async_trait::async_trait;
+use bytes::Bytes;
 
 pub mod plain;
 pub mod scram;
 
 pub use plain::PlainMechanism;
-pub use scram::{ScramMechanism, AsyncScramMechanism};
+pub use scram::{AsyncScramMechanism, ScramMechanism};
 
 /// SASL 凭证
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct SaslCredentials {
     pub mechanism: SaslMechanismType,
     pub username: String,
     pub password: String,
-    pub authzid: Option<String>,  // 授权身份（PLAIN 使用）
+    pub authzid: Option<String>, // 授权身份（PLAIN 使用）
 }
 
 /// SASL 机制类型
@@ -45,12 +45,13 @@ pub trait SaslMechanism: Send + Sync {
     fn is_client_first(&self) -> bool;
 
     /// 生成初始响应（client-first 机制使用）
-    async fn initial_response(&mut self, credentials: &SaslCredentials)
-        -> Result<Option<Bytes>, SaslError>;
+    async fn initial_response(
+        &mut self,
+        credentials: &SaslCredentials,
+    ) -> Result<Option<Bytes>, SaslError>;
 
     /// 处理服务器挑战
-    async fn challenge(&mut self, challenge: &[u8])
-        -> Result<Option<Bytes>, SaslError>;
+    async fn challenge(&mut self, challenge: &[u8]) -> Result<Option<Bytes>, SaslError>;
 
     /// 认证是否完成
     fn is_complete(&self) -> bool;

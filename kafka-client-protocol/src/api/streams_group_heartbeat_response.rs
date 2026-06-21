@@ -2,8 +2,8 @@
 //! Message: StreamsGroupHeartbeatResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,7 +16,6 @@ pub struct Status {
     pub status_detail: String,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicPartition {
     /// topic name
@@ -26,7 +25,6 @@ pub struct TopicPartition {
     #[kafka(versions = "0+")]
     pub partitions: Vec<i32>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TaskIds {
@@ -38,7 +36,6 @@ pub struct TaskIds {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Endpoint {
     /// host of the endpoint
@@ -48,7 +45,6 @@ pub struct Endpoint {
     #[kafka(versions = "0+")]
     pub port: u16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct EndpointToPartitions {
@@ -63,9 +59,13 @@ pub struct EndpointToPartitions {
     pub standby_partitions: Vec<TopicPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 88, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 88,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct StreamsGroupHeartbeatResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -110,4 +110,3 @@ pub struct StreamsGroupHeartbeatResponse {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub partitions_by_user_endpoint: Option<Vec<EndpointToPartitions>>,
 }
-

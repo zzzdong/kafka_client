@@ -2,8 +2,8 @@
 //! Message: VoteResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -25,7 +25,6 @@ pub struct PartitionData {
     pub vote_granted: bool,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The topic name.
@@ -35,7 +34,6 @@ pub struct TopicData {
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct NodeEndpoint {
@@ -50,9 +48,13 @@ pub struct NodeEndpoint {
     pub port: u16,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 52, msg_type = "response", valid_versions = "0-2", flexible_versions = "0+")]
+#[kafka(
+    api_key = 52,
+    msg_type = "response",
+    valid_versions = "0-2",
+    flexible_versions = "0+"
+)]
 pub struct VoteResponse {
     /// The top level error code.
     #[kafka(versions = "0+")]
@@ -64,4 +66,3 @@ pub struct VoteResponse {
     #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
     pub node_endpoints: Vec<NodeEndpoint>,
 }
-

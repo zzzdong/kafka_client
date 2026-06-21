@@ -2,8 +2,8 @@
 //! Message: ElectLeadersRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct TopicPartitions {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 43, msg_type = "request", valid_versions = "0-2", flexible_versions = "2+")]
+#[kafka(
+    api_key = 43,
+    msg_type = "request",
+    valid_versions = "0-2",
+    flexible_versions = "2+"
+)]
 pub struct ElectLeadersRequest {
     /// Type of elections to conduct for the partition. A value of '0' elects the preferred replica. A value of '1' elects the first live replica if there are no in-sync replica.
     #[kafka(versions = "1+")]
@@ -30,4 +34,3 @@ pub struct ElectLeadersRequest {
     #[kafka(versions = "0+", default = 60000)]
     pub timeout_ms: i32,
 }
-

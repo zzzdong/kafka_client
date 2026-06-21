@@ -2,8 +2,8 @@
 //! Message: StreamsGroupDescribeResponse
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -15,7 +15,6 @@ pub struct Endpoint {
     #[kafka(versions = "0+")]
     pub port: u16,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TaskOffset {
@@ -30,7 +29,6 @@ pub struct TaskOffset {
     pub offset: i64,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Assignment {
     /// Active tasks for this client.
@@ -39,11 +37,10 @@ pub struct Assignment {
     /// Standby tasks for this client.
     #[kafka(versions = "0+")]
     pub standby_tasks: Vec<TaskIds>,
-    /// Warm-up tasks for this client. 
+    /// Warm-up tasks for this client.
     #[kafka(versions = "0+")]
     pub warmup_tasks: Vec<TaskIds>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TaskIds {
@@ -55,7 +52,6 @@ pub struct TaskIds {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct KeyValue {
     /// key of the config
@@ -65,7 +61,6 @@ pub struct KeyValue {
     #[kafka(versions = "0+")]
     pub value: String,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicInfo {
@@ -82,7 +77,6 @@ pub struct TopicInfo {
     #[kafka(versions = "0+")]
     pub topic_configs: Vec<KeyValue>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Subtopology {
@@ -103,7 +97,6 @@ pub struct Subtopology {
     pub repartition_source_topics: Vec<TopicInfo>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Topology {
     /// The epoch of the currently initialized topology for this group.
@@ -113,7 +106,6 @@ pub struct Topology {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub subtopologies: Option<Vec<Subtopology>>,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct Member {
@@ -138,7 +130,7 @@ pub struct Member {
     /// The epoch of the topology on the client.
     #[kafka(versions = "0+")]
     pub topology_epoch: i32,
-    /// Identity of the streams instance that may have multiple clients. 
+    /// Identity of the streams instance that may have multiple clients.
     #[kafka(versions = "0+")]
     pub process_id: String,
     /// User-defined endpoint for Interactive Queries. Null if not defined for this client.
@@ -163,7 +155,6 @@ pub struct Member {
     #[kafka(versions = "0+")]
     pub is_classic: bool,
 }
-
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct DescribedGroup {
@@ -196,9 +187,13 @@ pub struct DescribedGroup {
     pub authorized_operations: i32,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 89, msg_type = "response", valid_versions = "0", flexible_versions = "0+")]
+#[kafka(
+    api_key = 89,
+    msg_type = "response",
+    valid_versions = "0",
+    flexible_versions = "0+"
+)]
 pub struct StreamsGroupDescribeResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
     #[kafka(versions = "0+")]
@@ -207,4 +202,3 @@ pub struct StreamsGroupDescribeResponse {
     #[kafka(versions = "0+")]
     pub groups: Vec<DescribedGroup>,
 }
-

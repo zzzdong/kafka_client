@@ -2,8 +2,8 @@
 //! Message: TxnOffsetCommitRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct TxnOffsetCommitRequestPartition {
     pub committed_metadata: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TxnOffsetCommitRequestTopic {
     /// The topic name.
@@ -33,9 +32,13 @@ pub struct TxnOffsetCommitRequestTopic {
     pub partitions: Vec<TxnOffsetCommitRequestPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 28, msg_type = "request", valid_versions = "0-5", flexible_versions = "3+")]
+#[kafka(
+    api_key = 28,
+    msg_type = "request",
+    valid_versions = "0-5",
+    flexible_versions = "3+"
+)]
 pub struct TxnOffsetCommitRequest {
     /// The ID of the transaction.
     #[kafka(versions = "0+")]
@@ -62,4 +65,3 @@ pub struct TxnOffsetCommitRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<TxnOffsetCommitRequestTopic>,
 }
-

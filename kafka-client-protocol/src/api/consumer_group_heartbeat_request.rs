@@ -2,8 +2,8 @@
 //! Message: ConsumerGroupHeartbeatRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -16,9 +16,13 @@ pub struct TopicPartitions {
     pub partitions: Vec<i32>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 68, msg_type = "request", valid_versions = "0-1", flexible_versions = "0+")]
+#[kafka(
+    api_key = 68,
+    msg_type = "request",
+    valid_versions = "0-1",
+    flexible_versions = "0+"
+)]
 pub struct ConsumerGroupHeartbeatRequest {
     /// The group identifier.
     #[kafka(versions = "0+")]
@@ -51,4 +55,3 @@ pub struct ConsumerGroupHeartbeatRequest {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub topic_partitions: Option<Vec<TopicPartitions>>,
 }
-

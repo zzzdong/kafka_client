@@ -2,8 +2,8 @@
 //! Message: DescribeConfigsRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -19,9 +19,13 @@ pub struct DescribeConfigsResource {
     pub configuration_keys: Option<Vec<String>>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 32, msg_type = "request", valid_versions = "1-4", flexible_versions = "4+")]
+#[kafka(
+    api_key = 32,
+    msg_type = "request",
+    valid_versions = "1-4",
+    flexible_versions = "4+"
+)]
 pub struct DescribeConfigsRequest {
     /// The resources whose configurations we want to describe.
     #[kafka(versions = "0+")]
@@ -33,4 +37,3 @@ pub struct DescribeConfigsRequest {
     #[kafka(versions = "3+", default = false)]
     pub include_documentation: bool,
 }
-

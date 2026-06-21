@@ -1,14 +1,14 @@
-use tokio_rustls::rustls::{self, ClientConfig};
+use super::NetworkStream;
 use rustls::pki_types::ServerName;
-use tokio_rustls::TlsConnector;
-use tokio::net::TcpStream;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use super::NetworkStream;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::{self, ClientConfig};
 
 /// TLS 配置
 #[derive(Debug, Clone)]
@@ -71,37 +71,43 @@ impl TlsNetworkStream {
             let ca_cert = std::fs::read(ca_path)?;
             for result in rustls_pemfile::certs(&mut ca_cert.as_slice()) {
                 let cert = result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                root_certs.add(cert)
+                root_certs
+                    .add(cert)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             }
         } else {
             // 使用系统证书
             let native_certs = rustls_native_certs::load_native_certs();
             for cert in native_certs.certs {
-                root_certs.add(cert.into())
+                root_certs
+                    .add(cert)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             }
         }
 
         // 构建配置
-        let config_builder = ClientConfig::builder()
-            .with_root_certificates(root_certs);
+        let config_builder = ClientConfig::builder().with_root_certificates(root_certs);
 
         // 配置客户端证书（如果提供）
-        let mut client_config = if let (Some(cert_path), Some(key_path)) = (&config.client_cert_path, &config.client_key_path) {
+        let mut client_config = if let (Some(cert_path), Some(key_path)) =
+            (&config.client_cert_path, &config.client_key_path)
+        {
             // 加载证书和私钥
             let cert_file = std::fs::read(cert_path)?;
             let key_file = std::fs::read(key_path)?;
 
-            let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut cert_file.as_slice())
-                .collect();
+            let certs: Result<Vec<_>, _> =
+                rustls_pemfile::certs(&mut cert_file.as_slice()).collect();
             let certs = certs.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
             let key = rustls_pemfile::private_key(&mut key_file.as_slice())
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "No private key found"))?;
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "No private key found")
+                })?;
 
-            config_builder.with_client_auth_cert(certs, key)
+            config_builder
+                .with_client_auth_cert(certs, key)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
         } else {
             config_builder.with_no_client_auth()

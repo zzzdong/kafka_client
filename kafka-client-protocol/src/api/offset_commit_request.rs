@@ -2,8 +2,8 @@
 //! Message: OffsetCommitRequest
 //! DO NOT EDIT
 
-use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use bytes::Bytes;
+use kafka_client_protocol_core::{KafkaMessage, RecordBatch};
 use uuid::Uuid;
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -22,7 +22,6 @@ pub struct OffsetCommitRequestPartition {
     pub committed_metadata: Option<String>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetCommitRequestTopic {
     /// The topic name.
@@ -36,9 +35,13 @@ pub struct OffsetCommitRequestTopic {
     pub partitions: Vec<OffsetCommitRequestPartition>,
 }
 
-
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
-#[kafka(api_key = 8, msg_type = "request", valid_versions = "2-10", flexible_versions = "8+")]
+#[kafka(
+    api_key = 8,
+    msg_type = "request",
+    valid_versions = "2-10",
+    flexible_versions = "8+"
+)]
 pub struct OffsetCommitRequest {
     /// The unique group identifier.
     #[kafka(versions = "0+")]
@@ -59,4 +62,3 @@ pub struct OffsetCommitRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<OffsetCommitRequestTopic>,
 }
-

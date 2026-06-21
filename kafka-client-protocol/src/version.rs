@@ -1,5 +1,5 @@
-use std::ops::{RangeFrom, RangeInclusive};
 use std::fmt;
+use std::ops::{RangeFrom, RangeInclusive};
 
 /// 版本范围（支持 Kafka JSON 格式）
 #[derive(Debug, Clone, PartialEq, Eq)]
