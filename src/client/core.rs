@@ -31,22 +31,28 @@ impl Default for ClientConfig {
 }
 
 /// 核心 Kafka 客户端
+///
+/// 内部通过 `Arc<BrokerManager>` 与 `Arc<MetadataCache>` 实现共享与并发，
+/// `BrokerManager` 自身已按 broker 拆分锁，方法签名以 `&self` 为主，
+/// 调用方可以安全地用 `Arc<KafkaClient>` 共享而无需额外加锁。
 pub struct KafkaClient {
-    broker_manager: BrokerManager,
+    broker_manager: Arc<BrokerManager>,
     metadata: Arc<MetadataCache>,
     config: ClientConfig,
+    /// 串行化 metadata 刷新，避免并发发送重复请求
+    metadata_refresh_lock: Mutex<()>,
 }
 
 impl KafkaClient {
     pub async fn connect(config: ClientConfig) -> Result<Self> {
         debug!("KafkaClient::connect starting");
-        let mut broker_manager = BrokerManager::new(
+        let broker_manager = Arc::new(BrokerManager::new(
             config.bootstrap_servers.clone(),
             config.security_protocol.clone(),
             config.client_id.clone(),
             crate::NAME.to_string(),
             crate::VERSION.to_string(),
-        );
+        ));
 
         debug!("bootstrapping broker manager");
         broker_manager.bootstrap().await.map_err(|e| {
@@ -55,10 +61,11 @@ impl KafkaClient {
         })?;
         debug!("bootstrap succeeded");
 
-        let mut client = Self {
+        let client = Self {
             broker_manager,
             metadata: Arc::new(MetadataCache::new(config.metadata_ttl)),
             config,
+            metadata_refresh_lock: Mutex::new(()),
         };
 
         debug!("refreshing metadata");
@@ -71,7 +78,7 @@ impl KafkaClient {
     }
 
     pub async fn send_request<Req, Resp>(
-        &mut self,
+        &self,
         broker_addr: SocketAddr,
         _api_key: i16,
         request: &Req,
@@ -82,29 +89,30 @@ impl KafkaClient {
     {
         let conn = self.broker_manager.get_connection(broker_addr).await?;
         let mut conn_guard = conn.lock().await;
-        conn_guard.send_request(request).await.inspect_err(|_e| {
+        let result = conn_guard.send_request(request).await;
+        if result.is_err() {
             self.broker_manager.mark_unhealthy(broker_addr);
-        })
+        }
+        result
     }
 
-    /// 获取到指定 broker 的连接（不会持有 KafkaClient 锁的版本）
-    /// 调用方应尽快使用连接并释放锁
+    /// 获取到指定 broker 的连接
     pub async fn get_broker_connection(
-        &mut self,
+        &self,
         broker_addr: SocketAddr,
     ) -> Result<Arc<Mutex<Connection>>> {
         self.broker_manager.get_connection(broker_addr).await
     }
 
     /// 获取任意一个健康 broker 的地址
-    pub fn any_broker_address(&self) -> Option<SocketAddr> {
+    pub async fn any_broker_address(&self) -> Option<SocketAddr> {
         self.broker_manager
             .get_any_healthy_broker()
             .map(|(addr, _)| addr)
     }
 
     pub async fn send_to_partition<Req, Resp>(
-        &mut self,
+        &self,
         topic: &str,
         partition: i32,
         api_key: i16,
@@ -144,7 +152,9 @@ impl KafkaClient {
         }
     }
 
-    pub async fn refresh_metadata(&mut self) -> Result<MetadataResponse> {
+    pub async fn refresh_metadata(&self) -> Result<MetadataResponse> {
+        let _guard = self.metadata_refresh_lock.lock().await;
+
         let request = MetadataRequest {
             topics: None,
             allow_auto_topic_creation: true,
@@ -153,19 +163,16 @@ impl KafkaClient {
         };
 
         let response: MetadataResponse = self.send_to_any_broker(&request).await?;
-        // 根据新的 metadata 更新 broker 连接池
         self.broker_manager
             .refresh_from_metadata(response.brokers.clone())
             .await?;
+
         self.metadata.update(response.clone()).await;
         debug!("Metadata refreshed successfully");
         Ok(response)
     }
 
-    pub async fn get_metadata_for_topics(
-        &mut self,
-        topics: Vec<String>,
-    ) -> Result<MetadataResponse> {
+    pub async fn get_metadata_for_topics(&self, topics: Vec<String>) -> Result<MetadataResponse> {
         let request_topics: Vec<MetadataRequestTopic> = topics
             .into_iter()
             .map(|name| MetadataRequestTopic {
@@ -187,7 +194,7 @@ impl KafkaClient {
     }
 
     /// 将请求发送到任意一个健康的 broker
-    async fn send_to_any_broker<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
+    async fn send_to_any_broker<Req, Resp>(&self, request: &Req) -> Result<Resp>
     where
         Req: kafka_client_protocol::Request,
         Resp: kafka_client_protocol::Response,
@@ -237,7 +244,7 @@ impl KafkaClient {
     }
 
     /// 关闭所有连接
-    pub async fn close(mut self) -> Result<()> {
+    pub async fn close(&self) -> Result<()> {
         self.broker_manager.close().await
     }
 }

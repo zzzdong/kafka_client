@@ -1,13 +1,12 @@
 pub mod broker_manager;
-pub mod core;
 pub mod consumer;
+pub mod core;
 pub mod metadata;
 pub mod partition_router;
 pub mod producer;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::client::consumer::{Consumer, ConsumerConfig};
 use crate::client::core::{ClientConfig, KafkaClient as CoreClient};
@@ -137,13 +136,13 @@ impl KafkaClientBuilder {
     }
 
     pub async fn build_producer(self, producer_config: ProducerConfig) -> Result<Producer> {
-        let client = Arc::new(Mutex::new(self.build_core().await?));
+        let client = Arc::new(self.build_core().await?);
         Ok(Producer::new(client, producer_config).await)
     }
 
     pub async fn build_consumer(self, consumer_config: ConsumerConfig) -> Result<Consumer> {
-        let client = Arc::new(Mutex::new(self.build_core().await?));
-        Ok(Consumer::new(client, consumer_config).await)
+        let client = Arc::new(self.build_core().await?);
+        Ok(Consumer::new(client, consumer_config))
     }
 }
 

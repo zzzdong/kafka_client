@@ -11,18 +11,15 @@ mod common;
 use common::KafkaInstance;
 use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::test]
 async fn test_large_batch() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(Mutex::new(
-        KafkaClient::connect(server.client_config()).await.unwrap(),
-    ));
+    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
 
     {
-        let mut c = client.lock().await;
-        common::create_topic(&mut c, "tc-large", 3).await;
+        let c = client.clone();
+        common::create_topic(&c, "tc-large", 3).await;
     }
 
     common::produce_messages(&client, "tc-large", 100).await;

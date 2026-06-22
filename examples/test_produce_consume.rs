@@ -20,9 +20,7 @@ async fn main() {
         metadata_ttl: Duration::from_secs(10),
     };
 
-    let client = std::sync::Arc::new(tokio::sync::Mutex::new(
-        KafkaClient::connect(config).await.unwrap(),
-    ));
+    let client = std::sync::Arc::new(KafkaClient::connect(config).await.unwrap());
 
     let topic = "test-topic-v15";
 
@@ -39,9 +37,8 @@ async fn main() {
             timeout_ms: 5000,
             validate_only: false,
         };
-        let mut c = client.lock().await;
-        let addr = c.any_broker_address().unwrap();
-        let resp: CreateTopicsResponse = c.send_request(addr, 19, &create_req).await.unwrap();
+        let addr = client.any_broker_address().await.unwrap();
+        let resp: CreateTopicsResponse = client.send_request(addr, 19, &create_req).await.unwrap();
         for t in &resp.topics {
             println!("  topic {} error_code {}", t.name, t.error_code);
         }
@@ -50,8 +47,7 @@ async fn main() {
     // 等待 broker 元数据同步并刷新缓存
     tokio::time::sleep(Duration::from_secs(2)).await;
     {
-        let mut c = client.lock().await;
-        let meta = c.refresh_metadata().await.unwrap();
+        let meta = client.refresh_metadata().await.unwrap();
         println!(
             "metadata: {} brokers, {} topics",
             meta.brokers.len(),
@@ -81,7 +77,7 @@ async fn main() {
             .with_key(Bytes::from(format!("key-{}", i)));
         producer.send(rec).await.unwrap();
     }
-    producer.flush().await;
+    producer.flush().await.unwrap();
     println!("Produced 3 messages to {}", topic);
 
     let consumer_config = ConsumerConfig {
@@ -100,7 +96,7 @@ async fn main() {
             kafka_client::client::consumer::PartitionAssignmentStrategy::Range,
     };
 
-    let mut consumer = Consumer::new(client.clone(), consumer_config).await;
+    let mut consumer = Consumer::new(client.clone(), consumer_config);
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
 

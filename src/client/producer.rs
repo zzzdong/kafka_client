@@ -2,16 +2,34 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::client::partition_router::{PartitionRouter, PartitionRouting};
 use crate::client::core::KafkaClient;
+use crate::client::partition_router::{PartitionRouter, PartitionRouting};
 use crate::error::{KafkaError, Result};
 use crate::protocol::{
     PartitionProduceData, ProduceRequest, ProduceResponse, Record, RecordBatch, TopicProduceData,
 };
+
+/// 发送给 Producer 后台事件循环的命令
+enum ProducerCommand {
+    /// 发送单条消息，要求后台任务立即发送并返回结果
+    Send {
+        record: ProducerRecord,
+        result_tx: oneshot::Sender<Result<RecordMetadata>>,
+    },
+    /// 批量发送消息，将记录加入缓冲区后返回已加入数量
+    SendBatch {
+        records: Vec<ProducerRecord>,
+        result_tx: oneshot::Sender<Result<usize>>,
+    },
+    /// 强制刷新缓冲区，完成后通知调用方
+    Flush {
+        barrier: oneshot::Sender<Result<()>>,
+    },
+}
 
 /// 消息头
 #[derive(Debug, Clone)]
@@ -99,7 +117,7 @@ impl Default for ProducerConfig {
 
 /// 生产者内部状态
 struct ProducerInner {
-    client: Arc<Mutex<KafkaClient>>,
+    client: Arc<KafkaClient>,
     router: PartitionRouter,
     config: ProducerConfig,
     /// 按 (topic, partition) 缓冲的记录
@@ -111,32 +129,47 @@ struct ProducerInner {
 }
 
 impl ProducerInner {
-    async fn flush_buffer(&mut self) {
+    async fn flush_buffer(&mut self) -> Result<()> {
         if self.buffer.is_empty() {
-            return;
+            return Ok(());
         }
 
         let records: HashMap<(String, i32), Vec<ProducerRecord>> = std::mem::take(&mut self.buffer);
         self.buffered_bytes = 0;
         self.last_send = Instant::now();
 
-        // 对每个 (topic, partition) 分批发送
+        // 对每个 (topic, partition) 分批发送，第一次失败即返回
         for ((topic, partition), recs) in records {
             debug!("Flushing {} records to {}/{}", recs.len(), topic, partition);
-            match self.send_batch_inner(&topic, partition, recs).await {
-                Ok(metadatas) => {
-                    debug!(
-                        "Successfully sent {} records to {}/{}",
-                        metadatas.len(),
-                        topic,
-                        partition
-                    );
-                }
-                Err(e) => {
-                    warn!("Failed to flush batch to {}/{}: {}", topic, partition, e);
-                }
-            }
+            self.send_batch_inner(&topic, partition, recs).await?;
+            debug!("Successfully sent batch to {}/{}", topic, partition);
         }
+        Ok(())
+    }
+
+    /// 将记录加入缓冲区，若达到 batch_size 或 linger 已超时则触发 flush。
+    /// 返回实际加入缓冲区的记录数量。
+    async fn buffer_records(&mut self, records: Vec<ProducerRecord>) -> Result<usize> {
+        let count = records.len();
+        for record in records {
+            let partition = self.select_partition(&record).await?;
+            let estimated_size =
+                record.value.len() + record.key.as_ref().map(|k| k.len()).unwrap_or(0) + 64;
+            self.buffered_bytes += estimated_size;
+            self.buffer
+                .entry((record.topic.clone(), partition))
+                .or_default()
+                .push(record);
+        }
+
+        let should_flush = self.buffered_bytes >= self.config.batch_size
+            || self.last_send.elapsed() >= Duration::from_millis(self.config.linger_ms);
+
+        if should_flush {
+            self.flush_buffer().await?;
+        }
+
+        Ok(count)
     }
 
     async fn send_batch_inner(
@@ -202,9 +235,7 @@ impl ProducerInner {
         batch.first_timestamp = first_timestamp;
         batch.max_timestamp = max_timestamp;
 
-        for (idx, (record, timestamp)) in
-            records.into_iter().zip(timestamps).enumerate()
-        {
+        for (idx, (record, timestamp)) in records.into_iter().zip(timestamps).enumerate() {
             let mut rec =
                 Record::new(idx as i32, timestamp - first_timestamp).with_value(record.value);
             if let Some(key) = record.key {
@@ -224,8 +255,8 @@ impl ProducerInner {
             return Ok(p);
         }
 
-        let client = self.client.lock().await;
-        let partition_count = client
+        let partition_count = self
+            .client
             .metadata()
             .get_partition_count(&record.topic)
             .await
@@ -247,9 +278,12 @@ impl ProducerInner {
         let mut last_error = None;
 
         while attempts < self.config.retries as u64 {
-            let mut client = self.client.lock().await;
             info!(?request, topic, partition, "sending produce request");
-            match client.send_to_partition(topic, partition, 0, request).await {
+            match self
+                .client
+                .send_to_partition(topic, partition, 0, request)
+                .await
+            {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     let is_not_leader = matches!(e, KafkaError::ProduceError(6));
@@ -266,7 +300,7 @@ impl ProducerInner {
                         };
                         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                         // 刷新元数据以获取最新的 leader 信息
-                        let _ = client.refresh_metadata().await;
+                        let _ = self.client.refresh_metadata().await;
                     }
                 }
             }
@@ -308,133 +342,107 @@ impl ProducerInner {
 
 /// 高级生产者
 pub struct Producer {
-    inner: Arc<Mutex<ProducerInner>>,
-    /// 通知后台任务立即刷新的信号
-    flush_sender: tokio::sync::mpsc::UnboundedSender<()>,
-    /// 等待发送完成的信号（用于 flush() 同步等待）
-    barrier_sender: tokio::sync::mpsc::UnboundedSender<oneshot::Sender<()>>,
+    /// 发送命令到后台事件循环
+    command_tx: tokio::sync::mpsc::UnboundedSender<ProducerCommand>,
 }
-
-use tokio::sync::oneshot;
 
 impl Producer {
     /// 创建 Producer 并启动后台批量发送任务
-    pub async fn new(client: Arc<Mutex<KafkaClient>>, config: ProducerConfig) -> Self {
-        let inner = Arc::new(Mutex::new(ProducerInner {
+    pub async fn new(client: Arc<KafkaClient>, config: ProducerConfig) -> Self {
+        let mut inner = ProducerInner {
             client,
             router: PartitionRouter::new(config.routing),
             config: config.clone(),
             buffer: HashMap::new(),
             buffered_bytes: 0,
             last_send: Instant::now(),
-        }));
+        };
 
-        let (flush_sender, mut flush_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (barrier_sender, mut barrier_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<oneshot::Sender<()>>();
-
-        let inner_clone = inner.clone();
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
         let linger = Duration::from_millis(config.linger_ms);
 
-        // 后台任务：定期刷新缓冲区
+        // 后台事件循环：单一任务独占 ProducerInner，避免锁竞争
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(linger);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // linger 超时，刷新缓冲区
-                        let mut inner = inner_clone.lock().await;
                         if !inner.buffer.is_empty() {
-                            inner.flush_buffer().await;
+                            if let Err(e) = inner.flush_buffer().await {
+                                warn!("Linger flush failed: {}", e);
+                            }
                         }
                     }
-                    _ = flush_receiver.recv() => {
-                        // 收到立即刷新信号
-                        let mut inner = inner_clone.lock().await;
-                        inner.flush_buffer().await;
-                    }
-                    Some(barrier) = barrier_receiver.recv() => {
-                        // 收到 barrier 信号：刷新后通知调用方
-                        let mut inner = inner_clone.lock().await;
-                        inner.flush_buffer().await;
-                        let _ = barrier.send(());
+                    cmd = command_rx.recv() => {
+                        match cmd {
+                            Some(ProducerCommand::Send { record, result_tx }) => {
+                                let result = async {
+                                    let partition = inner.select_partition(&record).await?;
+                                    let topic = record.topic.clone();
+                                    let metadatas = inner
+                                        .send_batch_inner(&topic, partition, vec![record])
+                                        .await?;
+                                    metadatas.into_iter().next().ok_or(KafkaError::ProduceError(-1))
+                                }
+                                .await;
+                                let _ = result_tx.send(result);
+                            }
+                            Some(ProducerCommand::SendBatch { records, result_tx }) => {
+                                let result = inner.buffer_records(records).await;
+                                let _ = result_tx.send(result);
+                            }
+                            Some(ProducerCommand::Flush { barrier }) => {
+                                let result = inner.flush_buffer().await;
+                                let _ = barrier.send(result);
+                            }
+                            None => break,
+                        }
                     }
                 }
             }
         });
 
-        Self {
-            inner,
-            flush_sender,
-            barrier_sender,
-        }
+        Self { command_tx }
     }
 
     /// 发送单条消息并返回其元数据（同步发送，不进入批量缓冲）
     pub async fn send(&self, record: ProducerRecord) -> Result<RecordMetadata> {
-        let mut inner = self.inner.lock().await;
-        let partition = inner.select_partition(&record).await?;
-        let topic = record.topic.clone();
-        let metadatas = inner
-            .send_batch_inner(&topic, partition, vec![record])
-            .await?;
-        metadatas
-            .into_iter()
-            .next()
-            .ok_or(KafkaError::ProduceError(-1))
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(ProducerCommand::Send {
+                record,
+                result_tx: tx,
+            })
+            .map_err(|_| KafkaError::ConnectionClosed)?;
+        rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
     /// 批量发送消息
     ///
     /// 消息会先进入缓冲区，根据 linger_ms 和 batch_size
-    /// 自动决定何时真正发送到 Kafka。
-    /// 如果触发同步刷盘，返回已发送记录的数量（不含元数据）；
-    /// 否则返回空 Vec 表示消息已加入缓冲区等待后台发送。
+    /// 自动决定何时真正发送到 Kafka。返回已加入缓冲区的记录数量。
     /// 如需确认所有消息发送完成，请显式调用 flush()。
     pub async fn send_batch(&self, records: Vec<ProducerRecord>) -> Result<usize> {
         if records.is_empty() {
             return Ok(0);
         }
 
-        let count = records.len();
-        let mut inner = self.inner.lock().await;
-
-        // 1. 确定每条记录的分区并加入缓冲区
-        for record in records {
-            let partition = inner.select_partition(&record).await?;
-            let estimated_size =
-                record.value.len() + record.key.as_ref().map(|k| k.len()).unwrap_or(0) + 64;
-            inner.buffered_bytes += estimated_size;
-            inner
-                .buffer
-                .entry((record.topic.clone(), partition))
-                .or_insert_with(Vec::new)
-                .push(record);
-        }
-
-        // 2. 检查是否需要立即发送
-        let should_flush = inner.buffered_bytes >= inner.config.batch_size
-            || inner.last_send.elapsed() >= Duration::from_millis(inner.config.linger_ms);
-
-        if should_flush {
-            inner.flush_buffer().await;
-        } else {
-            // 通知后台任务尽快刷新
-            let _ = self.flush_sender.send(());
-        }
-
-        Ok(count)
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(ProducerCommand::SendBatch {
+                records,
+                result_tx: tx,
+            })
+            .map_err(|_| KafkaError::ConnectionClosed)?;
+        rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
     /// 强制刷新缓冲区，等待所有缓冲消息发送完成
-    pub async fn flush(&self) {
+    pub async fn flush(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        if self.barrier_sender.send(tx).is_err() {
-            // 后台任务已停止，直接刷新
-            let mut inner = self.inner.lock().await;
-            inner.flush_buffer().await;
-            return;
-        }
-        let _ = rx.await;
+        self.command_tx
+            .send(ProducerCommand::Flush { barrier: tx })
+            .map_err(|_| KafkaError::ConnectionClosed)?;
+        rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 }

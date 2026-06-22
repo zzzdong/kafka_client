@@ -22,6 +22,8 @@ struct CachedMetadata {
     brokers: HashMap<i32, MetadataResponseBroker>,
     topics: HashMap<String, MetadataResponseTopic>,
     broker_addresses: HashMap<String, i32>,
+    /// 缓存已解析的 broker SocketAddr，避免每次查询重复解析
+    broker_sockets: HashMap<i32, SocketAddr>,
 }
 
 impl CachedMetadata {
@@ -33,6 +35,7 @@ impl CachedMetadata {
             brokers: HashMap::new(),
             topics: HashMap::new(),
             broker_addresses: HashMap::new(),
+            broker_sockets: HashMap::new(),
         }
     }
 
@@ -44,9 +47,15 @@ impl CachedMetadata {
         // Update brokers
         self.brokers.clear();
         self.broker_addresses.clear();
+        self.broker_sockets.clear();
         for broker in response.brokers {
             let addr = format!("{}:{}", broker.host, broker.port);
-            self.broker_addresses.insert(addr, broker.node_id);
+            self.broker_addresses.insert(addr.clone(), broker.node_id);
+            if let Ok(mut addrs) = addr.to_socket_addrs() {
+                if let Some(socket_addr) = addrs.next() {
+                    self.broker_sockets.insert(broker.node_id, socket_addr);
+                }
+            }
             self.brokers.insert(broker.node_id, broker);
         }
 
@@ -78,9 +87,11 @@ impl CachedMetadata {
             .partitions
             .iter()
             .find(|p| p.partition_index == partition)?;
-        let broker = self.brokers.get(&partition.leader_id)?;
-        let addr_str = format!("{}:{}", broker.host, broker.port);
-        addr_str.to_socket_addrs().ok()?.next()
+        self.broker_sockets.get(&partition.leader_id).copied()
+    }
+
+    fn get_broker_address(&self, node_id: i32) -> Option<SocketAddr> {
+        self.broker_sockets.get(&node_id).copied()
     }
 
     fn get_partition_count(&self, topic: &str) -> Option<usize> {
@@ -134,6 +145,11 @@ impl MetadataCache {
     pub async fn get_broker(&self, node_id: i32) -> Option<MetadataResponseBroker> {
         let inner = self.inner.read().await;
         inner.brokers.get(&node_id).cloned()
+    }
+
+    pub async fn get_broker_address(&self, node_id: i32) -> Option<SocketAddr> {
+        let inner = self.inner.read().await;
+        inner.get_broker_address(node_id)
     }
 
     pub async fn get_topic(&self, name: &str) -> Option<MetadataResponseTopic> {

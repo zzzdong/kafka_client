@@ -21,15 +21,14 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 use kafka_client::client::consumer::{
     AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, PartitionAssignmentStrategy,
 };
+use kafka_client::client::core::{ClientConfig, KafkaClient};
 use kafka_client::client::partition_router::PartitionRouting;
 use kafka_client::client::producer::{Producer, ProducerConfig, ProducerRecord, RecordMetadata};
-use kafka_client::client::core::{ClientConfig, KafkaClient};
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::transport::SecurityProtocol;
@@ -196,9 +195,11 @@ impl KafkaInstance {
             config.controller_port = broker_port + 1;
             let bootstrap = format!("127.0.0.1:{}", broker_port);
             config.bootstrap_servers = vec![bootstrap.clone()];
-            config.bootstrap_addrs = vec![bootstrap
-                .parse()
-                .expect("generated random bootstrap address must be valid")];
+            config.bootstrap_addrs = vec![
+                bootstrap
+                    .parse()
+                    .expect("generated random bootstrap address must be valid"),
+            ];
         }
 
         println!(
@@ -466,7 +467,7 @@ log.segment.bytes=1073741824
             for i in 0..max_secs {
                 let cfg = readiness_config.clone();
                 match KafkaClient::connect(cfg).await {
-                    Ok(mut client) => {
+                    Ok(client) => {
                         if client.refresh_metadata().await.is_ok() {
                             let _ = client.close().await;
                             println!("  Kafka broker API ready after ~{}s", i + 1);
@@ -566,8 +567,8 @@ fn is_port_open(addr: &SocketAddr) -> bool {
 
 /// 找一个当前空闲的 TCP 端口（绑定后立即释放）。
 fn find_free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("failed to bind to find a free port");
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind to find a free port");
     listener
         .local_addr()
         .expect("failed to get local address")
@@ -579,7 +580,7 @@ fn find_free_port() -> u16 {
 // ============================================================================
 
 /// 创建主题并等待 leader 就绪。集群模式下 replication_factor 会取 min(3, cluster_size)。
-pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32) {
+pub async fn create_topic(client: &KafkaClient, topic: &str, partitions: i32) {
     let cluster_size = std::env::var("KAFKA_CLUSTER_SIZE")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -602,7 +603,7 @@ pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32
         validate_only: false,
     };
 
-    let addr = client.any_broker_address().unwrap();
+    let addr = client.any_broker_address().await.unwrap();
     let response: CreateTopicsResponse = client.send_request(addr, 19, &request).await.unwrap();
     for t in &response.topics {
         if t.error_code != 0 && t.error_code != 36 {
@@ -617,7 +618,7 @@ pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32
     wait_for_topic_ready(client, topic, partitions).await;
 }
 
-pub async fn wait_for_topic_ready(client: &mut KafkaClient, topic: &str, partitions: i32) {
+pub async fn wait_for_topic_ready(client: &KafkaClient, topic: &str, partitions: i32) {
     for i in 0..30 {
         let meta = client.refresh_metadata().await.unwrap();
         if let Some(tm) = meta
@@ -676,7 +677,7 @@ pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig
 }
 
 pub async fn produce_messages(
-    client: &Arc<Mutex<KafkaClient>>,
+    client: &Arc<KafkaClient>,
     topic: &str,
     count: i32,
 ) -> Vec<RecordMetadata> {
@@ -702,7 +703,7 @@ pub async fn produce_messages(
                         attempts, e, delay_ms
                     );
                     {
-                        let mut c = client.lock().await;
+                        let c = client.clone();
                         let _ = c.refresh_metadata().await;
                     }
                     sleep(Duration::from_millis(delay_ms)).await;
@@ -710,13 +711,13 @@ pub async fn produce_messages(
             }
         }
     }
-    producer.flush().await;
+    producer.flush().await.unwrap();
     println!("  Produced {} messages to '{}'", count, topic);
     metas
 }
 
 pub async fn produce_messages_with_keys(
-    client: &Arc<Mutex<KafkaClient>>,
+    client: &Arc<KafkaClient>,
     topic: &str,
     count: i32,
     key_count: i32,
@@ -729,13 +730,13 @@ pub async fn produce_messages_with_keys(
             ProducerRecord::new(topic, bytes::Bytes::from(format!("val-{}", i))).with_key(key);
         metas.push(producer.send(msg).await.unwrap());
     }
-    producer.flush().await;
+    producer.flush().await.unwrap();
     println!("  Produced {} keyed messages to '{}'", count, topic);
     metas
 }
 
 pub async fn consume_all(
-    client: &Arc<Mutex<KafkaClient>>,
+    client: &Arc<KafkaClient>,
     group_id: &str,
     topic: &str,
     expected_count: i32,
@@ -751,7 +752,7 @@ pub async fn consume_all(
 }
 
 pub async fn consume_all_timeout(
-    client: &Arc<Mutex<KafkaClient>>,
+    client: &Arc<KafkaClient>,
     group_id: &str,
     topic: &str,
     expected_count: i32,
@@ -760,8 +761,7 @@ pub async fn consume_all_timeout(
     let mut consumer = Consumer::new(
         client.clone(),
         consumer_config(group_id, AutoOffsetReset::Earliest),
-    )
-    .await;
+    );
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
 
     for i in 0..20 {
@@ -806,7 +806,7 @@ pub async fn consume_all_timeout(
 // ============================================================================
 
 /// 验证 metadata 中报告的 broker 数量不少于期望值。
-pub async fn assert_cluster_size(client: &mut KafkaClient, expected: usize) {
+pub async fn assert_cluster_size(client: &KafkaClient, expected: usize) {
     let meta = client.refresh_metadata().await.unwrap();
     let actual = meta.brokers.len();
     println!(
@@ -823,7 +823,7 @@ pub async fn assert_cluster_size(client: &mut KafkaClient, expected: usize) {
 
 /// 统计 metadata 中某主题每个分区的 leader 分布（按 broker id）。
 pub async fn partition_leader_distribution(
-    client: &mut KafkaClient,
+    client: &KafkaClient,
     topic: &str,
 ) -> std::collections::HashMap<i32, Vec<i32>> {
     let meta = client.refresh_metadata().await.unwrap();
@@ -842,7 +842,7 @@ pub async fn partition_leader_distribution(
 
 /// 等待 metadata 中某主题的某个分区重新选举出新的 leader（leader_id 改变）。
 pub async fn wait_for_new_leader(
-    client: &mut KafkaClient,
+    client: &KafkaClient,
     topic: &str,
     partition: i32,
     old_leader: i32,

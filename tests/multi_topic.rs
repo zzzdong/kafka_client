@@ -9,22 +9,19 @@
 mod common;
 
 use common::{KafkaInstance, default_producer_config};
-use kafka_client::client::producer::{Producer, ProducerRecord};
 use kafka_client::client::core::KafkaClient;
+use kafka_client::client::producer::{Producer, ProducerRecord};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::test]
 async fn test_produce_to_multiple_topics() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(Mutex::new(
-        KafkaClient::connect(server.client_config()).await.unwrap(),
-    ));
+    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
 
     {
-        let mut c = client.lock().await;
-        common::create_topic(&mut c, "tc-multi-a", 2).await;
-        common::create_topic(&mut c, "tc-multi-b", 2).await;
+        let c = client.clone();
+        common::create_topic(&c, "tc-multi-a", 2).await;
+        common::create_topic(&c, "tc-multi-b", 2).await;
     }
 
     let producer = Producer::new(client.clone(), default_producer_config()).await;
@@ -44,7 +41,7 @@ async fn test_produce_to_multiple_topics() {
             .await
             .unwrap();
     }
-    producer.flush().await;
+    producer.flush().await.unwrap();
 
     let ra = common::consume_all(&client, "cg-multi-a", "tc-multi-a", 5).await;
     let rb = common::consume_all(&client, "cg-multi-b", "tc-multi-b", 5).await;

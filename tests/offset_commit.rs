@@ -13,7 +13,6 @@ use kafka_client::client::consumer::AutoOffsetReset;
 use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 // #region debug-point C:test-flow
@@ -27,10 +26,16 @@ fn dbg_event(hypothesis: &str, location: &str, msg: &str, data: Option<String>) 
     );
     let _ = std::process::Command::new("curl")
         .args([
-            "-s", "--max-time", "1", "-X", "POST",
+            "-s",
+            "--max-time",
+            "1",
+            "-X",
+            "POST",
             "http://127.0.0.1:7777/event",
-            "-H", "Content-Type: application/json",
-            "-d", &payload,
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload,
         ])
         .status();
 }
@@ -40,24 +45,25 @@ fn dbg_event(hypothesis: &str, location: &str, msg: &str, data: Option<String>) 
 async fn test_offset_commit() {
     dbg_event("C", "offset_commit.rs:25", "test start", None);
     let server = KafkaInstance::start().await;
-    dbg_event("C", "offset_commit.rs:27", "kafka instance started", Some(format!(r#"{{"bootstrap":"{}"}}"#, server.bootstrap())));
-    let client = Arc::new(Mutex::new(
-        KafkaClient::connect(server.client_config()).await.unwrap(),
-    ));
+    dbg_event(
+        "C",
+        "offset_commit.rs:27",
+        "kafka instance started",
+        Some(format!(r#"{{"bootstrap":"{}"}}"#, server.bootstrap())),
+    );
+    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
 
     // 先生产一些消息
     {
-        let mut c = client.lock().await;
-        common::create_topic(&mut c, "tc-offset", 2).await;
+        let c = client.clone();
+        common::create_topic(&c, "tc-offset", 2).await;
     }
     dbg_event("C", "offset_commit.rs:35", "topic created", None);
     common::produce_messages(&client, "tc-offset", 5).await;
     dbg_event("C", "offset_commit.rs:37", "messages produced", None);
 
     // 消费者消费并提交偏移量
-    let c1_client = Arc::new(Mutex::new(
-        KafkaClient::connect(server.client_config()).await.unwrap(),
-    ));
+    let c1_client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
     let mut consumer = kafka_client::client::consumer::Consumer::new(
         c1_client,
         kafka_client::client::consumer::ConsumerConfig {
@@ -67,8 +73,7 @@ async fn test_offset_commit() {
             auto_offset_reset: AutoOffsetReset::Earliest,
             ..Default::default()
         },
-    )
-    .await;
+    );
     dbg_event("C", "offset_commit.rs:50", "consumer created", None);
     consumer
         .subscribe(vec!["tc-offset".to_string()])
@@ -87,7 +92,12 @@ async fn test_offset_commit() {
             "  [offset_commit] waiting for assignment: loop={}, total_partitions={}",
             wait_loops, total
         );
-        dbg_event("C", "offset_commit.rs:60", "waiting for assignment", Some(format!(r#"{{"loop":{},"total":{}}}"#, wait_loops, total)));
+        dbg_event(
+            "C",
+            "offset_commit.rs:60",
+            "waiting for assignment",
+            Some(format!(r#"{{"loop":{},"total":{}}}"#, wait_loops, total)),
+        );
         if total > 0 {
             break;
         }
@@ -106,9 +116,19 @@ async fn test_offset_commit() {
     let mut consumed = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while consumed.len() < 5 && std::time::Instant::now() < deadline {
-        dbg_event("C", "offset_commit.rs:71", "calling poll", Some(format!(r#"{{"consumed":{}}}"#, consumed.len())));
+        dbg_event(
+            "C",
+            "offset_commit.rs:71",
+            "calling poll",
+            Some(format!(r#"{{"consumed":{}}}"#, consumed.len())),
+        );
         let records = consumer.poll(3000).await.unwrap();
-        dbg_event("C", "offset_commit.rs:73", "poll returned", Some(format!(r#"{{"records":{}}}"#, records.len())));
+        dbg_event(
+            "C",
+            "offset_commit.rs:73",
+            "poll returned",
+            Some(format!(r#"{{"records":{}}}"#, records.len())),
+        );
         consumed.extend(records);
     }
     assert!(

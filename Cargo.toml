@@ -27,6 +27,9 @@ pbkdf2 = "0.12"
 base64 = "0.22"
 rand = "0.9"
 
+# 并发集合
+dashmap = "6.1"
+
 # 错误处理
 thiserror = "2.0"
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock, watch};
+use tokio::sync::{RwLock, mpsc};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
@@ -20,6 +20,12 @@ use crate::protocol::{
     OffsetFetchRequestTopics, SyncGroupRequest, SyncGroupRequestAssignment, SyncGroupResponse,
     TopicPartition,
 };
+
+/// 发送给 Consumer 后台事件循环的命令
+enum ConsumerCommand {
+    /// 订阅/变更主题列表
+    Subscribe { topics: Vec<String> },
+}
 
 /// 消费者配置
 #[derive(Debug, Clone)]
@@ -105,8 +111,11 @@ struct GroupState {
 }
 
 /// 高级消费者
+///
+/// 内部使用单一后台事件循环处理加入组、心跳、自动提交等任务，
+/// 避免在构造函数中分散 spawn 多个后台任务。
 pub struct Consumer {
-    client: Arc<Mutex<KafkaClient>>,
+    client: Arc<KafkaClient>,
     /// 订阅的主题列表
     subscribed_topics: Vec<String>,
     /// 当前分配和管理的分区 -> 偏移量
@@ -118,15 +127,14 @@ pub struct Consumer {
     coordinator: Arc<RwLock<Option<std::net::SocketAddr>>>,
     /// 是否正在运行
     running: Arc<std::sync::atomic::AtomicBool>,
-    /// 通知后台任务变更主题订阅
-    subscribed_topics_tx: watch::Sender<Vec<String>>,
+    /// 发送命令到后台事件循环
+    command_tx: mpsc::UnboundedSender<ConsumerCommand>,
 }
 
 impl Consumer {
-    pub async fn new(client: Arc<Mutex<KafkaClient>>, config: ConsumerConfig) -> Self {
-        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let (subscribed_topics_tx, subscribed_topics_rx) =
-            watch::channel::<Vec<String>>(Vec::new());
+    /// 创建 Consumer 实例（不启动后台循环）
+    pub fn new(client: Arc<KafkaClient>, config: ConsumerConfig) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
 
         let consumer = Self {
             client: client.clone(),
@@ -135,205 +143,126 @@ impl Consumer {
             config: config.clone(),
             group_state: Arc::new(RwLock::new(GroupState::default())),
             coordinator: Arc::new(RwLock::new(None)),
-            running: running.clone(),
-            subscribed_topics_tx,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            command_tx,
         };
 
-        // 启动自动提交任务
-        if consumer.config.auto_commit {
-            let offsets = consumer.offsets.clone();
-            let client = consumer.client.clone();
-            let group_id = consumer.config.group_id.clone();
-            let coordinator = consumer.coordinator.clone();
-            let group_state = consumer.group_state.clone();
-            let running = running.clone();
+        consumer.start(client, config, command_rx);
+        consumer
+    }
 
-            tokio::spawn(async move {
-                let mut timer = interval(Duration::from_millis(
-                    consumer.config.auto_commit_interval_ms,
-                ));
-                loop {
-                    timer.tick().await;
-                    if !running.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
-                    let (generation_id, member_id) = {
-                        let gs = group_state.read().await;
-                        (gs.generation_id, if gs.member_id.is_empty() { None } else { Some(gs.member_id.clone()) })
-                    };
-                    if let Err(e) =
-                        Self::do_commit(&client, &group_id, &offsets, &coordinator, generation_id, member_id).await
-                    {
-                        debug!("Auto commit failed: {}", e);
-                    }
-                }
-            });
-        }
+    /// 启动后台事件循环
+    fn start(
+        &self,
+        client: Arc<KafkaClient>,
+        config: ConsumerConfig,
+        mut command_rx: mpsc::UnboundedReceiver<ConsumerCommand>,
+    ) {
+        let offsets = self.offsets.clone();
+        let group_state = self.group_state.clone();
+        let coordinator = self.coordinator.clone();
+        let running = self.running.clone();
 
-        // 启动后台心跳任务（仅在消费者组模式下）
-        if !config.group_id.is_empty() {
-            let hb_client = consumer.client.clone();
-            let hb_group_id = config.group_id.clone();
-            let hb_group_state = consumer.group_state.clone();
-            let hb_coordinator = consumer.coordinator.clone();
-            let hb_running = running.clone();
-            let hb_heartbeat_interval = Duration::from_millis(config.heartbeat_interval_ms);
+        // 自动提交与心跳定时器
+        let mut commit_interval = interval(Duration::from_millis(config.auto_commit_interval_ms));
+        let mut heartbeat_interval = interval(Duration::from_millis(config.heartbeat_interval_ms));
 
-            tokio::spawn(async move {
-                let mut timer = tokio::time::interval(hb_heartbeat_interval);
-                loop {
-                    timer.tick().await;
-                    if !hb_running.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
+        // 当前订阅主题与是否需要加入组的标记
+        let mut current_topics: Vec<String> = Vec::new();
+        let mut needs_rejoin = false;
 
-                    let (generation_id, member_id) = {
-                        let gs = hb_group_state.read().await;
-                        if gs.assigned_partitions.is_empty() || gs.member_id.is_empty() {
-                            continue;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = commit_interval.tick() => {
+                        if !running.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
                         }
-                        (gs.generation_id, gs.member_id.clone())
-                    };
-
-                    let coord_addr = {
-                        let c = hb_coordinator.read().await;
-                        match *c {
-                            Some(addr) => addr,
-                            None => {
-                                continue;
+                        if config.auto_commit && !config.group_id.is_empty() {
+                            let (generation_id, member_id) = {
+                                let gs = group_state.read().await;
+                                (gs.generation_id, if gs.member_id.is_empty() { None } else { Some(gs.member_id.clone()) })
+                            };
+                            if let Err(e) = Self::do_commit(
+                                &client,
+                                &config.group_id,
+                                &offsets,
+                                &coordinator,
+                                generation_id,
+                                member_id,
+                            )
+                            .await
+                            {
+                                debug!("Auto commit failed: {}", e);
                             }
                         }
-                    };
-
-                    let request = HeartbeatRequest {
-                        group_id: hb_group_id.clone(),
-                        generation_id,
-                        member_id: member_id.clone(),
-                        group_instance_id: None,
-                    };
-
-                    match hb_client
-                        .lock()
-                        .await
-                        .send_request::<_, crate::protocol::HeartbeatResponse>(
-                            coord_addr, 12, &request,
-                        )
-                        .await
-                    {
-                        Ok(resp) => {
-                            if resp.error_code == 27 {
-                                warn!(
-                                    "Heartbeat REBALANCE_IN_PROGRESS for {}, will rejoin on next poll",
-                                    member_id
-                                );
-                                let mut gs = hb_group_state.write().await;
+                    }
+                    _ = heartbeat_interval.tick() => {
+                        if !running.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+                        if !config.group_id.is_empty() {
+                            if let Err(e) = Self::background_heartbeat(
+                                &client,
+                                &config.group_id,
+                                &group_state,
+                                &coordinator,
+                            )
+                            .await
+                            {
+                                debug!("Heartbeat failed: {}", e);
+                                needs_rejoin = true;
+                            }
+                        }
+                    }
+                    cmd = command_rx.recv() => {
+                        if !running.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+                        match cmd {
+                            Some(ConsumerCommand::Subscribe { topics }) => {
+                                current_topics = topics;
+                                needs_rejoin = true;
+                                // 清空组状态，触发重新加入
+                                let mut gs = group_state.write().await;
                                 gs.assigned_partitions.clear();
                                 gs.member_id.clear();
-                                *hb_coordinator.write().await = None;
-                            } else if resp.error_code != 0 {
-                                debug!(
-                                    "Heartbeat error for {}: error_code={}",
-                                    member_id, resp.error_code
-                                );
+                                *coordinator.write().await = None;
                             }
-                        }
-                        Err(e) => {
-                            debug!("Heartbeat request failed for {}: {}", member_id, e);
+                            None => break,
                         }
                     }
                 }
-            });
 
-            // 启动后台加入消费者组任务
-            let bg_client = consumer.client.clone();
-            let bg_group_id = config.group_id.clone();
-            let bg_group_state = consumer.group_state.clone();
-            let bg_coordinator = consumer.coordinator.clone();
-            let bg_offsets = consumer.offsets.clone();
-            let bg_config = config.clone();
-            let bg_running = running.clone();
-            let mut bg_topics_rx = subscribed_topics_rx.clone();
-
-            tokio::spawn(async move {
-                // 等待第一个主题通知
-                let mut topics = loop {
-                    bg_topics_rx.changed().await.ok();
-                    let t = bg_topics_rx.borrow_and_update().clone();
-                    if !t.is_empty() {
-                        break t;
-                    }
-                };
-
-                loop {
-                    if !bg_running.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
-
-                    // 尝试加入组
+                // 如果需要加入组且主题非空，尝试加入
+                if needs_rejoin && !current_topics.is_empty() && !config.group_id.is_empty() {
+                    needs_rejoin = false;
                     match Self::background_join_group(
-                        &bg_client,
-                        &bg_group_id,
-                        &bg_group_state,
-                        &bg_coordinator,
-                        &bg_offsets,
-                        &bg_config,
-                        &topics,
+                        &client,
+                        &config.group_id,
+                        &group_state,
+                        &coordinator,
+                        &offsets,
+                        &config,
+                        &current_topics,
                     )
                     .await
                     {
                         Ok(()) => {
-                            info!(
-                                "background_join_group: group joined, waiting for rebalance trigger"
-                            );
+                            info!("background_join_group: group joined");
                         }
                         Err(e) => {
-                            warn!(
-                                "background_join_group failed: {:?}, will retry on next topic change",
-                                e
-                            );
-                            // 清空状态以便 poll 感知到需要重试
-                            let mut gs = bg_group_state.write().await;
+                            warn!("background_join_group failed: {:?}, will retry", e);
+                            let mut gs = group_state.write().await;
                             gs.assigned_partitions.clear();
                             gs.member_id.clear();
-                            *bg_coordinator.write().await = None;
-                        }
-                    }
-
-                    // 等待主题变更（新 subscribe 调用），或者心跳检测到再均衡
-                    // 使用 tokio::select 在主题变更和心跳检测之间等待
-                    let wait_for_rebalance = async {
-                        loop {
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            let gs = bg_group_state.read().await;
-                            if gs.assigned_partitions.is_empty() || gs.member_id.is_empty() {
-                                return;
-                            }
-                        }
-                    };
-
-                    tokio::select! {
-                        result = bg_topics_rx.changed() => {
-                            if result.is_ok() {
-                                topics = bg_topics_rx.borrow_and_update().clone();
-                                info!("background_join_group: topics changed to {:?}, rejoining", topics);
-                                // 清空状态
-                                let mut gs = bg_group_state.write().await;
-                                gs.assigned_partitions.clear();
-                                gs.member_id.clear();
-                                *bg_coordinator.write().await = None;
-                            } else {
-                                break;
-                            }
-                        }
-                        _ = wait_for_rebalance => {
-                            info!("background_join_group: rebalance detected, rejoining group");
+                            *coordinator.write().await = None;
+                            needs_rejoin = true;
                         }
                     }
                 }
-            });
-        }
-
-        consumer
+            }
+        });
     }
 
     /// 订阅主题列表
@@ -343,208 +272,93 @@ impl Consumer {
         if self.config.group_id.is_empty() {
             // 没有消费者组，直接根据 metadata 获取偏移量
             let mut all_offsets = HashMap::new();
-            {
-                let client = self.client.lock().await;
-                for topic in &topics {
-                    let partitions = client
-                        .metadata()
-                        .get_partitions(topic)
-                        .await
-                        .ok_or_else(|| KafkaError::TopicNotFound(topic.clone()))?;
-                    all_offsets.insert(topic.clone(), partitions.clone());
-                }
+            for topic in &topics {
+                let partitions = self
+                    .client
+                    .metadata()
+                    .get_partitions(topic)
+                    .await
+                    .ok_or_else(|| KafkaError::TopicNotFound(topic.clone()))?;
+                all_offsets.insert(topic.clone(), partitions.clone());
             }
             self.init_offsets_simple(topics).await?;
         } else {
-            // 有消费者组：通知后台任务开始加入组
-            debug!("subscribe: group_id set, notifying background task to join group");
-            let _ = self.subscribed_topics_tx.send(topics.clone());
+            // 有消费者组：通知后台事件循环重新加入组
+            debug!("subscribe: group_id set, notifying event loop to rejoin group");
+            let _ = self.command_tx.send(ConsumerCommand::Subscribe {
+                topics: topics.clone(),
+            });
         }
 
         Ok(())
     }
 
-    /// 加入消费者组（可选，当有 group_id 时使用，支持 MEMBER_ID_REQUIRED 重试）
-    async fn join_consumer_group(&self) -> Result<()> {
-        let topics = self.subscribed_topics.clone();
-        if topics.is_empty() {
+    /// 后台心跳发送
+    async fn background_heartbeat(
+        client: &Arc<KafkaClient>,
+        group_id: &str,
+        group_state: &Arc<RwLock<GroupState>>,
+        coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
+    ) -> Result<()> {
+        if group_id.is_empty() {
             return Ok(());
         }
 
-        // 1. 查找协调者
-        let coordinator = self.find_coordinator().await?;
-        {
-            let mut coord = self.coordinator.write().await;
-            *coord = Some(coordinator);
-        }
-
-        // 2. 加入组（可能重试 MEMBER_ID_REQUIRED error=79）
-        let protocol_metadata = self.build_subscription_metadata(&topics)?;
-        let mut member_id = String::new();
-        let mut attempt = 0u32;
-
-        loop {
-            let request = JoinGroupRequest {
-                group_id: self.config.group_id.clone(),
-                session_timeout_ms: self.config.session_timeout_ms,
-                rebalance_timeout_ms: self.config.rebalance_timeout_ms,
-                member_id: member_id.clone(),
-                group_instance_id: None,
-                protocol_type: "consumer".to_string(),
-                protocols: vec![JoinGroupRequestProtocol {
-                    name: match self.config.partition_assignment_strategy {
-                        PartitionAssignmentStrategy::Range => "range".to_string(),
-                        PartitionAssignmentStrategy::RoundRobin => "roundrobin".to_string(),
-                        PartitionAssignmentStrategy::CooperativeSticky => {
-                            "cooperative-sticky".to_string()
-                        }
-                    },
-                    metadata: protocol_metadata.clone(),
-                }],
-                reason: None,
-            };
-
-            debug!(?request, "JoinGroup request");
-            let mut client = self.client.lock().await;
-            let response: JoinGroupResponse =
-                client.send_request(coordinator, 11, &request).await?;
-            drop(client);
-            debug!(?response, "JoinGroup response");
-
-            if response.error_code == 0 {
-                let generation_id = response.generation_id;
-                let is_leader = response.leader == response.member_id;
-                let protocol_name = response.protocol_name.clone();
-                let new_member_id = response.member_id.clone();
-
-                debug!(
-                    "Joined group: member_id={}, generation_id={}, leader={}",
-                    new_member_id, generation_id, is_leader
-                );
-
-                // 3. 如果是 leader，计算分区分配
-                let assignment_bytes = if is_leader {
-                    Self::compute_assignment(
-                        &topics,
-                        &response,
-                        &self.client,
-                        self.config.partition_assignment_strategy,
-                    )
-                    .await?
-                } else {
-                    Bytes::new()
-                };
-
-                // 4. 同步组
-                let sync_request = SyncGroupRequest {
-                    group_id: self.config.group_id.clone(),
-                    generation_id,
-                    member_id: new_member_id.clone(),
-                    group_instance_id: None,
-                    protocol_type: Some("consumer".to_string()),
-                    protocol_name: protocol_name.clone(),
-                    assignments: if is_leader {
-                        response
-                            .members
-                            .iter()
-                            .map(|m| SyncGroupRequestAssignment {
-                                member_id: m.member_id.clone(),
-                                assignment: if m.member_id == response.leader {
-                                    assignment_bytes.clone()
-                                } else {
-                                    Bytes::new()
-                                },
-                            })
-                            .collect()
-                    } else {
-                        vec![]
-                    },
-                };
-
-                let mut client = self.client.lock().await;
-                let sync_response: SyncGroupResponse =
-                    client.send_request(coordinator, 14, &sync_request).await?;
-                drop(client);
-
-                if sync_response.error_code != 0 {
-                    return Err(KafkaError::Protocol(format!(
-                        "SyncGroup failed: error {}",
-                        sync_response.error_code
-                    )));
-                }
-
-                // 5. 解析分配
-                let assignment = self.parse_assignment(sync_response.assignment)?;
-
-                // 6. 初始化偏移量并更新状态
-                let mut group_state = self.group_state.write().await;
-                group_state.member_id = new_member_id;
-                group_state.generation_id = generation_id;
-                group_state.leader = response.leader;
-                group_state.protocol_name = protocol_name;
-                group_state.assigned_partitions = assignment;
-
-                // 初始化偏移量
-                self.fetch_committed_offsets(&group_state.assigned_partitions)
-                    .await?;
-
+        let (generation_id, member_id) = {
+            let gs = group_state.read().await;
+            if gs.assigned_partitions.is_empty() || gs.member_id.is_empty() {
                 return Ok(());
             }
+            (gs.generation_id, gs.member_id.clone())
+        };
 
-            if response.error_code == 79 {
-                // MEMBER_ID_REQUIRED: broker assigned a member_id
-                if response.member_id.is_empty() || response.member_id == member_id {
-                    return Err(KafkaError::Protocol(
-                        "MEMBER_ID_REQUIRED with no new member_id".to_string(),
-                    ));
-                }
-                warn!(
-                    "MEMBER_ID_REQUIRED, retrying with member_id={}",
-                    response.member_id
-                );
-                member_id = response.member_id.clone();
-                attempt += 1;
-                if attempt > 5 {
-                    return Err(KafkaError::Protocol(
-                        "MEMBER_ID_REQUIRED retry exhausted".to_string(),
-                    ));
-                }
-                continue;
+        let coord_addr = {
+            let c = coordinator.read().await;
+            match *c {
+                Some(addr) => addr,
+                None => return Ok(()),
             }
+        };
 
+        let request = HeartbeatRequest {
+            group_id: group_id.to_string(),
+            generation_id,
+            member_id: member_id.clone(),
+            group_instance_id: None,
+        };
+
+        let response: crate::protocol::HeartbeatResponse =
+            client.send_request(coord_addr, 12, &request).await?;
+
+        if response.error_code == 27 {
+            warn!(
+                "Heartbeat REBALANCE_IN_PROGRESS for {}, will rejoin on next tick",
+                member_id
+            );
+            let mut gs = group_state.write().await;
+            gs.assigned_partitions.clear();
+            gs.member_id.clear();
+            *coordinator.write().await = None;
+            return Err(KafkaError::Protocol("Rebalance required".to_string()));
+        } else if response.error_code != 0 {
+            debug!(
+                "Heartbeat error for {}: error_code={}",
+                member_id, response.error_code
+            );
             return Err(KafkaError::Protocol(format!(
-                "JoinGroup failed: error {}",
+                "Heartbeat failed: error {}",
                 response.error_code
             )));
         }
-    }
 
-    fn build_subscription_metadata(&self, topics: &[String]) -> Result<Bytes> {
-        // Manually encode the Kafka consumer-group subscription metadata.
-        // The generated ConsumerProtocolSubscription type uses flexible RPC encoding,
-        // but the on-wire consumer protocol is a separate versioned byte stream.
-        // Use version 2 so modern brokers accept the metadata.
-        let mut buf = bytes::BytesMut::new();
-        use bytes::BufMut;
-        buf.put_i16(2); // ConsumerProtocolSubscription version 2
-        buf.put_i32(topics.len() as i32);
-        for t in topics {
-            buf.put_i16(t.len() as i16);
-            buf.put_slice(t.as_bytes());
-        }
-        buf.put_i32(-1); // null user_data
-        // owned_partitions: empty array
-        buf.put_i32(0);
-        // generation_id
-        buf.put_i32(-1);
-        Ok(buf.freeze())
+        Ok(())
     }
 
     /// 计算分区分配
     async fn compute_assignment(
         topics: &[String],
         join_response: &JoinGroupResponse,
-        client: &Arc<Mutex<KafkaClient>>,
+        client: &Arc<KafkaClient>,
         strategy: PartitionAssignmentStrategy,
     ) -> Result<Bytes> {
         let all_members: Vec<&str> = join_response
@@ -562,7 +376,7 @@ impl Consumer {
             assignments.insert(member_id.to_string(), Vec::new());
         }
 
-        let client_guard = client.lock().await;
+        let client_guard = client;
 
         for topic in topics {
             let partitions = client_guard
@@ -650,111 +464,6 @@ impl Consumer {
         Ok(buf.freeze())
     }
 
-    fn parse_assignment(&self, data: Bytes) -> Result<HashMap<String, Vec<i32>>> {
-        let mut buf = data;
-        let assignment = ConsumerProtocolAssignment::decode(&mut buf, 0)
-            .map_err(|e| KafkaError::Protocol(e.to_string()))?;
-
-        let mut result = HashMap::new();
-        for tp in assignment.assigned_partitions {
-            result.insert(tp.topic, tp.partitions);
-        }
-        Ok(result)
-    }
-
-    /// 从协调者获取已提交的偏移量
-    async fn fetch_committed_offsets(&self, assigned: &HashMap<String, Vec<i32>>) -> Result<()> {
-        let coordinator = self.find_coordinator().await?;
-
-        // 为每个分区初始化偏移量，如果没有提交的偏移量则使用 auto_offset_reset
-        let mut needs_initialization: Vec<(String, i32)> = Vec::new();
-
-        {
-            let mut offsets = self.offsets.write().await;
-            for (topic, partitions) in assigned {
-                let topic_offsets = offsets.entry(topic.clone()).or_insert_with(HashMap::new);
-                for partition in partitions {
-                    // 先尝试获取已提交的偏移量
-                    match self
-                        .fetch_offset_for_partition(coordinator, topic, *partition)
-                        .await
-                    {
-                        Ok(Some(committed_offset)) => {
-                            // 使用已提交偏移量
-                            topic_offsets.insert(*partition, committed_offset);
-                            if committed_offset < 0 {
-                                needs_initialization.push((topic.clone(), *partition));
-                            }
-                        }
-                        Ok(None) => {
-                            // 没有已提交偏移量，待初始化
-                            needs_initialization.push((topic.clone(), *partition));
-                            topic_offsets.insert(*partition, -1);
-                        }
-                        Err(_) => {
-                            needs_initialization.push((topic.clone(), *partition));
-                            topic_offsets.insert(*partition, -1);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 根据 auto_offset_reset 初始化未设置的偏移量
-        self.init_offsets_for_partitions(needs_initialization)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn fetch_offset_for_partition(
-        &self,
-        coordinator: std::net::SocketAddr,
-        topic: &str,
-        partition: i32,
-    ) -> Result<Option<i64>> {
-        // 使用新的 OffsetFetchRequest 格式 (version 8+)
-        let request = OffsetFetchRequest {
-            group_id: String::new(), // version 0-7 字段，新版本忽略
-            topics: None,            // version 0-7 字段
-            groups: vec![OffsetFetchRequestGroup {
-                group_id: self.config.group_id.clone(),
-                member_id: None,
-                member_epoch: -1,
-                topics: Some(vec![OffsetFetchRequestTopics {
-                    name: Some(topic.to_string()),
-                    topic_id: None,
-                    partition_indexes: vec![partition],
-                }]),
-            }],
-            require_stable: false,
-        };
-
-        let mut client = self.client.lock().await;
-        let response: crate::protocol::OffsetFetchResponse =
-            client.send_request(coordinator, 9, &request).await?;
-
-        for group in response.groups {
-            if group.group_id == self.config.group_id {
-                for t in group.topics {
-                    if t.name.as_deref() == Some(topic) {
-                        for p in t.partitions {
-                            if p.partition_index == partition
-                                && p.error_code == 0 {
-                                    if p.committed_offset >= 0 {
-                                        return Ok(Some(p.committed_offset));
-                                    }
-                                    return Ok(None);
-                                }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
     /// 根据 auto_offset_reset 初始化偏移量
     async fn init_offsets_for_partitions(&self, partitions: Vec<(String, i32)>) -> Result<()> {
         if partitions.is_empty() {
@@ -783,7 +492,7 @@ impl Consumer {
         let mut needs_initialization: Vec<(String, i32)> = Vec::new();
 
         {
-            let client = self.client.lock().await;
+            let client = &self.client;
             let mut offsets = self.offsets.write().await;
 
             for topic in &topics {
@@ -810,7 +519,7 @@ impl Consumer {
     }
 
     async fn list_offset(&self, topic: &str, partition: i32, timestamp: i64) -> Result<i64> {
-        let mut client = self.client.lock().await;
+        let client = &self.client;
         let leader_addr = client
             .metadata()
             .get_partition_leader(topic, partition)
@@ -870,12 +579,11 @@ impl Consumer {
 
         let mut last_error = KafkaError::NoCoordinator;
         for attempt in 0..10 {
-            let mut client = self.client.lock().await;
-            let broker_addr = match client.any_broker_address() {
+            let client = &self.client;
+            let broker_addr = match client.any_broker_address().await {
                 Some(addr) => addr,
                 None => {
                     last_error = KafkaError::NoBrokerAvailable;
-                    drop(client);
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
@@ -892,13 +600,11 @@ impl Consumer {
                     Ok(resp) => resp,
                     Err(e) => {
                         last_error = e;
-                        drop(client);
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
                 };
             // Release the lock before potentially sleeping
-            drop(client);
             debug!(?response, "FindCoordinator response");
 
             if response.error_code == 0 {
@@ -956,7 +662,7 @@ impl Consumer {
 
     /// 后台任务使用的加入消费者组（静态方法，通过共享状态工作）
     async fn background_join_group(
-        client: &Arc<Mutex<KafkaClient>>,
+        client: &Arc<KafkaClient>,
         group_id: &str,
         group_state: &Arc<RwLock<GroupState>>,
         coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
@@ -973,12 +679,11 @@ impl Consumer {
             let mut last_error = KafkaError::NoCoordinator;
             let mut found = None;
             for attempt in 0..10 {
-                let mut c = client.lock().await;
-                let broker_addr = match c.any_broker_address() {
+                let c = client;
+                let broker_addr = match c.any_broker_address().await {
                     Some(addr) => addr,
                     None => {
                         last_error = KafkaError::NoBrokerAvailable;
-                        drop(c);
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
@@ -995,12 +700,10 @@ impl Consumer {
                         Ok(resp) => resp,
                         Err(e) => {
                             last_error = e;
-                            drop(c);
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             continue;
                         }
                     };
-                drop(c);
 
                 if response.error_code == 0 {
                     let host = if response.host.is_empty() {
@@ -1078,15 +781,13 @@ impl Consumer {
                 reason: None,
             };
 
-            let mut c = client.lock().await;
+            let c = client;
             let response: JoinGroupResponse = match c.send_request(coord_addr, 11, &request).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    drop(c);
                     return Err(e);
                 }
             };
-            drop(c);
 
             if response.error_code == 0 {
                 let generation_id = response.generation_id;
@@ -1133,16 +834,14 @@ impl Consumer {
                     },
                 };
 
-                let mut c = client.lock().await;
+                let c = client;
                 let sync_response: SyncGroupResponse =
                     match c.send_request(coord_addr, 14, &sync_request).await {
                         Ok(resp) => resp,
                         Err(e) => {
-                            drop(c);
                             return Err(e);
                         }
                     };
-                drop(c);
 
                 if sync_response.error_code != 0 {
                     // SyncGroup 失败（如 REBALANCE_IN_PROGRESS），返回错误让后台任务在下一个 tick 重试
@@ -1179,6 +878,7 @@ impl Consumer {
                     client,
                     group_id,
                     offsets,
+                    coordinator,
                     &assignment,
                     config.auto_offset_reset,
                 )
@@ -1217,15 +917,80 @@ impl Consumer {
         ))
     }
 
+    /// 查询协调者已提交的偏移量
+    async fn fetch_committed_offsets(
+        client: &Arc<KafkaClient>,
+        group_id: &str,
+        coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
+        assignment: &HashMap<String, Vec<i32>>,
+    ) -> Result<HashMap<String, HashMap<i32, i64>>> {
+        let coord_addr = {
+            let c = coordinator.read().await;
+            match *c {
+                Some(addr) => addr,
+                None => return Err(KafkaError::NoCoordinator),
+            }
+        };
+
+        let topics: Vec<OffsetFetchRequestTopics> = assignment
+            .iter()
+            .map(|(topic, partitions)| OffsetFetchRequestTopics {
+                name: Some(topic.clone()),
+                topic_id: None,
+                partition_indexes: partitions.clone(),
+            })
+            .collect();
+
+        let request = OffsetFetchRequest {
+            group_id: String::new(), // version 0-7 字段，新版本忽略
+            topics: None,
+            groups: vec![OffsetFetchRequestGroup {
+                group_id: group_id.to_string(),
+                member_id: None,
+                member_epoch: -1,
+                topics: Some(topics),
+            }],
+            require_stable: false,
+        };
+
+        let response: crate::protocol::OffsetFetchResponse =
+            client.send_request(coord_addr, 9, &request).await?;
+
+        let mut result: HashMap<String, HashMap<i32, i64>> = HashMap::new();
+        for group in response.groups {
+            if group.group_id == group_id {
+                for topic in group.topics {
+                    let topic_name = match topic.name.as_deref() {
+                        Some(name) => name.to_string(),
+                        None => continue,
+                    };
+                    let entry = result.entry(topic_name).or_default();
+                    for p in topic.partitions {
+                        if p.error_code == 0 && p.committed_offset >= 0 {
+                            entry.insert(p.partition_index, p.committed_offset);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     /// 初始化消费者组的偏移量（供后台任务使用）
-    #[allow(unused_variables)]
     async fn init_offsets_for_group(
-        _client: &Arc<Mutex<KafkaClient>>,
-        _group_id: &str,
+        client: &Arc<KafkaClient>,
+        group_id: &str,
         offsets: &Arc<RwLock<HashMap<String, HashMap<i32, i64>>>>,
+        coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
         assignment: &HashMap<String, Vec<i32>>,
         auto_offset_reset: AutoOffsetReset,
     ) -> Result<()> {
+        // 1. 先尝试从协调者获取已提交偏移量
+        let committed = Self::fetch_committed_offsets(client, group_id, coordinator, assignment)
+            .await
+            .unwrap_or_default();
+
         let default_offset = match auto_offset_reset {
             AutoOffsetReset::Earliest => -2i64,
             AutoOffsetReset::Latest => -1i64,
@@ -1233,21 +998,31 @@ impl Consumer {
         };
 
         let mut offsets_writer = offsets.write().await;
+        let mut initialized_from_commit = 0usize;
+        let mut initialized_from_default = 0usize;
         for (topic, partitions) in assignment {
             let topic_offsets = offsets_writer
                 .entry(topic.clone())
                 .or_insert_with(HashMap::new);
+            let committed_topic = committed.get(topic);
             for partition in partitions {
-                if !topic_offsets.contains_key(partition) {
+                if topic_offsets.contains_key(partition) {
+                    continue;
+                }
+                if let Some(offset) = committed_topic.and_then(|p| p.get(partition)) {
+                    topic_offsets.insert(*partition, *offset);
+                    initialized_from_commit += 1;
+                } else {
                     topic_offsets.insert(*partition, default_offset);
+                    initialized_from_default += 1;
                 }
             }
         }
         drop(offsets_writer);
 
         debug!(
-            "init_offsets_for_group: initialized offsets to {:?} for assigned partitions",
-            default_offset
+            "init_offsets_for_group: {} from committed offsets, {} from auto_offset_reset",
+            initialized_from_commit, initialized_from_default
         );
         Ok(())
     }
@@ -1268,7 +1043,7 @@ impl Consumer {
             group_instance_id: None,
         };
 
-        let mut client = self.client.lock().await;
+        let client = &self.client;
         let response: crate::protocol::HeartbeatResponse =
             client.send_request(coordinator, 12, &request).await?;
 
@@ -1316,7 +1091,7 @@ impl Consumer {
             } else {
                 // 如果没有消费者组分配，使用 subscribed_topics 的所有分区
                 let mut all: HashMap<String, Vec<i32>> = HashMap::new();
-                let client = self.client.lock().await;
+                let client = &self.client;
                 for topic in &self.subscribed_topics {
                     if let Some(partitions) = client.metadata().get_partitions(topic).await {
                         all.insert(topic.clone(), partitions);
@@ -1438,6 +1213,8 @@ impl Consumer {
     }
 
     /// 执行 fetch 请求并解析响应
+    ///
+    /// 任一分区失败都会直接返回错误，避免调用方在无感知的情况下丢失消息。
     async fn execute_fetch(
         &self,
         fetch_targets: Vec<(String, i32, i64)>,
@@ -1471,7 +1248,7 @@ impl Consumer {
         // 并发执行所有 fetch 请求
         let results = futures::future::join_all(futures).await;
 
-        // 处理结果并更新偏移量
+        // 处理结果并更新偏移量，任一失败即返回错误
         {
             let mut offsets = self.offsets.write().await;
             for result in results {
@@ -1487,6 +1264,7 @@ impl Consumer {
                     }
                     Err(e) => {
                         warn!("Failed to fetch partition: {}", e);
+                        return Err(e);
                     }
                 }
             }
@@ -1496,7 +1274,7 @@ impl Consumer {
     }
 
     async fn fetch_partition(
-        client: &Arc<Mutex<KafkaClient>>,
+        client: &Arc<KafkaClient>,
         topic: &str,
         partition: i32,
         offset: i64,
@@ -1505,11 +1283,11 @@ impl Consumer {
         max_bytes: i32,
         partition_max_bytes: i32,
     ) -> Result<Vec<ConsumerRecord>> {
-        let mut client_guard = client.lock().await;
+        let client_guard = client;
 
-        // 刷新元数据（如果过期）
+        // 刷新元数据（如果过期），刷新失败向上传播
         if client_guard.metadata().is_expired().await {
-            let _ = client_guard.refresh_metadata().await;
+            client_guard.refresh_metadata().await?;
         }
 
         let leader_addr = client_guard
@@ -1521,7 +1299,6 @@ impl Consumer {
         // 获取连接 Arc 后释放 KafkaClient 锁，避免长时间持有影响心跳
         let conn = client_guard.get_broker_connection(leader_addr).await?;
         let conn_arc = conn.clone();
-        drop(client_guard);
 
         let request = FetchRequest {
             cluster_id: None,
@@ -1665,7 +1442,14 @@ impl Consumer {
         // 从 group_state 获取 generation_id 和 member_id，以便协商的 OffsetCommit 版本能正确处理
         let (generation_id, member_id) = {
             let gs = self.group_state.read().await;
-            (gs.generation_id, if gs.member_id.is_empty() { None } else { Some(gs.member_id.clone()) })
+            (
+                gs.generation_id,
+                if gs.member_id.is_empty() {
+                    None
+                } else {
+                    Some(gs.member_id.clone())
+                },
+            )
         };
 
         Self::do_commit(
@@ -1680,7 +1464,7 @@ impl Consumer {
     }
 
     async fn do_commit(
-        client: &Arc<Mutex<KafkaClient>>,
+        client: &Arc<KafkaClient>,
         group_id: &str,
         offsets: &Arc<RwLock<HashMap<String, HashMap<i32, i64>>>>,
         coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
@@ -1715,9 +1499,10 @@ impl Consumer {
                 addr
             } else {
                 // 查找协调者
-                let mut client_guard = client.lock().await;
+                let client_guard = client;
                 let broker_addr = client_guard
                     .any_broker_address()
+                    .await
                     .ok_or(KafkaError::NoBrokerAvailable)?;
 
                 let request = FindCoordinatorRequest {
@@ -1791,7 +1576,7 @@ impl Consumer {
             topics,
         };
 
-        let mut client_guard = client.lock().await;
+        let client_guard = client;
         let response: Result<crate::protocol::OffsetCommitResponse> = client_guard
             .send_request(coordinator_addr, 8, &request)
             .await;
@@ -1844,7 +1629,7 @@ impl Consumer {
             ..Default::default()
         };
 
-        let mut client = self.client.lock().await;
+        let client = &self.client;
         let response: crate::protocol::LeaveGroupResponse =
             client.send_request(coordinator, 13, &request).await?;
 

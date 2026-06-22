@@ -141,7 +141,7 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                                     return Err(::kafka_client_protocol_core::ProtocolError::insufficient_data(4, buf.remaining()));
                                 }
                                 let len = buf.get_i32();
-                                if len < 0 {
+                                if len <= 0 {
                                     None
                                 } else {
                                     let mut batch_buf = buf.split_to(len as usize);

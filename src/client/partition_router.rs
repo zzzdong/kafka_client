@@ -1,8 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 分区路由策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitionRouting {
     #[default]
     RoundRobin,
@@ -10,7 +9,6 @@ pub enum PartitionRouting {
     Fixed(i32),
     Random,
 }
-
 
 /// 分区路由器
 pub struct PartitionRouter {
