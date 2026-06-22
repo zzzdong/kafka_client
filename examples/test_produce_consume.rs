@@ -1,8 +1,7 @@
 use bytes::Bytes;
-use kafka_client::client::high_level::{
-    AutoOffsetReset, Consumer, ConsumerConfig, Producer, ProducerConfig, ProducerRecord,
-};
-use kafka_client::client::low_level::{ClientConfig, KafkaClient};
+use kafka_client::client::consumer::{AutoOffsetReset, Consumer, ConsumerConfig};
+use kafka_client::client::core::{ClientConfig, KafkaClient};
+use kafka_client::client::producer::{Producer, ProducerConfig, ProducerRecord};
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::transport::SecurityProtocol;
@@ -98,7 +97,7 @@ async fn main() {
         rebalance_timeout_ms: 60000,
         heartbeat_interval_ms: 3000,
         partition_assignment_strategy:
-            kafka_client::client::high_level::PartitionAssignmentStrategy::Range,
+            kafka_client::client::consumer::PartitionAssignmentStrategy::Range,
     };
 
     let mut consumer = Consumer::new(client.clone(), consumer_config).await;

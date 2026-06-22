@@ -3,12 +3,12 @@
 # download-kafka.sh — 下载并安装 Kafka 用于集成测试
 #
 # 用法:
-#   ./tests/download-kafka.sh                # 下载默认版本 4.1.1
+#   ./tests/download-kafka.sh                # 下载默认版本 4.3.0
 #   ./tests/download-kafka.sh 3.9.0          # 下载指定版本
 #   KAFKA_MIRROR=https://... ./tests/download-kafka.sh  # 自定义镜像
 #
 # 环境变量:
-#   KAFKA_VERSION    Kafka 版本（默认 4.1.1）
+#   KAFKA_VERSION    Kafka 版本（默认 4.3.0）
 #   KAFKA_MIRROR     下载镜像基址（默认自动选择）
 #   KAFKA_HOME       安装目标目录（默认 tests/kafka）
 #   KAFKA_CLEAN      设为 true 则先删除已有安装
@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── 配置 ──────────────────────────────────────────────────────────────────
 
-KAFKA_VERSION="${KAFKA_VERSION:-${1:-4.1.1}}"
+KAFKA_VERSION="${KAFKA_VERSION:-${1:-4.3.0}}"
 KAFKA_HOME="${KAFKA_HOME:-$(cd "$(dirname "$0")" && pwd)/kafka}"
 SCALA_VERSION="2.13"
 

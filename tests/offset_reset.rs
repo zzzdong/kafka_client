@@ -2,13 +2,15 @@
 //!
 //! 验证 Earliest 消费者能从最早偏移量消费，Latest 消费者不阻塞。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test offset_reset -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test offset_reset --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::{KafkaInstance, consumer_config};
-use kafka_client::client::high_level::AutoOffsetReset;
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::consumer::AutoOffsetReset;
+use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -51,7 +53,7 @@ async fn test_offset_reset_policies() {
     let latest_client = Arc::new(Mutex::new(
         KafkaClient::connect(server.client_config()).await.unwrap(),
     ));
-    let mut consumer = kafka_client::client::high_level::Consumer::new(
+    let mut consumer = kafka_client::client::consumer::Consumer::new(
         latest_client,
         consumer_config("cg-latest-test", AutoOffsetReset::Latest),
     )

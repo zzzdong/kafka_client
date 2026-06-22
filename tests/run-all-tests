@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# 一站式集成测试启动脚本（受 kafka-rust 项目 tests/run-all-tests 启发）。
+#
+# 默认启动 3-broker KRaft 集群，并运行全部集成测试（含 cluster feature）。
+# 可通过环境变量覆盖行为：
+#   KAFKA_IMAGE        容器镜像（默认 apache/kafka:4.3.0）
+#   KAFKA_BOOTSTRAP    逗号分隔 bootstrap 地址（默认本脚本启动的集群端口）
+#   KAFKA_CLUSTER_SIZE 默认 3
+#   RUST_TEST_THREADS  默认 1，避免测试并行时主题/消费者组冲突
+#   KAFKA_RUNTIME      默认 external（脚本负责启动集群）
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+KAFKA_IMAGE="${KAFKA_IMAGE:-apache/kafka:4.3.0}"
+KAFKA_CLUSTER_SIZE="${KAFKA_CLUSTER_SIZE:-3}"
+RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
+KAFKA_RUNTIME="${KAFKA_RUNTIME:-external}"
+
+# 默认使用 docker compose 启动的集群端口
+DEFAULT_BOOTSTRAP="127.0.0.1:29092,127.0.0.1:29094,127.0.0.1:29095"
+KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-${DEFAULT_BOOTSTRAP}}"
+
+cd "${SCRIPT_DIR}"
+
+echo "=== Stopping any leftover Kafka test containers ==="
+docker compose down -v 2>/dev/null || true
+
+echo "=== Starting Kafka ${KAFKA_CLUSTER_SIZE}-broker cluster ==="
+KAFKA_IMAGE="${KAFKA_IMAGE}" docker compose up -d
+
+# 等待最后一个 broker 健康
+echo "=== Waiting for Kafka cluster to be healthy ==="
+docker compose ps -a
+for i in $(seq 1 60); do
+    if docker compose ps | grep -qE "kafka-3.*healthy"; then
+        echo "  Cluster healthy after ~${i}s"
+        break
+    fi
+    sleep 1
+done
+
+if ! docker compose ps | grep -qE "kafka-3.*healthy"; then
+    echo "ERROR: Kafka cluster did not become healthy in time"
+    docker compose logs --tail=50
+    docker compose down -v
+    exit 1
+fi
+
+cd "${PROJECT_ROOT}"
+
+echo "=== Running integration tests ==="
+KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \
+KAFKA_CLUSTER_SIZE="${KAFKA_CLUSTER_SIZE}" \
+KAFKA_RUNTIME="${KAFKA_RUNTIME}" \
+RUST_TEST_THREADS="${RUST_TEST_THREADS}" \
+cargo test --features integration_tests -- --nocapture
+
+echo "=== Cleaning up ==="
+cd "${SCRIPT_DIR}"
+docker compose down -v
+
+echo "=== Done ==="

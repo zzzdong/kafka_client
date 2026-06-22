@@ -237,10 +237,7 @@ impl ScramMechanism {
     }
 
     fn generate_client_final(&mut self) -> Result<String, SaslError> {
-        let server_nonce = self
-            .server_nonce
-            .as_ref()
-            .ok_or(SaslError::InvalidState)?;
+        let server_nonce = self.server_nonce.as_ref().ok_or(SaslError::InvalidState)?;
         let salt = self.salt.as_ref().ok_or(SaslError::InvalidState)?;
         let iterations = self.iterations.ok_or(SaslError::InvalidState)?;
 
@@ -297,10 +294,7 @@ impl ScramMechanism {
             .salted_password
             .as_ref()
             .ok_or(SaslError::InvalidState)?;
-        let auth_message = self
-            .auth_message
-            .as_ref()
-            .ok_or(SaslError::InvalidState)?;
+        let auth_message = self.auth_message.as_ref().ok_or(SaslError::InvalidState)?;
 
         // ServerKey = HMAC(SaltedPassword, "Server Key")
         let server_key = self.hmac(salted_password, b"Server Key");

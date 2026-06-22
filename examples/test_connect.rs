@@ -1,4 +1,4 @@
-use kafka_client::client::low_level::{ClientConfig, KafkaClient};
+use kafka_client::client::core::{ClientConfig, KafkaClient};
 use kafka_client::transport::SecurityProtocol;
 
 #[tokio::main]

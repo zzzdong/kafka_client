@@ -2,13 +2,15 @@
 //!
 //! 验证生产者可以同时向多个主题发送消息。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test multi_topic -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test multi_topic --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::{KafkaInstance, default_producer_config};
-use kafka_client::client::high_level::{Producer, ProducerRecord};
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::producer::{Producer, ProducerRecord};
+use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Run unit tests
+        run: cargo test --lib
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+        continue-on-error: true
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  integration-tests-single-node:
+    name: Integration Tests (single-node)
+    runs-on: ubuntu-latest
+    services:
+      kafka:
+        image: apache/kafka:4.3.0
+        ports:
+          - 29092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:29092
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_GROUP_COORDINATOR_REBALANCE_PROTOCOLS: classic
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+          CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+        options: >-
+          --health-cmd "kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build integration tests
+        run: cargo test --no-run --features integration_tests
+
+      - name: Run single-node integration tests
+        run: cargo test --features integration_tests -- --nocapture
+        env:
+          KAFKA_RUNTIME: external
+          KAFKA_BOOTSTRAP: 127.0.0.1:29092
+          KAFKA_CLUSTER_SIZE: 1
+          RUST_TEST_THREADS: 1
+
+  integration-tests-cluster:
+    name: Integration Tests (cluster)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build integration tests
+        run: cargo test --no-run --features integration_tests
+
+      - name: Start Kafka cluster
+        working-directory: tests
+        run: |
+          docker compose down -v
+          docker compose up -d
+          for i in $(seq 1 60); do
+            if docker compose ps | grep -qE "kafka-3.*healthy"; then
+              echo "Cluster healthy after ~${i}s"
+              break
+            fi
+            sleep 1
+          done
+          docker compose ps
+
+      - name: Run all integration tests against cluster
+        run: cargo test --features integration_tests -- --nocapture
+        env:
+          KAFKA_RUNTIME: external
+          KAFKA_BOOTSTRAP: 127.0.0.1:29092,127.0.0.1:29094,127.0.0.1:29095
+          KAFKA_CLUSTER_SIZE: 3
+          RUST_TEST_THREADS: 1
+
+      - name: Stop Kafka cluster
+        if: always()
+        working-directory: tests
+        run: docker compose down -v

@@ -2,12 +2,14 @@
 //!
 //! 验证 100 条消息的批量生产和消费。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test large_batch -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test large_batch --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

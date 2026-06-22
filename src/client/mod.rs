@@ -1,14 +1,17 @@
 pub mod broker_manager;
-pub mod high_level;
-pub mod low_level;
+pub mod core;
+pub mod consumer;
 pub mod metadata;
+pub mod partition_router;
+pub mod producer;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::client::high_level::{Consumer, ConsumerConfig, Producer, ProducerConfig};
-use crate::client::low_level::{ClientConfig, KafkaClient as LowLevelClient};
+use crate::client::consumer::{Consumer, ConsumerConfig};
+use crate::client::core::{ClientConfig, KafkaClient as CoreClient};
+use crate::client::producer::{Producer, ProducerConfig};
 use crate::error::Result;
 use crate::sasl::{SaslCredentials, SaslMechanismType};
 use crate::transport::{SecurityProtocol, TlsConfigData};
@@ -123,23 +126,23 @@ impl KafkaClientBuilder {
         self
     }
 
-    pub async fn build_low_level(self) -> Result<LowLevelClient> {
+    pub async fn build_core(self) -> Result<CoreClient> {
         let config = ClientConfig {
             bootstrap_servers: self.bootstrap_servers,
             security_protocol: self.security_protocol,
             client_id: self.client_id,
             metadata_ttl: self.metadata_ttl,
         };
-        LowLevelClient::connect(config).await
+        CoreClient::connect(config).await
     }
 
     pub async fn build_producer(self, producer_config: ProducerConfig) -> Result<Producer> {
-        let client = Arc::new(Mutex::new(self.build_low_level().await?));
+        let client = Arc::new(Mutex::new(self.build_core().await?));
         Ok(Producer::new(client, producer_config).await)
     }
 
     pub async fn build_consumer(self, consumer_config: ConsumerConfig) -> Result<Consumer> {
-        let client = Arc::new(Mutex::new(self.build_low_level().await?));
+        let client = Arc::new(Mutex::new(self.build_core().await?));
         Ok(Consumer::new(client, consumer_config).await)
     }
 }

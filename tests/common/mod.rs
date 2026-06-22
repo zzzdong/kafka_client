@@ -1,17 +1,22 @@
+#![allow(dead_code, unused_imports)]
 //! Kafka 集成测试公共基础设施
 //!
-//! 支持两种 Kafka 启动方式（自动检测）：
-//! 1. Podman 容器：使用已有的 apache/kafka 镜像
-//! 2. 直接 JVM 进程：使用 tests/kafka/ 下的 Kafka 发行版
+//! 支持多种 Kafka 部署形态：
+//! - 单点（single-node）：本地开发/快速回归
+//! - 分布式集群（multi-broker cluster）：通过外部 Docker Compose 或 CI 服务容器提供
 //!
-//! 通过环境变量控制：
-//! - `KAFKA_RUNTIME` = "auto" | "podman" | "direct"（默认: "auto"）
-//! - `KAFKA_IMAGE` 指定容器镜像名（默认: swr.cn-north-4...）
-//! - `KAFKA_BOOTSTRAP` 指定 bootstrap 地址（默认: 127.0.0.1:29092）
-//! - `KAFKA_HOME` 指定 Kafka 发行版路径（默认: tests/kafka）
+//! 运行时通过环境变量控制：
+//! - `KAFKA_RUNTIME` = "auto" | "podman" | "docker" | "direct" | "external"（默认: auto）
+//!     - auto：优先 podman，其次 direct
+//!     - external：不启动 Kafka，使用 `KAFKA_BOOTSTRAP` 指向的外部集群
+//! - `KAFKA_BOOTSTRAP`：逗号分隔的 bootstrap 地址，集群模式可填多个（默认: 127.0.0.1:29092）
+//! - `KAFKA_IMAGE`：容器镜像名（默认: apache/kafka:4.3.0）
+//! - `KAFKA_HOME`：direct 模式下 Kafka 发行版路径（默认: tests/kafka）
+//! - `KAFKA_CLUSTER_SIZE`：期望的集群 broker 数量，用于健康检查（默认: 1）
+//! - `KAFKA_CONTROLLER_PORT`：direct 单点模式控制器端口（默认: 29093）
 
 use std::fs;
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Arc;
@@ -19,11 +24,12 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use kafka_client::client::high_level::{
+use kafka_client::client::consumer::{
     AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, PartitionAssignmentStrategy,
-    PartitionRouting, Producer, ProducerConfig, ProducerRecord, RecordMetadata,
 };
-use kafka_client::client::low_level::{ClientConfig, KafkaClient};
+use kafka_client::client::partition_router::PartitionRouting;
+use kafka_client::client::producer::{Producer, ProducerConfig, ProducerRecord, RecordMetadata};
+use kafka_client::client::core::{ClientConfig, KafkaClient};
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::transport::SecurityProtocol;
@@ -34,49 +40,71 @@ use kafka_client::transport::SecurityProtocol;
 
 const DEFAULT_BOOTSTRAP: &str = "127.0.0.1:29092";
 const DEFAULT_CONTROLLER_PORT: u16 = 29093;
+const DEFAULT_IMAGE: &str = "apache/kafka:4.3.0";
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-/// 集成测试配置，读取自环境变量
+/// 集成测试配置，读取自环境变量。
+#[derive(Debug, Clone)]
 pub struct TestConfig {
-    /// 运行时后端：auto / podman / direct
+    /// 运行时后端
     pub runtime: RuntimeBackend,
-    /// 容器镜像名（podman 模式）
+    /// 容器镜像名（podman/docker 模式）
     pub image: String,
-    /// Bootstrap server 地址
-    pub bootstrap: String,
-    /// SocketAddr 格式的 bootstrap
-    pub bootstrap_addr: std::net::SocketAddr,
+    /// Bootstrap server 地址列表（逗号分隔解析）
+    pub bootstrap_servers: Vec<String>,
+    /// SocketAddr 格式的 bootstrap 列表
+    pub bootstrap_addrs: Vec<SocketAddr>,
     /// Kafka 发行版目录（direct 模式）
     pub kafka_home: PathBuf,
+    /// 期望的集群 broker 数量
+    pub cluster_size: usize,
+    /// direct 单点模式控制器端口
+    pub controller_port: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeBackend {
     Auto,
     Podman,
+    Docker,
     Direct,
+    External,
 }
 
 impl TestConfig {
     pub fn from_env() -> Self {
         let runtime = match std::env::var("KAFKA_RUNTIME").as_deref() {
             Ok("podman") => RuntimeBackend::Podman,
+            Ok("docker") => RuntimeBackend::Docker,
             Ok("direct") => RuntimeBackend::Direct,
+            Ok("external") => RuntimeBackend::External,
             _ => RuntimeBackend::Auto,
         };
 
-        let image = std::env::var("KAFKA_IMAGE").unwrap_or_else(|_| {
-            "swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/apache/kafka:4.1.1".to_string()
-        });
+        let image = std::env::var("KAFKA_IMAGE").unwrap_or_else(|_| DEFAULT_IMAGE.to_string());
 
-        let bootstrap =
-            std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| DEFAULT_BOOTSTRAP.to_string());
-        let bootstrap_addr = bootstrap.parse().unwrap_or_else(|e| {
-            panic!("Invalid KAFKA_BOOTSTRAP={:?}: {}", bootstrap, e);
-        });
+        let bootstrap_servers: Vec<String> = std::env::var("KAFKA_BOOTSTRAP")
+            .unwrap_or_else(|_| DEFAULT_BOOTSTRAP.to_string())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if bootstrap_servers.is_empty() {
+            panic!("KAFKA_BOOTSTRAP resolved to empty list");
+        }
+
+        let bootstrap_addrs: Vec<SocketAddr> = bootstrap_servers
+            .iter()
+            .map(|s| {
+                s.parse().unwrap_or_else(|e| {
+                    panic!("Invalid KAFKA_BOOTSTRAP address {:?}: {}", s, e);
+                })
+            })
+            .collect();
 
         let kafka_home = std::env::var("KAFKA_HOME")
             .map(PathBuf::from)
@@ -86,22 +114,43 @@ impl TestConfig {
                     .join("kafka")
             });
 
+        let cluster_size = std::env::var("KAFKA_CLUSTER_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+
+        let controller_port = std::env::var("KAFKA_CONTROLLER_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_CONTROLLER_PORT);
+
         Self {
             runtime,
             image,
-            bootstrap,
-            bootstrap_addr,
+            bootstrap_servers,
+            bootstrap_addrs,
             kafka_home,
+            cluster_size,
+            controller_port,
         }
     }
 
     pub fn client_config(&self) -> ClientConfig {
         ClientConfig {
-            bootstrap_servers: vec![self.bootstrap_addr],
+            bootstrap_servers: self.bootstrap_addrs.clone(),
             security_protocol: SecurityProtocol::Plaintext,
             client_id: "integration-test".to_string(),
             metadata_ttl: Duration::from_secs(10),
         }
+    }
+
+    /// 返回首个 bootstrap 地址（兼容单点模式）。
+    pub fn first_bootstrap(&self) -> &str {
+        &self.bootstrap_servers[0]
+    }
+
+    pub fn is_cluster(&self) -> bool {
+        self.cluster_size > 1 || self.bootstrap_addrs.len() > 1
     }
 }
 
@@ -109,13 +158,15 @@ impl TestConfig {
 // KafkaInstance — 管理 Kafka broker 生命周期
 // ============================================================================
 
-/// Kafka broker 实例。
+/// Kafka broker/集群实例。
 ///
 /// 启动时根据配置自动选择后端：
-/// - Podman 容器：`podman run ... apache/kafka:4.1.1`
+/// - Podman 容器：启动单点 KRaft broker
+/// - Docker 容器：同上（使用 docker CLI）
 /// - Direct JVM：调用 `tests/kafka/bin/kafka-server-start.sh`
+/// - External：不管理生命周期，连接外部 Kafka
 ///
-/// Drop 时自动停止和清理。
+/// Drop 时自动停止和清理本地启动的资源。
 pub struct KafkaInstance {
     config: TestConfig,
     backend: BackendKind,
@@ -123,86 +174,131 @@ pub struct KafkaInstance {
 
 #[allow(dead_code)]
 enum BackendKind {
-    Podman {
-        container_id: String,
-    },
-    Direct {
-        child: Child,
-        work_dir: PathBuf,
-        log_path: PathBuf,
-    },
+    None,
+    Podman { container_id: String },
+    Docker { container_id: String },
+    Direct { child: Child, work_dir: PathBuf },
 }
 
-#[allow(dead_code)]
 impl KafkaInstance {
-    /// 启动 Kafka broker。根据配置和环境自动选择最优后端。
+    /// 启动 Kafka 实例（兼容旧接口，默认单点）。
     pub async fn start() -> Self {
-        let config = TestConfig::from_env();
+        Self::start_with(TestConfig::from_env()).await
+    }
+
+    /// 使用指定配置启动。
+    pub async fn start_with(mut config: TestConfig) -> Self {
+        // 当用户没有显式指定 KAFKA_BOOTSTRAP 且不是 external 模式时，
+        // 自动分配随机空闲端口，避免并行测试互相抢占 29092。
+        let bootstrap_from_env = std::env::var("KAFKA_BOOTSTRAP").is_ok();
+        if config.runtime != RuntimeBackend::External && !bootstrap_from_env {
+            let broker_port = find_free_port();
+            config.controller_port = broker_port + 1;
+            let bootstrap = format!("127.0.0.1:{}", broker_port);
+            config.bootstrap_servers = vec![bootstrap.clone()];
+            config.bootstrap_addrs = vec![bootstrap
+                .parse()
+                .expect("generated random bootstrap address must be valid")];
+        }
 
         println!(
-            "=== KafkaInstance: starting (runtime={:?}, bootstrap={}) ===",
-            config.runtime, config.bootstrap
+            "=== KafkaInstance: starting (runtime={:?}, bootstrap={:?}, cluster_size={}) ===",
+            config.runtime, config.bootstrap_servers, config.cluster_size
         );
 
-        // 尝试优先选择后端
         let backend = match config.runtime {
+            RuntimeBackend::External => BackendKind::None,
             RuntimeBackend::Podman => Self::start_podman(&config)
                 .await
                 .unwrap_or_else(|e| panic!("Podman backend requested but unavailable: {}", e)),
+            RuntimeBackend::Docker => Self::start_docker(&config)
+                .await
+                .unwrap_or_else(|e| panic!("Docker backend requested but unavailable: {}", e)),
             RuntimeBackend::Direct => Self::start_direct(&config).await,
             RuntimeBackend::Auto => {
-                // 先尝试 podman，失败则降级到 direct
-                match Self::start_podman(&config).await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        println!(
-                            "Podman backend unavailable ({}), falling back to direct JVM",
-                            e
-                        );
+                // 优先 podman，其次 direct，最后 external（如果已配置）
+                if let Ok(b) = Self::start_podman(&config).await {
+                    b
+                } else if let Ok(b) = Self::start_docker(&config).await {
+                    b
+                } else {
+                    println!(
+                        "Container backend unavailable, falling back to direct JVM or external"
+                    );
+                    if config.bootstrap_addrs.iter().any(|a| is_port_open(a)) {
+                        println!("External Kafka already reachable, using external mode");
+                        BackendKind::None
+                    } else {
                         Self::start_direct(&config).await
                     }
                 }
             }
         };
 
-        println!("=== KafkaInstance: ready at {} ===", config.bootstrap);
+        println!(
+            "=== KafkaInstance: ready at {:?} ===",
+            config.bootstrap_servers
+        );
         Self { config, backend }
     }
 
-    // ── Podman 后端 ────────────────────────────────────────────────
+    // ── 容器后端 ────────────────────────────────────────────────────
 
     async fn start_podman(config: &TestConfig) -> Result<BackendKind, String> {
-        // 检查 podman 是否可用
-        let version_check = Command::new("podman")
-            .args(["version", "--format", "{{.Version}}"])
+        Self::ensure_container_cli("podman")?;
+        Self::ensure_image_present("podman", &config.image).await?;
+        let container_id = Self::run_container("podman", config).await?;
+        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 30).await;
+        Ok(BackendKind::Podman { container_id })
+    }
+
+    async fn start_docker(config: &TestConfig) -> Result<BackendKind, String> {
+        Self::ensure_container_cli("docker")?;
+        Self::ensure_image_present("docker", &config.image).await?;
+        let container_id = Self::run_container("docker", config).await?;
+        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 30).await;
+        Ok(BackendKind::Docker { container_id })
+    }
+
+    fn ensure_container_cli(cli: &str) -> Result<(), String> {
+        let version_check = Command::new(cli)
+            .args(["version", "--format", "{{.Server.Version}}"])
             .output()
-            .map_err(|e| format!("podman not found: {}", e))?;
+            .map_err(|e| format!("{} not found: {}", cli, e))?;
         if !version_check.status.success() {
-            return Err("podman version check failed".to_string());
+            return Err(format!("{} version check failed", cli));
         }
         let version = String::from_utf8_lossy(&version_check.stdout)
             .trim()
             .to_string();
-        println!("  [podman] version={}", version);
+        println!("  [{}] version={}", cli, version);
+        Ok(())
+    }
 
-        // 检查镜像是否存在
-        let inspect = Command::new("podman")
-            .args(["image", "exists", &config.image])
-            .status()
-            .map_err(|e| format!("podman image check failed: {}", e))?;
-        if !inspect.success() {
-            return Err(format!(
-                "Image '{}' not found locally. Pull with: podman pull {}",
-                config.image, config.image
-            ));
+    async fn ensure_image_present(cli: &str, image: &str) -> Result<(), String> {
+        let inspect = Command::new(cli)
+            .args(["image", "inspect", image])
+            .output()
+            .map_err(|e| format!("{} image inspect failed: {}", cli, e))?;
+        if !inspect.status.success() {
+            println!("  [{}] pulling image {}...", cli, image);
+            let pull = Command::new(cli)
+                .args(["pull", image])
+                .status()
+                .map_err(|e| format!("{} pull {} failed: {}", cli, image, e))?;
+            if !pull.success() {
+                return Err(format!("{} pull {} failed", cli, image));
+            }
         }
+        Ok(())
+    }
 
-        // 生成集群 ID
+    async fn run_container(cli: &str, config: &TestConfig) -> Result<String, String> {
         let cluster_id = uuid::Uuid::new_v4().to_string();
         let container_name = format!("kafka-integration-{}", &cluster_id[..8]);
+        let port = config.bootstrap_addrs[0].port();
 
-        // 启动容器
-        let output = Command::new("podman")
+        let output = Command::new(cli)
             .args([
                 "run",
                 "-d",
@@ -210,9 +306,9 @@ impl KafkaInstance {
                 "--name",
                 &container_name,
                 "-p",
-                &format!("{}:9092", config.bootstrap_addr.port()),
+                &format!("{}:9092", port),
                 "-e",
-                &format!("KAFKA_NODE_ID=1"),
+                "KAFKA_NODE_ID=1",
                 "-e",
                 "KAFKA_PROCESS_ROLES=broker,controller",
                 "-e",
@@ -220,7 +316,7 @@ impl KafkaInstance {
                 "-e",
                 &format!(
                     "KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://{}",
-                    config.bootstrap
+                    config.first_bootstrap()
                 ),
                 "-e",
                 "KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER",
@@ -245,25 +341,19 @@ impl KafkaInstance {
                 &config.image,
             ])
             .output()
-            .map_err(|e| format!("podman run failed: {}", e))?;
+            .map_err(|e| format!("{} run failed: {}", cli, e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("podman run failed: {}", stderr));
+            return Err(format!("{} run failed: {}", cli, stderr));
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         println!(
-            "  [podman] container={}, name={}",
-            container_id, container_name
+            "  [{}] container={}, name={}",
+            cli, container_id, container_name
         );
-
-        // 等待就绪
-        Self::wait_for_port(config.bootstrap_addr.port(), 30);
-        // 额外等待 KRaft 选举完成
-        sleep(Duration::from_secs(5)).await;
-
-        Ok(BackendKind::Podman { container_id })
+        Ok(container_id)
     }
 
     // ── Direct JVM 后端 ────────────────────────────────────────────
@@ -276,7 +366,6 @@ impl KafkaInstance {
         let log_dir = work_dir.join("data");
         fs::create_dir_all(&log_dir).expect("create data dir");
 
-        // 生成 server.properties
         let server_config = work_dir.join("server.properties");
         let cfg_content = format!(
             r#"process.roles=broker,controller
@@ -303,14 +392,13 @@ socket.request.max.bytes=104857600
 log.retention.hours=1
 log.segment.bytes=1073741824
 "#,
-            broker = config.bootstrap_addr.port(),
-            controller = DEFAULT_CONTROLLER_PORT,
-            bootstrap = config.bootstrap,
+            broker = config.bootstrap_addrs[0].port(),
+            controller = config.controller_port,
+            bootstrap = config.first_bootstrap(),
             log_dir = log_dir.display(),
         );
         fs::write(&server_config, &cfg_content).expect("write server.properties");
 
-        // 格式化存储
         let uuid_out = run_kafka_script(config, "kafka-storage.sh", &["random-uuid"])
             .expect("kafka-storage.sh random-uuid");
         let cluster_id = String::from_utf8_lossy(&uuid_out.stdout).trim().to_string();
@@ -336,7 +424,6 @@ log.segment.bytes=1073741824
         }
         println!("  [direct] storage formatted");
 
-        // 启动 Kafka 服务器
         let log_path = work_dir.join("server.log");
         let log_file = fs::File::create(&log_path).expect("create server log");
         let child = Command::new(format!(
@@ -349,58 +436,105 @@ log.segment.bytes=1073741824
         .spawn()
         .expect("spawn kafka-server-start.sh");
 
-        let instance = BackendKind::Direct {
-            child,
-            work_dir,
-            log_path,
-        };
+        let backend = BackendKind::Direct { child, work_dir };
 
-        Self::wait_for_port(config.bootstrap_addr.port(), 60);
-        // KRaft 选举
-        sleep(Duration::from_secs(3)).await;
-
-        instance
+        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 60).await;
+        backend
     }
 
-    /// 等待 TCP 端口可连接
-    fn wait_for_port(port: u16, max_secs: u64) {
-        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    // ── 健康等待 ────────────────────────────────────────────────────
+
+    async fn wait_for_cluster(addrs: &[SocketAddr], cluster_size: usize, max_secs: u64) {
+        // 1. 等待 TCP 端口可连
         for i in 0..max_secs {
-            if TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
-                println!("  Port {} ready after ~{}s", port, i + 1);
-                return;
+            let ready = addrs.iter().filter(|a| is_port_open(a)).count();
+            if ready == addrs.len() {
+                println!("  All {} bootstrap ports ready after ~{}s", ready, i + 1);
+                break;
             }
-            std::thread::sleep(Duration::from_secs(1));
+            sleep(Duration::from_secs(1)).await;
         }
-        println!("  Port {} not ready after {}s (continuing)", port, max_secs);
+
+        // 2. 等待 Kafka API 真正可服务（metadata 可刷新）
+        let readiness_config = ClientConfig {
+            bootstrap_servers: addrs.to_vec(),
+            security_protocol: SecurityProtocol::Plaintext,
+            client_id: "kafka-instance-readiness".to_string(),
+            metadata_ttl: Duration::from_secs(10),
+        };
+        let api_ready = async {
+            for i in 0..max_secs {
+                let cfg = readiness_config.clone();
+                match KafkaClient::connect(cfg).await {
+                    Ok(mut client) => {
+                        if client.refresh_metadata().await.is_ok() {
+                            let _ = client.close().await;
+                            println!("  Kafka broker API ready after ~{}s", i + 1);
+                            return true;
+                        }
+                        let _ = client.close().await;
+                    }
+                    Err(e) => {
+                        println!("  Readiness check not ready yet: {}", e);
+                    }
+                }
+                sleep(Duration::from_secs(1)).await;
+            }
+            false
+        }
+        .await;
+
+        if !api_ready {
+            println!(
+                "  Warning: Kafka API readiness check timed out after {}s, continuing anyway",
+                max_secs
+            );
+        }
+
+        // 3. 给 KRaft 选举/集群元数据同步留出时间
+        let settle = if cluster_size > 1 { 3 } else { 1 };
+        sleep(Duration::from_secs(settle)).await;
     }
 
-    /// 获取 bootstrap server 地址
+    /// 获取首个 bootstrap server 地址字符串（兼容旧接口）。
     pub fn bootstrap(&self) -> &str {
-        &self.config.bootstrap
+        self.config.first_bootstrap()
+    }
+
+    /// 获取所有 bootstrap 地址。
+    pub fn bootstrap_servers(&self) -> &[String] {
+        &self.config.bootstrap_servers
+    }
+
+    /// 获取所有 bootstrap SocketAddr。
+    pub fn bootstrap_addrs(&self) -> &[SocketAddr] {
+        &self.config.bootstrap_addrs
     }
 
     pub fn client_config(&self) -> ClientConfig {
         self.config.client_config()
     }
 
-    /// 获取配置引用
     pub fn config(&self) -> &TestConfig {
         &self.config
     }
 
-    /// 清理子进程/容器
     fn cleanup(&mut self) {
         match &mut self.backend {
+            BackendKind::None => {}
             BackendKind::Podman { container_id } => {
                 println!("  Stopping podman container {}", container_id);
                 let _ = Command::new("podman")
                     .args(["stop", "-t", "5", container_id])
                     .status();
             }
-            BackendKind::Direct {
-                child, work_dir, ..
-            } => {
+            BackendKind::Docker { container_id } => {
+                println!("  Stopping docker container {}", container_id);
+                let _ = Command::new("docker")
+                    .args(["stop", "-t", "5", container_id])
+                    .status();
+            }
+            BackendKind::Direct { child, work_dir } => {
                 println!("  Stopping direct JVM Kafka...");
                 let pid = child.id();
                 let _ = Command::new("kill")
@@ -426,21 +560,41 @@ impl Drop for KafkaInstance {
     }
 }
 
+fn is_port_open(addr: &SocketAddr) -> bool {
+    TcpStream::connect_timeout(addr, Duration::from_secs(1)).is_ok()
+}
+
+/// 找一个当前空闲的 TCP 端口（绑定后立即释放）。
+fn find_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("failed to bind to find a free port");
+    listener
+        .local_addr()
+        .expect("failed to get local address")
+        .port()
+}
+
 // ============================================================================
 // Topic helpers
 // ============================================================================
 
-/// 创建主题并等待 leader 就绪
+/// 创建主题并等待 leader 就绪。集群模式下 replication_factor 会取 min(3, cluster_size)。
 pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32) {
+    let cluster_size = std::env::var("KAFKA_CLUSTER_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let replication_factor = if cluster_size >= 3 { 3 } else { 1 };
+
     println!(
-        "  Creating topic '{}' ({} partitions)...",
-        topic, partitions
+        "  Creating topic '{}' ({} partitions, rf={})...",
+        topic, partitions, replication_factor
     );
     let request = CreateTopicsRequest {
         topics: vec![CreatableTopic {
             name: topic.to_string(),
             num_partitions: partitions,
-            replication_factor: 1,
+            replication_factor,
             assignments: vec![],
             configs: vec![],
         }],
@@ -452,7 +606,6 @@ pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32
     let response: CreateTopicsResponse = client.send_request(addr, 19, &request).await.unwrap();
     for t in &response.topics {
         if t.error_code != 0 && t.error_code != 36 {
-            // 36 = TOPIC_ALREADY_EXISTS
             panic!(
                 "Create topic '{}' failed: error_code {} (message: {:?})",
                 topic, t.error_code, t.error_message
@@ -461,14 +614,17 @@ pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32
     }
     println!("  Topic '{}' created", topic);
 
-    // 等待 leader 选举完成
-    for i in 0..15 {
+    wait_for_topic_ready(client, topic, partitions).await;
+}
+
+pub async fn wait_for_topic_ready(client: &mut KafkaClient, topic: &str, partitions: i32) {
+    for i in 0..30 {
         let meta = client.refresh_metadata().await.unwrap();
-        let topic_meta = meta
+        if let Some(tm) = meta
             .topics
             .iter()
-            .find(|t| t.name.as_deref() == Some(topic));
-        if let Some(tm) = topic_meta {
+            .find(|t| t.name.as_deref() == Some(topic))
+        {
             let online = tm.partitions.iter().filter(|p| p.leader_id >= 0).count();
             if online == partitions as usize {
                 println!(
@@ -483,14 +639,13 @@ pub async fn create_topic(client: &mut KafkaClient, topic: &str, partitions: i32
         }
         sleep(Duration::from_secs(1)).await;
     }
-    println!("  Topic '{}' continuing optimistically after 15s", topic);
+    println!("  Topic '{}' continuing optimistically after 30s", topic);
 }
 
 // ============================================================================
 // Producer/Consumer helpers
 // ============================================================================
 
-/// 默认生产者配置
 pub fn default_producer_config() -> ProducerConfig {
     ProducerConfig {
         acks: 1,
@@ -503,7 +658,6 @@ pub fn default_producer_config() -> ProducerConfig {
     }
 }
 
-/// 消费者配置
 pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig {
     ConsumerConfig {
         group_id: group_id.to_string(),
@@ -521,7 +675,6 @@ pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig
     }
 }
 
-/// 生产指定数量的消息（自动重试）
 pub async fn produce_messages(
     client: &Arc<Mutex<KafkaClient>>,
     topic: &str,
@@ -552,7 +705,7 @@ pub async fn produce_messages(
                         let mut c = client.lock().await;
                         let _ = c.refresh_metadata().await;
                     }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }
@@ -562,7 +715,6 @@ pub async fn produce_messages(
     metas
 }
 
-/// 生产带 key 的消息
 pub async fn produce_messages_with_keys(
     client: &Arc<Mutex<KafkaClient>>,
     topic: &str,
@@ -582,12 +734,28 @@ pub async fn produce_messages_with_keys(
     metas
 }
 
-/// 消费所有消息（使用 auto_offset_reset=Earliest 的独立消费者组）
 pub async fn consume_all(
     client: &Arc<Mutex<KafkaClient>>,
     group_id: &str,
     topic: &str,
     expected_count: i32,
+) -> Vec<ConsumerRecord> {
+    consume_all_timeout(
+        client,
+        group_id,
+        topic,
+        expected_count,
+        Duration::from_secs(30),
+    )
+    .await
+}
+
+pub async fn consume_all_timeout(
+    client: &Arc<Mutex<KafkaClient>>,
+    group_id: &str,
+    topic: &str,
+    expected_count: i32,
+    timeout: Duration,
 ) -> Vec<ConsumerRecord> {
     let mut consumer = Consumer::new(
         client.clone(),
@@ -596,7 +764,6 @@ pub async fn consume_all(
     .await;
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
 
-    // 轮询等待消费者组加入完成（check assignment every 1s, max 20s）
     for i in 0..20 {
         let assignment = consumer.assignment().await;
         let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
@@ -612,7 +779,7 @@ pub async fn consume_all(
     }
 
     let mut all = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + timeout;
     while all.len() < expected_count as usize && std::time::Instant::now() < deadline {
         let records = consumer.poll(3000).await.unwrap();
         all.extend(records);
@@ -632,6 +799,79 @@ pub async fn consume_all(
     );
     drop(consumer);
     all
+}
+
+// ============================================================================
+// Cluster helpers
+// ============================================================================
+
+/// 验证 metadata 中报告的 broker 数量不少于期望值。
+pub async fn assert_cluster_size(client: &mut KafkaClient, expected: usize) {
+    let meta = client.refresh_metadata().await.unwrap();
+    let actual = meta.brokers.len();
+    println!(
+        "  Cluster metadata reports {} brokers (expected >= {})",
+        actual, expected
+    );
+    assert!(
+        actual >= expected,
+        "Expected at least {} brokers, got {}",
+        expected,
+        actual
+    );
+}
+
+/// 统计 metadata 中某主题每个分区的 leader 分布（按 broker id）。
+pub async fn partition_leader_distribution(
+    client: &mut KafkaClient,
+    topic: &str,
+) -> std::collections::HashMap<i32, Vec<i32>> {
+    let meta = client.refresh_metadata().await.unwrap();
+    let mut dist: std::collections::HashMap<i32, Vec<i32>> = std::collections::HashMap::new();
+    if let Some(tm) = meta
+        .topics
+        .iter()
+        .find(|t| t.name.as_deref() == Some(topic))
+    {
+        for p in &tm.partitions {
+            dist.entry(p.leader_id).or_default().push(p.partition_index);
+        }
+    }
+    dist
+}
+
+/// 等待 metadata 中某主题的某个分区重新选举出新的 leader（leader_id 改变）。
+pub async fn wait_for_new_leader(
+    client: &mut KafkaClient,
+    topic: &str,
+    partition: i32,
+    old_leader: i32,
+    max_secs: u64,
+) -> Option<i32> {
+    for _ in 0..max_secs {
+        let meta = client.refresh_metadata().await.unwrap();
+        if let Some(tm) = meta
+            .topics
+            .iter()
+            .find(|t| t.name.as_deref() == Some(topic))
+        {
+            if let Some(p) = tm
+                .partitions
+                .iter()
+                .find(|p| p.partition_index == partition)
+            {
+                if p.leader_id != old_leader && p.leader_id >= 0 {
+                    println!(
+                        "  Partition {}/{} leader changed: {} -> {}",
+                        topic, partition, old_leader, p.leader_id
+                    );
+                    return Some(p.leader_id);
+                }
+            }
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+    None
 }
 
 // ============================================================================

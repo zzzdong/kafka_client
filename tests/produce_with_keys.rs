@@ -2,12 +2,14 @@
 //!
 //! 验证相同 key 的消息始终路由到同一分区。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test produce_with_keys -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test produce_with_keys --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::core::KafkaClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;

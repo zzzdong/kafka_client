@@ -2,12 +2,14 @@
 //!
 //! 发送 3 条消息到 3 分区主题，验证消费正常且消息分布到多个分区。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test produce_consume -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test produce_consume --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

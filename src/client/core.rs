@@ -30,7 +30,7 @@ impl Default for ClientConfig {
     }
 }
 
-/// 低级 Kafka 客户端
+/// 核心 Kafka 客户端
 pub struct KafkaClient {
     broker_manager: BrokerManager,
     metadata: Arc<MetadataCache>,

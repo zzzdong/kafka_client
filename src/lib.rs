@@ -22,25 +22,15 @@ pub use transport::{SecurityProtocol, TlsConfigData};
 // Re-export client types
 pub use client::{KafkaClientBuilder, builder};
 
-pub use client::low_level::{ClientConfig, KafkaClient as LowLevelClient};
+pub use client::core::{ClientConfig, KafkaClient as CoreClient};
 
 pub use client::metadata::MetadataCache;
 
-pub use client::high_level::{
-    AutoOffsetReset,
-    // Consumer
-    Consumer,
-    ConsumerConfig,
-    Header,
-    // Partition routing
-    PartitionRouter,
-    PartitionRouting,
-    // Producer
-    Producer,
-    ProducerConfig,
-    ProducerRecord,
-    RecordMetadata,
+pub use client::consumer::{
+    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, PartitionAssignmentStrategy,
 };
+pub use client::partition_router::{PartitionRouter, PartitionRouting};
+pub use client::producer::{Header, Producer, ProducerConfig, ProducerRecord, RecordMetadata};
 
 /// Library name
 pub const NAME: &str = env!("CARGO_PKG_NAME");

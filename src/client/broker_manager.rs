@@ -183,7 +183,8 @@ impl BrokerManager {
     /// 获取任意一个健康的 broker 连接（优先已连接且健康的 broker）
     pub fn get_any_healthy_broker(&self) -> Option<(SocketAddr, Arc<Mutex<Connection>>)> {
         self.brokers
-            .values().find(|e| e.healthy)
+            .values()
+            .find(|e| e.healthy)
             .map(|e| (e.addr, e.conn.clone()))
     }
 
@@ -276,7 +277,7 @@ impl BrokerManager {
                         // 对健康节点发送轻量探活请求
                         let result = {
                             let mgr = this.lock().await;
-                            
+
                             mgr.brokers.get(node_id).map(|e| e.conn.clone())
                         };
 

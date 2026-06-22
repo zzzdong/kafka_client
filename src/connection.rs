@@ -5,6 +5,7 @@ use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::codec::Framed;
 use tracing::debug;
 
@@ -75,6 +76,7 @@ impl Connection {
     }
 
     /// 发送请求并等待响应（顺序模式：发送 → 等待响应）
+    /// 默认 30 秒超时，超时返回 `KafkaError::RequestTimeout`
     pub async fn send_request<Req, Resp>(&mut self, request: &Req) -> Result<Resp>
     where
         Req: Request,
@@ -107,11 +109,14 @@ impl Connection {
         // 显式 flush
         self.framed.flush().await?;
 
-        // 等待响应
-        let frame = self
-            .framed
-            .next()
+        // 等待响应（带 30 秒超时，避免 broker 不响应时无限挂起）
+        const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+        let frame = tokio::time::timeout(REQUEST_TIMEOUT, self.framed.next())
             .await
+            .map_err(|_| {
+                debug!(api_key, "request timed out after 30s");
+                KafkaError::RequestTimeout
+            })?
             .ok_or(KafkaError::ConnectionClosed)??;
 
         debug!(response_len = frame.data.len(), "received response");
@@ -131,6 +136,7 @@ impl Connection {
     }
 
     /// 发送请求并在指定版本下等待响应（用于调试/测试）
+    /// 默认 30 秒超时，超时返回 `KafkaError::RequestTimeout`
     pub async fn send_request_at<Req, Resp>(&mut self, request: &Req, version: i16) -> Result<Resp>
     where
         Req: Request,
@@ -157,11 +163,14 @@ impl Connection {
         // 显式 flush
         self.framed.flush().await?;
 
-        // 等待响应
-        let frame = self
-            .framed
-            .next()
+        // 等待响应（带 30 秒超时）
+        const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+        let frame = tokio::time::timeout(REQUEST_TIMEOUT, self.framed.next())
             .await
+            .map_err(|_| {
+                debug!(api_key, version, "request timed out after 30s");
+                KafkaError::RequestTimeout
+            })?
             .ok_or(KafkaError::ConnectionClosed)??;
 
         // 解码响应

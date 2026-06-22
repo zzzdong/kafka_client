@@ -6,8 +6,8 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::client::high_level::partition_router::{PartitionRouter, PartitionRouting};
-use crate::client::low_level::KafkaClient;
+use crate::client::partition_router::{PartitionRouter, PartitionRouting};
+use crate::client::core::KafkaClient;
 use crate::error::{KafkaError, Result};
 use crate::protocol::{
     PartitionProduceData, ProduceRequest, ProduceResponse, Record, RecordBatch, TopicProduceData,

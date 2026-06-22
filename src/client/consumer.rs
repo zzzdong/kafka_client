@@ -7,9 +7,10 @@ use tokio::sync::{Mutex, RwLock, watch};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::client::low_level::KafkaClient;
+use crate::client::core::KafkaClient;
 use crate::error::{KafkaError, Result};
 use crate::protocol::Message;
+
 use crate::protocol::{
     ConsumerProtocolAssignment, FetchPartition, FetchRequest, FetchResponse, FetchTopic,
     FindCoordinatorRequest, FindCoordinatorResponse, HeartbeatRequest, JoinGroupRequest,
@@ -144,6 +145,7 @@ impl Consumer {
             let client = consumer.client.clone();
             let group_id = consumer.config.group_id.clone();
             let coordinator = consumer.coordinator.clone();
+            let group_state = consumer.group_state.clone();
             let running = running.clone();
 
             tokio::spawn(async move {
@@ -155,8 +157,12 @@ impl Consumer {
                     if !running.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
+                    let (generation_id, member_id) = {
+                        let gs = group_state.read().await;
+                        (gs.generation_id, if gs.member_id.is_empty() { None } else { Some(gs.member_id.clone()) })
+                    };
                     if let Err(e) =
-                        Self::do_commit(&client, &group_id, &offsets, &coordinator).await
+                        Self::do_commit(&client, &group_id, &offsets, &coordinator, generation_id, member_id).await
                     {
                         debug!("Auto commit failed: {}", e);
                     }
@@ -174,24 +180,16 @@ impl Consumer {
             let hb_heartbeat_interval = Duration::from_millis(config.heartbeat_interval_ms);
 
             tokio::spawn(async move {
-                eprintln!("[heartbeat-{}] TASK STARTED", hb_group_id);
                 let mut timer = tokio::time::interval(hb_heartbeat_interval);
-                let mut tick_count = 0u64;
                 loop {
                     timer.tick().await;
-                    tick_count += 1;
                     if !hb_running.load(std::sync::atomic::Ordering::Relaxed) {
-                        eprintln!("[heartbeat-{}] stopping", hb_group_id);
                         break;
                     }
 
                     let (generation_id, member_id) = {
                         let gs = hb_group_state.read().await;
                         if gs.assigned_partitions.is_empty() || gs.member_id.is_empty() {
-                            eprintln!(
-                                "[heartbeat-{}] tick={}: skipping (no partitions/member)",
-                                hb_group_id, tick_count
-                            );
                             continue;
                         }
                         (gs.generation_id, gs.member_id.clone())
@@ -202,10 +200,6 @@ impl Consumer {
                         match *c {
                             Some(addr) => addr,
                             None => {
-                                eprintln!(
-                                    "[heartbeat-{}] tick={}: skipping (no coordinator)",
-                                    hb_group_id, tick_count
-                                );
                                 continue;
                             }
                         }
@@ -218,10 +212,6 @@ impl Consumer {
                         group_instance_id: None,
                     };
 
-                    eprintln!(
-                        "[heartbeat-{}] tick={}: sending heartbeat to {}, member={}",
-                        hb_group_id, tick_count, coord_addr, member_id
-                    );
                     match hb_client
                         .lock()
                         .await
@@ -231,10 +221,6 @@ impl Consumer {
                         .await
                     {
                         Ok(resp) => {
-                            eprintln!(
-                                "[heartbeat-{}] tick={}: response error_code={}",
-                                hb_group_id, tick_count, resp.error_code
-                            );
                             if resp.error_code == 27 {
                                 warn!(
                                     "Heartbeat REBALANCE_IN_PROGRESS for {}, will rejoin on next poll",
@@ -252,10 +238,6 @@ impl Consumer {
                             }
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[heartbeat-{}] tick={}: send error: {:?}",
-                                hb_group_id, tick_count, e
-                            );
                             debug!("Heartbeat request failed for {}: {}", member_id, e);
                         }
                     }
@@ -288,10 +270,6 @@ impl Consumer {
                     }
 
                     // 尝试加入组
-                    eprintln!(
-                        "[bg_task] calling background_join_group for group={}, topics={:?}",
-                        bg_group_id, topics
-                    );
                     match Self::background_join_group(
                         &bg_client,
                         &bg_group_id,
@@ -304,19 +282,11 @@ impl Consumer {
                     .await
                     {
                         Ok(()) => {
-                            eprintln!(
-                                "[bg_task] background_join_group succeeded for group={}",
-                                bg_group_id
-                            );
                             info!(
                                 "background_join_group: group joined, waiting for rebalance trigger"
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[bg_task] background_join_group FAILED for group={}: {:?}",
-                                bg_group_id, e
-                            );
                             warn!(
                                 "background_join_group failed: {:?}, will retry on next topic change",
                                 e
@@ -995,14 +965,8 @@ impl Consumer {
         topics: &[String],
     ) -> Result<()> {
         if topics.is_empty() {
-            eprintln!("[bg_join] topics empty, returning");
             return Ok(());
         }
-
-        eprintln!(
-            "[bg_join] starting join for group={}, topics={:?}",
-            group_id, topics
-        );
 
         // 1. 查找协调者（重试）
         let coord_addr = {
@@ -1074,7 +1038,6 @@ impl Consumer {
 
         // 缓存协调者
         *coordinator.write().await = Some(coord_addr);
-        eprintln!("[bg_join] coordinator found: {}", coord_addr);
 
         // 2. 构建协议元数据（同 build_subscription_metadata）
         let protocol_metadata = {
@@ -1094,7 +1057,7 @@ impl Consumer {
 
         // 3. JoinGroup 循环（处理 MEMBER_ID_REQUIRED）
         let mut member_id = String::new();
-        for join_attempt in 0..10u32 {
+        for _join_attempt in 0..10u32 {
             let request = JoinGroupRequest {
                 group_id: group_id.to_string(),
                 session_timeout_ms: config.session_timeout_ms,
@@ -1116,24 +1079,14 @@ impl Consumer {
             };
 
             let mut c = client.lock().await;
-            eprintln!(
-                "[bg_join] sending JoinGroup attempt={}, member_id={:?}",
-                join_attempt, member_id
-            );
             let response: JoinGroupResponse = match c.send_request(coord_addr, 11, &request).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    eprintln!("[bg_join] JoinGroup send error: {:?}", e);
                     drop(c);
                     return Err(e);
                 }
             };
             drop(c);
-
-            eprintln!(
-                "[bg_join] JoinGroup response: error_code={}, member_id={}, leader={}, generation_id={}",
-                response.error_code, response.member_id, response.leader, response.generation_id
-            );
 
             if response.error_code == 0 {
                 let generation_id = response.generation_id;
@@ -1180,23 +1133,16 @@ impl Consumer {
                     },
                 };
 
-                eprintln!("[bg_join] sending SyncGroup, is_leader={}", is_leader);
                 let mut c = client.lock().await;
                 let sync_response: SyncGroupResponse =
                     match c.send_request(coord_addr, 14, &sync_request).await {
                         Ok(resp) => resp,
                         Err(e) => {
-                            eprintln!("[bg_join] SyncGroup send error: {:?}", e);
                             drop(c);
                             return Err(e);
                         }
                     };
                 drop(c);
-                eprintln!(
-                    "[bg_join] SyncGroup response: error_code={}, assignment.len={}",
-                    sync_response.error_code,
-                    sync_response.assignment.len()
-                );
 
                 if sync_response.error_code != 0 {
                     // SyncGroup 失败（如 REBALANCE_IN_PROGRESS），返回错误让后台任务在下一个 tick 重试
@@ -1247,10 +1193,6 @@ impl Consumer {
             }
 
             if response.error_code == 79 {
-                eprintln!(
-                    "[bg_join] MEMBER_ID_REQUIRED, retrying with member_id={:?}",
-                    response.member_id
-                );
                 if response.member_id.is_empty() || response.member_id == member_id {
                     return Err(KafkaError::Protocol(
                         "MEMBER_ID_REQUIRED with no new member_id".to_string(),
@@ -1264,10 +1206,6 @@ impl Consumer {
                 continue;
             }
 
-            eprintln!(
-                "[bg_join] JoinGroup unexpected error_code={}",
-                response.error_code
-            );
             return Err(KafkaError::Protocol(format!(
                 "JoinGroup error: {}",
                 response.error_code
@@ -1724,11 +1662,19 @@ impl Consumer {
 
     /// 提交偏移量到协调者
     pub async fn commit(&self) -> Result<()> {
+        // 从 group_state 获取 generation_id 和 member_id，以便协商的 OffsetCommit 版本能正确处理
+        let (generation_id, member_id) = {
+            let gs = self.group_state.read().await;
+            (gs.generation_id, if gs.member_id.is_empty() { None } else { Some(gs.member_id.clone()) })
+        };
+
         Self::do_commit(
             &self.client,
             &self.config.group_id,
             &self.offsets,
             &self.coordinator,
+            generation_id,
+            member_id,
         )
         .await
     }
@@ -1738,6 +1684,8 @@ impl Consumer {
         group_id: &str,
         offsets: &Arc<RwLock<HashMap<String, HashMap<i32, i64>>>>,
         coordinator: &Arc<RwLock<Option<std::net::SocketAddr>>>,
+        generation_id: i32,
+        member_id: Option<String>,
     ) -> Result<()> {
         if group_id.is_empty() {
             return Ok(());
@@ -1836,8 +1784,8 @@ impl Consumer {
 
         let request = OffsetCommitRequest {
             group_id: group_id.to_string(),
-            generation_id_or_member_epoch: -1,
-            member_id: None,
+            generation_id_or_member_epoch: generation_id,
+            member_id,
             group_instance_id: None,
             retention_time_ms: -1,
             topics,

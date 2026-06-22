@@ -2,13 +2,15 @@
 //!
 //! 验证单个消费者加入消费者组后能获得分区分配。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test consumer_group -- --nocapture
+//! 运行: KAFKA_RUNTIME=direct cargo test --test consumer_group --features integration_tests -- --nocapture
+
+#![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::{KafkaInstance, consumer_config};
-use kafka_client::client::high_level::AutoOffsetReset;
-use kafka_client::client::low_level::KafkaClient;
+use kafka_client::client::consumer::AutoOffsetReset;
+use kafka_client::client::core::KafkaClient;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -31,7 +33,7 @@ async fn test_consumer_group_assignment() {
         KafkaClient::connect(server.client_config()).await.unwrap(),
     ));
 
-    let mut c1 = kafka_client::client::high_level::Consumer::new(
+    let mut c1 = kafka_client::client::consumer::Consumer::new(
         c1_client,
         consumer_config("cg-group-test", AutoOffsetReset::Earliest),
     )
