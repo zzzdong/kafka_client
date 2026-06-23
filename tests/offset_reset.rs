@@ -9,53 +9,33 @@
 mod common;
 
 use common::{KafkaInstance, consumer_config};
-use kafka_client::client::consumer::AutoOffsetReset;
-use kafka_client::client::core::KafkaClient;
-use std::sync::Arc;
+use kafka_client::AutoOffsetReset;
 use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_offset_reset_policies() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
     // Earliest 测试：先生产再消费
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-reset", 2).await;
-    }
+    common::create_topic(&client, "tc-reset", 2).await;
     common::produce_messages(&client, "tc-reset", 5).await;
 
     // Earliest 消费者应消费全部 5 条
     {
         let records = common::consume_all(&client, "cg-earliest", "tc-reset", 5).await;
-        println!(
-            "  Earliest consumer: {} messages (expected >=5)",
-            records.len()
-        );
-        assert!(
-            records.len() >= 5,
-            "Earliest should get at least 5 messages"
-        );
+        println!("  Earliest consumer: {} messages (expected >=5)", records.len());
+        assert!(records.len() >= 5, "Earliest should get at least 5 messages");
     }
 
     // Latest 测试
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-latest", 2).await;
-    }
+    common::create_topic(&client, "tc-latest", 2).await;
     common::produce_messages(&client, "tc-latest", 3).await;
 
-    let latest_client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
-    let mut consumer = kafka_client::client::consumer::Consumer::new(
-        latest_client,
-        consumer_config("cg-latest-test", AutoOffsetReset::Latest),
-    );
-    consumer
-        .subscribe(vec!["tc-latest".to_string()])
-        .await
-        .unwrap();
+    let latest_client = server.build_client().await;
+    let mut consumer = latest_client.consumer(consumer_config("cg-latest-test", AutoOffsetReset::Latest));
+    consumer.subscribe(vec!["tc-latest".to_string()]).await.unwrap();
 
     // 等待组加入
     loop {

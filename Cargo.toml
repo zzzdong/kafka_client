@@ -3,6 +3,15 @@ name = "kafka_client"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+authors = ["zzzdong <kuwater@163.com>"]
+description = "A pure Rust Kafka client library with SASL authentication support"
+documentation = "https://docs.rs/kafka_client"
+homepage = "https://github.com/zzzdong/kafka_client"
+repository = "https://github.com/zzzdong/kafka_client"
+readme = "README.md"
+keywords = ["kafka", "client", "async", "sasl", "tls"]
+categories = ["network-programming", "asynchronous", "api-bindings", "authentication"]
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
 # 异步运行时

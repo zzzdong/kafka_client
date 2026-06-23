@@ -46,6 +46,7 @@ fn flexible_check(flexible_version: Option<i16>) -> TokenStream {
 fn generate_encode_field(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
     let field_name = &field.name;
     let condition = field.versions.as_check_expr();
+    #[allow(unused_variables)]
     let is_flex = flexible_check(flexible_version);
 
     // 标签字段特殊处理
@@ -143,15 +144,17 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
 
             let is_inner_string = inner_ty
                 .as_ref()
-                .map(|inner| is_string_type(inner))
+                .map(is_string_type)
                 .unwrap_or(false);
+            #[allow(unused_variables)]
             let is_inner_bytes = inner_ty
                 .as_ref()
-                .map(|inner| is_bytes_type(inner))
+                .map(is_bytes_type)
                 .unwrap_or(false);
+            #[allow(unused_variables)]
             let is_inner_record_batch = inner_ty
                 .as_ref()
-                .map(|inner| is_record_batch_type(inner))
+                .map(is_record_batch_type)
                 .unwrap_or(false);
 
             let some_encode = inner_ty.as_ref().map(|inner| {

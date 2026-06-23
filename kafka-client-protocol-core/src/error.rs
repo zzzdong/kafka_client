@@ -1,5 +1,4 @@
 // src/error.rs
-use bytes::Buf;
 use std::io;
 use thiserror::Error;
 

@@ -9,29 +9,21 @@
 mod common;
 
 use common::{KafkaInstance, consumer_config};
-use kafka_client::client::consumer::AutoOffsetReset;
-use kafka_client::client::core::KafkaClient;
-use std::sync::Arc;
+use kafka_client::{AutoOffsetReset, Consumer};
 use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_consumer_group_assignment() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-group", 3).await;
-    }
+    common::create_topic(&client, "tc-group", 3).await;
 
     // 消费者加入组，验证获得分区分配
-    let c1_client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let c1_client = server.build_client().await;
 
-    let mut c1 = kafka_client::client::consumer::Consumer::new(
-        c1_client,
-        consumer_config("cg-group-test", AutoOffsetReset::Earliest),
-    );
+    let mut c1 = c1_client.consumer(consumer_config("cg-group-test", AutoOffsetReset::Earliest));
     c1.subscribe(vec!["tc-group".to_string()]).await.unwrap();
 
     // 轮询等待组加入

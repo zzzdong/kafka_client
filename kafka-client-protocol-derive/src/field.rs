@@ -1,12 +1,16 @@
 // src/field.rs
 use crate::version_range::VersionRange;
+#[allow(unused_imports)]
 use proc_macro2::Span;
+#[allow(unused_imports)]
 use quote::ToTokens;
+#[allow(unused_imports)]
 use quote::format_ident;
 use syn::{Field, GenericArgument, Ident, PathArguments, Type};
 
 /// 字段信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FieldInfo {
     /// 字段名
     pub name: Ident,
@@ -36,42 +40,25 @@ impl FieldInfo {
         let name = field.ident.clone().unwrap();
         let ty = field.ty.clone();
 
-        let mut versions = VersionRange::All;
-        let mut nullable_versions = None;
-        let mut tag = None;
-        let mut tagged_versions = None;
-        let mut ignorable = false;
-        let mut default = None;
-        let mut map_key = false;
-        let mut about = None;
+        let mut state = FieldParseState::default();
 
         for attr in &field.attrs {
             if attr.path().is_ident("kafka") {
-                parse_kafka_attr(
-                    attr,
-                    &mut versions,
-                    &mut nullable_versions,
-                    &mut tag,
-                    &mut tagged_versions,
-                    &mut ignorable,
-                    &mut default,
-                    &mut map_key,
-                    &mut about,
-                );
+                parse_kafka_attr(attr, &mut state);
             }
         }
 
         Self {
             name,
             ty,
-            versions,
-            nullable_versions,
-            tag,
-            tagged_versions,
-            ignorable,
-            default,
-            map_key,
-            about,
+            versions: state.versions,
+            nullable_versions: state.nullable_versions,
+            tag: state.tag,
+            tagged_versions: state.tagged_versions,
+            ignorable: state.ignorable,
+            default: state.default,
+            map_key: state.map_key,
+            about: state.about,
         }
     }
 
@@ -82,6 +69,7 @@ impl FieldInfo {
     }
 
     /// 获取内部类型（如果是 Option<T>，返回 T 的类型字符串）
+    #[allow(dead_code)]
     pub fn inner_type_str(&self) -> String {
         if let Some(inner) = Self::extract_option_inner(&self.ty) {
             quote::quote! { #inner }.to_string()
@@ -130,6 +118,7 @@ impl FieldInfo {
     }
 
     /// 检查类型是否是数字类型
+    #[allow(dead_code)]
     pub fn is_numeric(&self) -> bool {
         self.is_integer() || self.is_float()
     }
@@ -140,11 +129,13 @@ impl FieldInfo {
     }
 
     /// 检查字段是否在指定版本存在
+    #[allow(dead_code)]
     pub fn is_available(&self, version: i16) -> bool {
         self.versions.contains(version)
     }
 
     /// 检查字段在指定版本是否可空
+    #[allow(dead_code)]
     pub fn is_nullable(&self, version: i16) -> bool {
         self.nullable_versions
             .as_ref()
@@ -153,6 +144,7 @@ impl FieldInfo {
     }
 
     /// 检查是否为标签字段
+    #[allow(dead_code)]
     pub fn is_tagged(&self, version: i16) -> bool {
         self.tagged_versions
             .as_ref()
@@ -161,7 +153,9 @@ impl FieldInfo {
     }
 
     /// 获取编码方法名
+    #[allow(dead_code)]
     pub fn encode_method(&self, use_flexible: bool) -> String {
+        #[allow(unused_variables)]
         let ty_str = self.type_str();
 
         if self.is_option() {
@@ -200,7 +194,9 @@ impl FieldInfo {
     }
 
     /// 获取解码方法名
+    #[allow(dead_code)]
     pub fn decode_method(&self, use_flexible: bool) -> String {
+        #[allow(unused_variables)]
         let ty_str = self.type_str();
 
         if self.is_option() {
@@ -293,41 +289,58 @@ impl FieldInfo {
     }
 }
 
+/// 字段解析状态
+struct FieldParseState {
+    versions: VersionRange,
+    nullable_versions: Option<VersionRange>,
+    tag: Option<u32>,
+    tagged_versions: Option<VersionRange>,
+    ignorable: bool,
+    default: Option<String>,
+    map_key: bool,
+    about: Option<String>,
+}
+
+impl Default for FieldParseState {
+    fn default() -> Self {
+        Self {
+            versions: VersionRange::All,
+            nullable_versions: None,
+            tag: None,
+            tagged_versions: None,
+            ignorable: false,
+            default: None,
+            map_key: false,
+            about: None,
+        }
+    }
+}
+
 /// 解析 kafka 属性
-fn parse_kafka_attr(
-    attr: &syn::Attribute,
-    versions: &mut VersionRange,
-    nullable_versions: &mut Option<VersionRange>,
-    tag: &mut Option<u32>,
-    tagged_versions: &mut Option<VersionRange>,
-    ignorable: &mut bool,
-    default: &mut Option<String>,
-    map_key: &mut bool,
-    about: &mut Option<String>,
-) {
+fn parse_kafka_attr(attr: &syn::Attribute, state: &mut FieldParseState) {
     attr.parse_nested_meta(|meta| {
         if meta.path.is_ident("versions") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *versions = VersionRange::parse(&value.value());
+            state.versions = VersionRange::parse(&value.value());
         } else if meta.path.is_ident("nullable_versions") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *nullable_versions = Some(VersionRange::parse(&value.value()));
+            state.nullable_versions = Some(VersionRange::parse(&value.value()));
         } else if meta.path.is_ident("tag") {
             let value: syn::LitInt = meta.value()?.parse()?;
-            *tag = Some(value.base10_parse()?);
+            state.tag = Some(value.base10_parse()?);
         } else if meta.path.is_ident("tagged_versions") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *tagged_versions = Some(VersionRange::parse(&value.value()));
+            state.tagged_versions = Some(VersionRange::parse(&value.value()));
         } else if meta.path.is_ident("ignorable") {
-            *ignorable = true;
+            state.ignorable = true;
         } else if meta.path.is_ident("default") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *default = Some(value.value());
+            state.default = Some(value.value());
         } else if meta.path.is_ident("map_key") {
-            *map_key = true;
+            state.map_key = true;
         } else if meta.path.is_ident("about") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *about = Some(value.value());
+            state.about = Some(value.value());
         }
         Ok(())
     })

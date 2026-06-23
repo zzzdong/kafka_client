@@ -9,19 +9,14 @@
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::core::KafkaClient;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_produce_with_keys() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-keys", 3).await;
-    }
+    common::create_topic(&client, "tc-keys", 3).await;
 
     // 9 messages with 3 distinct keys (3 each)
     common::produce_messages_with_keys(&client, "tc-keys", 9, 3).await;

@@ -1,8 +1,10 @@
+//! Kafka frame codec
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
-/// Kafka 帧
+/// Kafka frame
 #[derive(Debug, Clone)]
 pub struct KafkaFrame {
     pub data: Bytes,
@@ -14,7 +16,7 @@ impl KafkaFrame {
     }
 }
 
-/// 业务阶段编解码器
+/// Kafka codec for business phase
 pub struct KafkaCodec {
     max_frame_size: usize,
 }
@@ -42,15 +44,15 @@ impl Decoder for KafkaCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // 1. 检查是否有足够的字节读取长度前缀（4字节）
+        // 1. Check if we have enough bytes for length prefix (4 bytes)
         if src.len() < 4 {
             return Ok(None);
         }
 
-        // 2. 读取长度
+        // 2. Read length
         let size = i32::from_be_bytes([src[0], src[1], src[2], src[3]]) as usize;
 
-        // 3. 检查大小限制
+        // 3. Check size limit
         if size > self.max_frame_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -58,14 +60,13 @@ impl Decoder for KafkaCodec {
             ));
         }
 
-        // 4. 检查是否有完整帧
+        // 4. Check if we have complete frame
         if src.len() < 4 + size {
-            // 预留足够的空间
             src.reserve(4 + size - src.len());
             return Ok(None);
         }
 
-        // 5. 取出帧数据
+        // 5. Extract frame data
         src.advance(4);
         let data = src.split_to(size).freeze();
 

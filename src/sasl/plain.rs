@@ -3,6 +3,9 @@ use crate::error::SaslError;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 
+/// PLAIN SASL mechanism implementation
+/// 预留的异步实现，用于未来扩展
+#[allow(dead_code)]
 pub struct PlainMechanism {
     complete: bool,
     success: bool,

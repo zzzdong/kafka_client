@@ -11,7 +11,7 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::{self, ClientConfig};
 
 /// TLS 配置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsConfig {
     /// 是否验证证书（生产环境应为 true）
     pub verify_certificate: bool,

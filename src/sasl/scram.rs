@@ -16,6 +16,8 @@ enum ScramState {
 }
 
 /// SCRAM 机制实现（同步版本，用于连接认证）
+/// SCRAM mechanism (synchronous version)
+/// Used by handshake.rs for SASL authentication
 pub struct ScramMechanism {
     mechanism_type: SaslMechanismType,
     state: ScramState,
@@ -63,6 +65,7 @@ impl ScramMechanism {
     }
 
     /// 获取机制名称
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self.mechanism_type {
             SaslMechanismType::ScramSha256 => "SCRAM-SHA-256",
@@ -72,21 +75,25 @@ impl ScramMechanism {
     }
 
     /// 是否为 client-first 机制
+    #[allow(dead_code)]
     pub fn is_client_first(&self) -> bool {
         true
     }
 
     /// 认证是否完成
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         matches!(self.state, ScramState::Complete)
     }
 
     /// 认证是否成功
+    #[allow(dead_code)]
     pub fn is_success(&self) -> bool {
         self.success
     }
 
     /// 重置状态（用于重试）
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = ScramState::Initial;
         self.client_nonce = Self::generate_nonce();
@@ -320,6 +327,9 @@ impl ScramMechanism {
 use super::SaslMechanism;
 use async_trait::async_trait;
 
+/// Async SCRAM mechanism (预留的异步实现)
+/// 预留的异步实现，用于未来扩展
+#[allow(dead_code)]
 pub struct AsyncScramMechanism {
     inner: ScramMechanism,
 }

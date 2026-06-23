@@ -9,19 +9,15 @@
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::core::KafkaClient;
-use std::sync::Arc;
+use kafka_client::KafkaClient;
 
 #[tokio::test]
 async fn test_produce_and_consume() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
     // Create topic with 3 partitions
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-basic", 3).await;
-    }
+    common::create_topic(&client, "tc-basic", 3).await;
 
     common::produce_messages(&client, "tc-basic", 3).await;
 
