@@ -1,17 +1,24 @@
+//! Metadata cache - cluster topology information
+
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::debug;
 
-use crate::protocol::{MetadataResponse, MetadataResponseBroker, MetadataResponseTopic};
+use kafka_client_protocol::{MetadataResponse, MetadataResponseBroker, MetadataResponseTopic};
 
-/// 元数据缓存
-#[derive(Debug, Clone)]
+/// Metadata cache
+///
+/// Internally uses `Arc<RwLock<CachedMetadata>>`.
+/// Clone shares the same underlying data (intentional design).
+/// Includes a refresh lock to prevent concurrent refresh operations.
 pub struct MetadataCache {
     inner: Arc<RwLock<CachedMetadata>>,
     ttl: Duration,
+    /// Lock to prevent concurrent refresh operations
+    refresh_lock: Mutex<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -22,7 +29,6 @@ struct CachedMetadata {
     brokers: HashMap<i32, MetadataResponseBroker>,
     topics: HashMap<String, MetadataResponseTopic>,
     broker_addresses: HashMap<String, i32>,
-    /// 缓存已解析的 broker SocketAddr，避免每次查询重复解析
     broker_sockets: HashMap<i32, SocketAddr>,
 }
 
@@ -106,26 +112,39 @@ impl CachedMetadata {
 }
 
 impl MetadataCache {
-    pub fn new(ttl: Duration) -> Self {
+    pub(crate) fn new(ttl: Duration) -> Self {
         Self {
             inner: Arc::new(RwLock::new(CachedMetadata::new())),
             ttl,
+            refresh_lock: Mutex::new(()),
         }
     }
 
-    pub fn default() -> Self {
+    /// Create default metadata cache
+    /// 预留功能，用于默认配置
+    #[allow(dead_code)]
+    pub(crate) fn default() -> Self {
         Self::new(Duration::from_secs(300))
     }
 
-    pub async fn update(&self, response: MetadataResponse) {
+    pub(crate) async fn update(&self, response: MetadataResponse) {
         let mut inner = self.inner.write().await;
         inner.update(response);
     }
 
-    pub async fn is_expired(&self) -> bool {
+    pub(crate) async fn is_expired(&self) -> bool {
         let inner = self.inner.read().await;
         inner.is_expired(self.ttl)
     }
+
+    /// Acquire refresh lock to prevent concurrent refresh operations
+    pub(crate) async fn acquire_refresh_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.refresh_lock.lock().await
+    }
+
+    // ================================================================
+    // Public query methods
+    // ================================================================
 
     pub async fn get_partition_leader(&self, topic: &str, partition: i32) -> Option<SocketAddr> {
         let inner = self.inner.read().await;
@@ -160,6 +179,11 @@ impl MetadataCache {
     pub async fn get_all_brokers(&self) -> Vec<MetadataResponseBroker> {
         let inner = self.inner.read().await;
         inner.brokers.values().cloned().collect()
+    }
+
+    pub async fn get_all_topics(&self) -> Vec<MetadataResponseTopic> {
+        let inner = self.inner.read().await;
+        inner.topics.values().cloned().collect()
     }
 
     pub async fn get_broker_by_address(&self, addr: &SocketAddr) -> Option<i32> {

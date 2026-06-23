@@ -1,55 +1,73 @@
+//! Producer - high-level Kafka message producer
+
+mod router;
+
+pub use router::{PartitionRouter, PartitionRouting};
+
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
-use crate::client::core::KafkaClient;
-use crate::client::partition_router::{PartitionRouter, PartitionRouting};
+use crate::cluster::ClusterClient;
 use crate::error::{KafkaError, Result};
 use crate::protocol::{
     PartitionProduceData, ProduceRequest, ProduceResponse, Record, RecordBatch, TopicProduceData,
 };
 
-/// 发送给 Producer 后台事件循环的命令
+/// Command sent to Producer background event loop
 enum ProducerCommand {
-    /// 发送单条消息，要求后台任务立即发送并返回结果
+    /// Send single message, immediately send and return result
     Send {
         record: ProducerRecord,
         result_tx: oneshot::Sender<Result<RecordMetadata>>,
     },
-    /// 批量发送消息，将记录加入缓冲区后返回已加入数量
+    /// Batch send messages, add to buffer and return count
     SendBatch {
         records: Vec<ProducerRecord>,
         result_tx: oneshot::Sender<Result<usize>>,
     },
-    /// 强制刷新缓冲区，完成后通知调用方
+    /// Force flush buffer, notify caller when done
     Flush {
         barrier: oneshot::Sender<Result<()>>,
     },
 }
 
-/// 消息头
+/// Message header
+///
+/// Key-value pair attached to a Kafka message.
 #[derive(Debug, Clone)]
 pub struct Header {
+    /// Header key name
     pub key: String,
+    /// Header value data
     pub value: Bytes,
 }
 
-/// 生产者记录
+/// Producer record
+///
+/// A message to be sent to Kafka with optional metadata.
 #[derive(Debug, Clone)]
 pub struct ProducerRecord {
+    /// Topic name to send the message to
     pub topic: String,
+    /// Optional explicit partition number (auto-selected if None)
     pub partition: Option<i32>,
+    /// Optional message key (used for partition routing)
     pub key: Option<Bytes>,
+    /// Message value data
     pub value: Bytes,
+    /// Optional message timestamp (auto-generated if None)
     pub timestamp: Option<i64>,
+    /// Message headers
     pub headers: Vec<Header>,
 }
 
 impl ProducerRecord {
+    /// Create a new producer record with topic and value
     pub fn new(topic: impl Into<String>, value: Bytes) -> Self {
         Self {
             topic: topic.into(),
@@ -61,44 +79,63 @@ impl ProducerRecord {
         }
     }
 
+    /// Set message key for partition routing
     pub fn with_key(mut self, key: Bytes) -> Self {
         self.key = Some(key);
         self
     }
 
+    /// Set explicit partition number
     pub fn with_partition(mut self, partition: i32) -> Self {
         self.partition = Some(partition);
         self
     }
 
+    /// Set explicit message timestamp
     pub fn with_timestamp(mut self, timestamp: i64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 
+    /// Set message headers
     pub fn with_headers(mut self, headers: Vec<Header>) -> Self {
         self.headers = headers;
         self
     }
 }
 
-/// 发送元数据
+/// Send metadata
+///
+/// Metadata returned after a successful message send.
 #[derive(Debug, Clone)]
 pub struct RecordMetadata {
+    /// Topic name where the message was sent
     pub topic: String,
+    /// Partition number where the message was stored
     pub partition: i32,
+    /// Offset of the message within the partition
     pub offset: i64,
+    /// Timestamp assigned to the message by the broker
     pub timestamp: i64,
 }
 
-/// 生产者配置
+/// Producer configuration
+///
+/// Controls producer behavior including acknowledgment mode,
+/// batching, and retry settings.
 #[derive(Debug, Clone)]
 pub struct ProducerConfig {
+    /// Number of acknowledgments required (0=none, 1=leader, -1=all replicas)
     pub acks: i16,
+    /// Request timeout in milliseconds
     pub timeout_ms: i32,
+    /// Partition routing strategy
     pub routing: PartitionRouting,
+    /// Number of retry attempts on failure
     pub retries: u32,
+    /// Maximum batch size in bytes
     pub batch_size: usize,
+    /// Time to wait before sending batch (linger time)
     pub linger_ms: u64,
 }
 
@@ -115,16 +152,16 @@ impl Default for ProducerConfig {
     }
 }
 
-/// 生产者内部状态
+/// Producer internal state
 struct ProducerInner {
-    client: Arc<KafkaClient>,
+    cluster: Arc<ClusterClient>,
     router: PartitionRouter,
     config: ProducerConfig,
-    /// 按 (topic, partition) 缓冲的记录
+    /// Buffered records by (topic, partition)
     buffer: HashMap<(String, i32), Vec<ProducerRecord>>,
-    /// 缓冲的近似字节数（用于 batch_size 判断）
+    /// Approximate buffered bytes (for batch_size check)
     buffered_bytes: usize,
-    /// 上次发送时间
+    /// Last send time
     last_send: Instant,
 }
 
@@ -138,7 +175,6 @@ impl ProducerInner {
         self.buffered_bytes = 0;
         self.last_send = Instant::now();
 
-        // 对每个 (topic, partition) 分批发送，第一次失败即返回
         for ((topic, partition), recs) in records {
             debug!("Flushing {} records to {}/{}", recs.len(), topic, partition);
             self.send_batch_inner(&topic, partition, recs).await?;
@@ -147,8 +183,6 @@ impl ProducerInner {
         Ok(())
     }
 
-    /// 将记录加入缓冲区，若达到 batch_size 或 linger 已超时则触发 flush。
-    /// 返回实际加入缓冲区的记录数量。
     async fn buffer_records(&mut self, records: Vec<ProducerRecord>) -> Result<usize> {
         let count = records.len();
         for record in records {
@@ -256,7 +290,7 @@ impl ProducerInner {
         }
 
         let partition_count = self
-            .client
+            .cluster
             .metadata()
             .get_partition_count(&record.topic)
             .await
@@ -264,7 +298,6 @@ impl ProducerInner {
 
         let key = record.key.as_deref();
         let partition = self.router.select_partition(key, partition_count);
-        info!(topic = %record.topic, partition_count, partition, key = ?key.map(|k| String::from_utf8_lossy(k).to_string()), "selected partition for record");
         Ok(partition)
     }
 
@@ -278,10 +311,9 @@ impl ProducerInner {
         let mut last_error = None;
 
         while attempts < self.config.retries as u64 {
-            info!(?request, topic, partition, "sending produce request");
             match self
-                .client
-                .send_to_partition(topic, partition, 0, request)
+                .cluster
+                .send_to_partition(topic, partition, request)
                 .await
             {
                 Ok(resp) => return Ok(resp),
@@ -290,17 +322,9 @@ impl ProducerInner {
                     last_error = Some(e);
                     attempts += 1;
                     if attempts < self.config.retries as u64 {
-                        // NOT_LEADER_OR_FOLLOWER usually means KRaft leader
-                        // election is still settling.  Always back off briefly
-                        // so the controller has time to finalise leadership.
-                        let delay_ms = if is_not_leader {
-                            500 // give KRaft a moment to elect
-                        } else {
-                            100 * attempts
-                        };
-                        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-                        // 刷新元数据以获取最新的 leader 信息
-                        let _ = self.client.refresh_metadata().await;
+                        let delay_ms = if is_not_leader { 500 } else { 100 * attempts };
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        let _ = self.cluster.refresh_metadata().await;
                     }
                 }
             }
@@ -315,10 +339,6 @@ impl ProducerInner {
         partition: i32,
         response: ProduceResponse,
     ) -> Result<RecordMetadata> {
-        info!(
-            ?response,
-            topic, partition, "produce response in parse_response"
-        );
         for topic_response in response.responses {
             if topic_response.name.as_deref() == Some(topic) {
                 for partition_response in topic_response.partition_responses {
@@ -340,17 +360,19 @@ impl ProducerInner {
     }
 }
 
-/// 高级生产者
+/// High-level Kafka Producer
+///
+/// Provides message batching and automatic partition routing.
+/// Uses a background event loop to handle batch sending.
 pub struct Producer {
-    /// 发送命令到后台事件循环
     command_tx: tokio::sync::mpsc::UnboundedSender<ProducerCommand>,
 }
 
 impl Producer {
-    /// 创建 Producer 并启动后台批量发送任务
-    pub async fn new(client: Arc<KafkaClient>, config: ProducerConfig) -> Self {
+    /// Create Producer and start background batch sending task
+    pub(crate) async fn new(cluster: Arc<ClusterClient>, config: ProducerConfig) -> Self {
         let mut inner = ProducerInner {
-            client,
+            cluster,
             router: PartitionRouter::new(config.routing),
             config: config.clone(),
             buffer: HashMap::new(),
@@ -361,7 +383,6 @@ impl Producer {
         let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
         let linger = Duration::from_millis(config.linger_ms);
 
-        // 后台事件循环：单一任务独占 ProducerInner，避免锁竞争
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(linger);
             loop {
@@ -405,7 +426,10 @@ impl Producer {
         Self { command_tx }
     }
 
-    /// 发送单条消息并返回其元数据（同步发送，不进入批量缓冲）
+    /// Send single message and return its metadata
+    ///
+    /// Immediately sends the message without batching.
+    /// Returns metadata including partition, offset, and timestamp.
     pub async fn send(&self, record: ProducerRecord) -> Result<RecordMetadata> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
@@ -417,11 +441,12 @@ impl Producer {
         rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
-    /// 批量发送消息
+    /// Batch send messages
     ///
-    /// 消息会先进入缓冲区，根据 linger_ms 和 batch_size
-    /// 自动决定何时真正发送到 Kafka。返回已加入缓冲区的记录数量。
-    /// 如需确认所有消息发送完成，请显式调用 flush()。
+    /// Messages are added to buffer first. Based on linger_ms and batch_size,
+    /// automatically decides when to actually send to Kafka.
+    /// Returns count of records added to buffer.
+    /// Call flush() to ensure all messages are sent.
     pub async fn send_batch(&self, records: Vec<ProducerRecord>) -> Result<usize> {
         if records.is_empty() {
             return Ok(0);
@@ -437,7 +462,10 @@ impl Producer {
         rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
-    /// 强制刷新缓冲区，等待所有缓冲消息发送完成
+    /// Force flush buffer
+    ///
+    /// Waits for all buffered messages to be sent to Kafka.
+    /// Useful for ensuring all messages are delivered before shutdown.
     pub async fn flush(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.command_tx

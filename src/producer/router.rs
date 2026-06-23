@@ -1,6 +1,8 @@
+//! Partition router - message partitioning strategy
+
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// 分区路由策略
+/// Partition routing strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitionRouting {
     #[default]
@@ -10,7 +12,7 @@ pub enum PartitionRouting {
     Random,
 }
 
-/// 分区路由器
+/// Partition router
 pub struct PartitionRouter {
     routing: PartitionRouting,
     counter: AtomicU32,
@@ -24,7 +26,7 @@ impl PartitionRouter {
         }
     }
 
-    /// 选择分区
+    /// Select partition
     pub fn select_partition(&self, key: Option<&[u8]>, partition_count: usize) -> i32 {
         if partition_count == 0 {
             return 0;
@@ -53,7 +55,7 @@ impl PartitionRouter {
     }
 }
 
-/// MurmurHash2 算法（Kafka 使用的哈希）
+/// MurmurHash2 algorithm (used by Kafka)
 fn murmur2(data: &[u8]) -> u32 {
     const SEED: u32 = 0x9747b28c;
     const M: u32 = 0x5bd1e995;
@@ -73,7 +75,6 @@ fn murmur2(data: &[u8]) -> u32 {
         i += 4;
     }
 
-    // 处理剩余字节
     match len - i {
         3 => {
             h ^= (data[i + 2] as u32) << 16;
@@ -106,7 +107,6 @@ mod tests {
 
     #[test]
     fn test_murmur2() {
-        // Test vector from Kafka
         let data = b"test";
         let hash = murmur2(data);
         assert_ne!(hash, 0);

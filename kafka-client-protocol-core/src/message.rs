@@ -3,7 +3,7 @@ use crate::{
     error::ProtocolResult,
     header::{RequestHeader, ResponseHeader},
 };
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 
 // ============================================================================
 // 核心 Message trait（所有可编解码的类型）

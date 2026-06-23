@@ -6,7 +6,7 @@ pub mod plain;
 pub mod scram;
 
 pub use plain::PlainMechanism;
-pub use scram::{AsyncScramMechanism, ScramMechanism};
+pub use scram::AsyncScramMechanism;
 
 /// SASL 凭证
 #[derive(Debug, Clone)]
@@ -36,7 +36,9 @@ impl SaslMechanismType {
 }
 
 /// SASL 机制 trait（异步版本）
+/// 预留的抽象设计，用于未来扩展
 #[async_trait]
+#[allow(dead_code)]
 pub trait SaslMechanism: Send + Sync {
     /// 机制名称
     fn name(&self) -> &'static str;
@@ -64,6 +66,8 @@ pub trait SaslMechanism: Send + Sync {
 }
 
 /// 创建 SASL 机制实例（异步版本）
+/// 预留的工厂函数，用于未来扩展
+#[allow(dead_code)]
 pub fn create_mechanism(mechanism_type: SaslMechanismType) -> Box<dyn SaslMechanism> {
     match mechanism_type {
         SaslMechanismType::Plain => Box::new(PlainMechanism::new()),

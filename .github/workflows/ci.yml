@@ -20,6 +20,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -32,10 +34,24 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
 
       - name: Check formatting
         run: cargo fmt -- --check
+
+  msrv-check:
+    name: MSRV Check (Rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@1.85
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build with MSRV
+        run: cargo build --all-targets
 
   integration-tests-single-node:
     name: Integration Tests (single-node)
@@ -122,6 +138,11 @@ jobs:
           KAFKA_BOOTSTRAP: 127.0.0.1:29092,127.0.0.1:29094,127.0.0.1:29095
           KAFKA_CLUSTER_SIZE: 3
           RUST_TEST_THREADS: 1
+
+      - name: Dump Kafka logs on failure
+        if: failure()
+        working-directory: tests
+        run: docker compose logs
 
       - name: Stop Kafka cluster
         if: always()

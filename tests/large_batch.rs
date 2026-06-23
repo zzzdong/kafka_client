@@ -9,19 +9,13 @@
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::client::core::KafkaClient;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_large_batch() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        common::create_topic(&c, "tc-large", 3).await;
-    }
-
+    common::create_topic(&client, "tc-large", 3).await;
     common::produce_messages(&client, "tc-large", 100).await;
 
     let records = common::consume_all(&client, "cg-large", "tc-large", 100).await;

@@ -34,8 +34,8 @@ impl VersionRange {
         }
 
         // 开放版本 "3+"
-        if s.ends_with('+') {
-            if let Ok(start) = s[..s.len() - 1].parse::<i16>() {
+        if let Some(stripped) = s.strip_suffix('+') {
+            if let Ok(start) = stripped.parse::<i16>() {
                 return VersionRange::From(start);
             }
         }
@@ -49,6 +49,7 @@ impl VersionRange {
     }
 
     /// 检查版本是否在范围内
+    #[allow(dead_code)]
     pub fn contains(&self, version: i16) -> bool {
         match self {
             VersionRange::Exact(v) => version == *v,

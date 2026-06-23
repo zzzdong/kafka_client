@@ -87,6 +87,7 @@ fn generate_decode_field(field: &FieldInfo, flexible_version: Option<i16>) -> To
     let field_name = &field.name;
     let condition = field.versions.as_check_expr();
     let default_expr = generate_default_value(field);
+    #[allow(unused_variables)]
     let is_flex = flexible_check(flexible_version);
 
     let decode_body = generate_decode_body(field, flexible_version);

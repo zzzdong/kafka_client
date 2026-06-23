@@ -96,10 +96,11 @@ pub struct Header {
 }
 
 /// 压缩类型
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(i16)]
 pub enum CompressionType {
     /// 无压缩
+    #[default]
     None = 0,
     /// GZIP
     Gzip = 1,
@@ -109,12 +110,6 @@ pub enum CompressionType {
     Lz4 = 3,
     /// Zstandard
     Zstd = 4,
-}
-
-impl Default for CompressionType {
-    fn default() -> Self {
-        CompressionType::None
-    }
 }
 
 impl CompressionType {

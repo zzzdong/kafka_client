@@ -18,13 +18,11 @@ use common::{
     KafkaInstance, assert_cluster_size, consume_all, create_topic, partition_leader_distribution,
     produce_messages,
 };
-use kafka_client::client::core::KafkaClient;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_cluster_metadata_reports_multiple_brokers() {
     let server = KafkaInstance::start().await;
-    let client = KafkaClient::connect(server.client_config()).await.unwrap();
+    let client = server.build_client().await;
 
     let expected = server.config().cluster_size;
     assert_cluster_size(&client, expected).await;
@@ -33,13 +31,9 @@ async fn test_cluster_metadata_reports_multiple_brokers() {
 #[tokio::test]
 async fn test_cluster_produce_consume_with_replication() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        create_topic(&c, "tc-cluster-basic", 3).await;
-    }
-
+    create_topic(&client, "tc-cluster-basic", 3).await;
     produce_messages(&client, "tc-cluster-basic", 9).await;
     let records = consume_all(&client, "cg-cluster-basic", "tc-cluster-basic", 9).await;
 
@@ -53,16 +47,12 @@ async fn test_cluster_produce_consume_with_replication() {
 #[tokio::test]
 async fn test_cluster_partition_leaders_are_distributed() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        create_topic(&c, "tc-cluster-leaders", 6).await;
-    }
+    create_topic(&client, "tc-cluster-leaders", 6).await;
 
     // 集群模式下，6 个分区的 leader 应当分布到多个 broker 上
-    let c = client.clone();
-    let dist = partition_leader_distribution(&c, "tc-cluster-leaders").await;
+    let dist = partition_leader_distribution(&client, "tc-cluster-leaders").await;
 
     println!("  Leader distribution: {:?}", dist);
     let distinct_leaders = dist.len();
@@ -83,13 +73,9 @@ async fn test_cluster_partition_leaders_are_distributed() {
 #[tokio::test]
 async fn test_cluster_consumer_group_with_multiple_brokers() {
     let server = KafkaInstance::start().await;
-    let client = Arc::new(KafkaClient::connect(server.client_config()).await.unwrap());
+    let client = server.build_client().await;
 
-    {
-        let c = client.clone();
-        create_topic(&c, "tc-cluster-group", 3).await;
-    }
-
+    create_topic(&client, "tc-cluster-group", 3).await;
     produce_messages(&client, "tc-cluster-group", 6).await;
 
     let records = consume_all(&client, "cg-cluster-group", "tc-cluster-group", 6).await;

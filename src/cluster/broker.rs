@@ -1,3 +1,5 @@
+//! Broker manager - connection pool for all cluster brokers
+
 use dashmap::DashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
@@ -6,33 +8,30 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::connection::{Builder as ConnectionBuilder, Connection};
+use crate::connection::{Builder, Connection};
 use crate::error::{KafkaError, Result};
-use crate::protocol::{ApiVersionsRequest, MetadataResponseBroker};
 use crate::transport::SecurityProtocol;
+use kafka_client_protocol::{ApiVersionsRequest, MetadataResponseBroker};
 
-/// Broker 连接条目
+/// Broker connection entry
 struct BrokerEntry {
     addr: SocketAddr,
     conn: Arc<Mutex<Connection>>,
     healthy: bool,
 }
 
-/// 管理集群中所有 broker 的发现、连接与连接池
+/// Manage connections to all brokers in the cluster
 ///
-/// 内部使用 `DashMap` 实现按 broker 拆分锁，方法签名以 `&self` 为主，
-/// 支持多个并发请求同时获取不同 broker 的连接。
+/// Uses `DashMap` for per-broker locking, supporting concurrent requests
+/// to different brokers.
 pub struct BrokerManager {
     bootstrap_servers: Vec<SocketAddr>,
     security_protocol: SecurityProtocol,
     client_id: String,
     client_name: String,
     client_version: String,
-    /// node_id -> broker entry
     brokers: DashMap<i32, BrokerEntry>,
-    /// address -> node_id
     addr_to_node: DashMap<SocketAddr, i32>,
-    /// 为未知地址（无 metadata node_id）生成唯一临时 node_id 的计数器
     next_unknown_node_id: AtomicI32,
 }
 
@@ -52,13 +51,12 @@ impl BrokerManager {
             client_version,
             brokers: DashMap::new(),
             addr_to_node: DashMap::new(),
-            // 从 i32::MIN 开始，避免与 Kafka 正常非负 node_id 冲突
             next_unknown_node_id: AtomicI32::new(i32::MIN),
         }
     }
 
     async fn connect_to_broker(&self, addr: SocketAddr) -> Result<Connection> {
-        let builder = ConnectionBuilder::new(
+        let builder = Builder::new(
             addr,
             self.security_protocol.clone(),
             self.client_name.clone(),
@@ -69,7 +67,7 @@ impl BrokerManager {
         builder.build().await
     }
 
-    /// 尝试连接一个 bootstrap broker，成功即返回
+    /// Try to connect to a bootstrap broker
     pub async fn bootstrap(&self) -> Result<SocketAddr> {
         let addrs: Vec<SocketAddr> = self.bootstrap_servers.clone();
         for addr in addrs {
@@ -89,9 +87,8 @@ impl BrokerManager {
         Err(KafkaError::NoBootstrapBrokerAvailable)
     }
 
-    /// 注册一个 broker（通常来自 metadata 响应）
+    /// Register a broker connection
     pub async fn register_broker(&self, node_id: i32, addr: SocketAddr, conn: Connection) {
-        // 固定更新顺序：先清理 addr_to_node 中旧映射，再插入新映射
         if let Some(old_node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if old_node_id != node_id {
                 self.brokers.remove(&old_node_id);
@@ -109,7 +106,9 @@ impl BrokerManager {
         );
     }
 
-    /// 获取指定 node_id 的连接，如果不存在则按 host:port 新建
+    /// Get or create connection for a broker by node_id and host:port
+    /// 预留功能，用于动态连接管理
+    #[allow(dead_code)]
     pub async fn get_or_connect(
         &self,
         node_id: i32,
@@ -120,7 +119,7 @@ impl BrokerManager {
             if entry.healthy {
                 return Ok(entry.conn.clone());
             }
-            // 尝试重连不健康的 broker
+            // Try reconnect
             match self.connect_to_broker(entry.addr).await {
                 Ok(new_conn) => {
                     drop(entry);
@@ -150,7 +149,7 @@ impl BrokerManager {
             })
     }
 
-    /// 获取指定地址的连接，如果不存在则新建
+    /// Get connection for a broker by address
     pub async fn get_connection(&self, addr: SocketAddr) -> Result<Arc<Mutex<Connection>>> {
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(entry) = self.brokers.get(&node_id) {
@@ -186,7 +185,7 @@ impl BrokerManager {
             })
     }
 
-    /// 获取任意一个健康的 broker 连接（优先已连接且健康的 broker）
+    /// Get any healthy broker connection
     pub fn get_any_healthy_broker(&self) -> Option<(SocketAddr, Arc<Mutex<Connection>>)> {
         self.brokers
             .iter()
@@ -194,25 +193,25 @@ impl BrokerManager {
             .map(|e| (e.addr, e.conn.clone()))
     }
 
-    /// 返回所有已知 broker 地址
+    /// Get all known broker addresses
     pub fn all_broker_addresses(&self) -> Vec<SocketAddr> {
         self.brokers.iter().map(|e| e.addr).collect()
     }
 
-    /// 根据 metadata 响应刷新 broker 列表
+    /// Refresh broker list from metadata response
     pub async fn refresh_from_metadata(&self, brokers: Vec<MetadataResponseBroker>) -> Result<()> {
         for broker in brokers {
             let addr = resolve_broker_address(&broker.host, broker.port)?;
             let node_id = broker.node_id;
 
-            // 若已存在同一 node_id 的健康连接且地址未变，则复用
+            // Reuse healthy connection if address unchanged
             if let Some(entry) = self.brokers.get(&node_id) {
                 if entry.addr == addr && entry.healthy {
                     continue;
                 }
             }
 
-            // 否则尝试建立新连接
+            // Try new connection
             match self.connect_to_broker(addr).await {
                 Ok(conn) => {
                     self.register_broker(node_id, addr, conn).await;
@@ -220,14 +219,13 @@ impl BrokerManager {
                 }
                 Err(e) => {
                     warn!("Could not connect to broker {} at {}: {}", node_id, addr, e);
-                    // 仍保留旧的 broker 信息，以便后续重连
                 }
             }
         }
         Ok(())
     }
 
-    /// 标记某个 broker 为不健康
+    /// Mark a broker as unhealthy
     pub fn mark_unhealthy(&self, addr: SocketAddr) {
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(mut entry) = self.brokers.get_mut(&node_id) {
@@ -237,7 +235,7 @@ impl BrokerManager {
         }
     }
 
-    /// 关闭并清理所有连接
+    /// Close all connections
     pub async fn close(&self) -> Result<()> {
         let node_ids: Vec<i32> = self.brokers.iter().map(|e| *e.key()).collect();
         for node_id in node_ids {
@@ -257,15 +255,14 @@ impl BrokerManager {
         Ok(())
     }
 
-    /// 启动后台健康检查任务，定期对已知 broker 进行探活和重连
-    ///
-    /// # Arguments
-    /// * `check_interval` - 健康检查间隔（默认建议 30 秒）
+    /// Spawn background health check task
+    /// 预留功能，用于健康检查
+    #[allow(dead_code)]
     pub fn spawn_health_check(this: &Arc<Self>, check_interval: Duration) {
         let this = this.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(check_interval);
-            interval.tick().await; // 跳过立即执行
+            interval.tick().await;
             loop {
                 interval.tick().await;
                 debug!("Starting broker health check");
@@ -278,9 +275,7 @@ impl BrokerManager {
 
                 for (node_id, addr, healthy) in &addrs {
                     if *healthy {
-                        // 对健康节点发送轻量探活请求
                         let conn = this.brokers.get(node_id).map(|e| e.conn.clone());
-
                         if let Some(conn) = conn {
                             let mut guard = conn.lock().await;
                             let request = ApiVersionsRequest {
@@ -300,12 +295,10 @@ impl BrokerManager {
                                 }
                             }
                         }
-
-                        // 探活失败，标记不健康
                         this.mark_unhealthy(*addr);
                     }
 
-                    // 尝试重连不健康节点
+                    // Try reconnect
                     match this.connect_to_broker(*addr).await {
                         Ok(new_conn) => {
                             let addr = *addr;
