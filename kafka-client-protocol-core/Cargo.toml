@@ -1,12 +1,18 @@
 [package]
 name = "kafka-client-protocol-core"
-version = "0.1.0"
+version = "0.1.0-beta"
 edition = "2024"
+rust-version = "1.85"
+authors = ["zzzdong <kuwater@163.com>"]
+description = "Core types and traits for Kafka protocol encoding/decoding"
+documentation = "https://docs.rs/kafka_client"
+repository = "https://github.com/zzzdong/kafka_client"
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
-bytes = "1.11.1"
+bytes = "1.11"
 crc32c = "0.6"
-thiserror = "2.0.18"
-uuid = "1.22.0"
-tokio-util = "0.7.18"
-kafka-client-protocol-derive = { path = "../kafka-client-protocol-derive", version = "0.1" }
+thiserror = "2.0"
+uuid = "1.0"
+tokio-util = { version = "0.7", features = ["codec"] }
+kafka-client-protocol-derive = { version = "0.1.0-beta", path = "../kafka-client-protocol-derive" }

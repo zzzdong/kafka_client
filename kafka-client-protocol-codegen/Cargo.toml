@@ -3,6 +3,7 @@ name = "kafka-client-protocol-codegen"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+publish = false  # Code generation tool, not for publishing
 
 [[bin]]
 name = "kafka-download"
