@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[kafka(
     api_key = 63,
     msg_type = "request",
-    valid_versions = "0-1",
+    valid_versions = "0-2",
     flexible_versions = "0+"
 )]
 pub struct BrokerHeartbeatRequest {
@@ -32,4 +32,7 @@ pub struct BrokerHeartbeatRequest {
     /// Log directories that failed and went offline.
     #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
     pub offline_log_dirs: Vec<Uuid>,
+    /// List of log directories that are cordoned. This is null before the broker reaches the RECOVERY state.
+    #[kafka(versions = "2+", nullable_versions = "2+", tag = 1, tagged_versions = "2+", default = None)]
+    pub cordoned_log_dirs: Option<Vec<Uuid>>,
 }

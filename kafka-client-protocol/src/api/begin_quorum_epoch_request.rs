@@ -12,8 +12,8 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub partition_index: i32,
     /// The directory id of the receiving replica.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub voter_directory_id: Option<Uuid>,
+    #[kafka(versions = "1+")]
+    pub voter_directory_id: Uuid,
     /// The ID of the newly elected leader.
     #[kafka(versions = "0+")]
     pub leader_id: i32,
@@ -57,12 +57,12 @@ pub struct BeginQuorumEpochRequest {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub cluster_id: Option<String>,
     /// The replica id of the voter receiving the request.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub voter_id: i32,
     /// The topics.
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicData>,
     /// Endpoints for the leader.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub leader_endpoints: Option<Vec<LeaderEndpoint>>,
+    #[kafka(versions = "1+")]
+    pub leader_endpoints: Vec<LeaderEndpoint>,
 }

@@ -44,7 +44,7 @@ pub struct ListOffsetsTopicResponse {
 )]
 pub struct ListOffsetsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
+    #[kafka(versions = "2+")]
     pub throttle_time_ms: i32,
     /// Each topic in the response.
     #[kafka(versions = "0+")]

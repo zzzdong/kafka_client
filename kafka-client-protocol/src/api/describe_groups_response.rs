@@ -65,7 +65,7 @@ pub struct DescribedGroup {
 )]
 pub struct DescribeGroupsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// Each described group.
     #[kafka(versions = "0+")]

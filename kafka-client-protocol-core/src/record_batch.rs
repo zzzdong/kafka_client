@@ -532,7 +532,7 @@ impl Message for RecordBatch {
         None
     }
 
-    fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+    fn encode(&self, buf: &mut BytesMut, _version: i16, _is_flexible: bool) -> ProtocolResult<()> {
         // 写入 base_offset
         buf.put_i64(self.base_offset);
 
@@ -548,7 +548,7 @@ impl Message for RecordBatch {
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+    fn decode(buf: &mut Bytes, _version: i16, _is_flexible: bool) -> ProtocolResult<Self> {
         if buf.remaining() < 8 {
             return Err(ProtocolError::insufficient_data(8, buf.remaining()));
         }
@@ -574,8 +574,12 @@ impl Message for RecordBatch {
         Ok(batch)
     }
 
-    fn size(&self, _version: i16) -> usize {
-        8 + 4 + self.encode_to_bytes().map(|b| b.len()).unwrap_or(0)
+    fn size(&self, _version: i16, _is_flexible: bool) -> usize {
+        let batch_bytes = self.encode_to_bytes();
+        match batch_bytes {
+            Ok(b) => 8 + 4 + b.len(),
+            Err(_) => 0,
+        }
     }
 }
 
@@ -654,9 +658,9 @@ mod tests {
         batch.add_record(record);
 
         let mut buf = BytesMut::new();
-        batch.encode(&mut buf, 0).unwrap();
+        batch.encode(&mut buf, 0, false).unwrap();
 
-        let decoded = RecordBatch::decode(&mut buf.freeze(), 0).unwrap();
+        let decoded = RecordBatch::decode(&mut buf.freeze(), 0, false).unwrap();
 
         assert_eq!(decoded.base_offset, 1000);
         assert_eq!(decoded.records.len(), 1);

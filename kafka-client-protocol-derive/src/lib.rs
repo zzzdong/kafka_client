@@ -15,7 +15,7 @@ use version_range::VersionRange;
 /// 派生 KafkaMessage trait
 ///
 /// # 示例
-/// ```rust
+/// ```ignore
 /// use kafka_client_protocol_derive::KafkaMessage;
 ///
 /// // 请求消息

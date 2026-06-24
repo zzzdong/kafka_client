@@ -31,16 +31,16 @@ pub struct DescribeConfigsResourceResult {
     #[kafka(versions = "0+")]
     pub read_only: bool,
     /// The configuration source.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub config_source: i8,
     /// True if this configuration is sensitive.
     #[kafka(versions = "0+")]
     pub is_sensitive: bool,
     /// The synonyms for this configuration key.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub synonyms: Option<Vec<DescribeConfigsSynonym>>,
+    #[kafka(versions = "1+")]
+    pub synonyms: Vec<DescribeConfigsSynonym>,
     /// The configuration data type. Type can be one of the following values - BOOLEAN, STRING, INT, SHORT, LONG, DOUBLE, LIST, CLASS, PASSWORD.
-    #[kafka(versions = "3+", nullable_versions = "3+", default = 0)]
+    #[kafka(versions = "3+", default = 0)]
     pub config_type: i8,
     /// The configuration documentation.
     #[kafka(versions = "3+", nullable_versions = "0+")]

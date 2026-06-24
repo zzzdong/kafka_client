@@ -158,7 +158,7 @@ pub struct StreamsGroupHeartbeatRequest {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub process_id: Option<String>,
     /// User-defined endpoint for Interactive Queries. Null if unchanged since last heartbeat, or if not defined on the client.
-    #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
+    #[kafka(versions = "0+", default = None)]
     pub user_endpoint: Option<Endpoint>,
     /// Used for rack-aware assignment algorithm. Null if unchanged since last heartbeat.
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]

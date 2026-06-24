@@ -12,7 +12,7 @@ pub struct ListOffsetsPartition {
     #[kafka(versions = "0+")]
     pub partition_index: i32,
     /// The current leader epoch.
-    #[kafka(versions = "4+", nullable_versions = "4+", default = -1)]
+    #[kafka(versions = "4+", default = -1)]
     pub current_leader_epoch: i32,
     /// The current timestamp.
     #[kafka(versions = "0+")]
@@ -47,6 +47,6 @@ pub struct ListOffsetsRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<ListOffsetsTopic>,
     /// The timeout to await a response in milliseconds for requests that require reading from remote storage for topics enabled with tiered storage.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
+    #[kafka(versions = "10+")]
     pub timeout_ms: i32,
 }

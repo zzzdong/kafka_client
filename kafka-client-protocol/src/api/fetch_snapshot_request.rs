@@ -31,13 +31,8 @@ pub struct PartitionSnapshot {
     #[kafka(versions = "0+")]
     pub position: i64,
     /// The directory id of the follower fetching.
-    #[kafka(
-        versions = "1+",
-        nullable_versions = "1+",
-        tag = 0,
-        tagged_versions = "1+"
-    )]
-    pub replica_directory_id: Option<Uuid>,
+    #[kafka(versions = "1+", tag = 0, tagged_versions = "1+")]
+    pub replica_directory_id: Uuid,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]

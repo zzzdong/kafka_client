@@ -34,7 +34,7 @@ pub struct WritableTxnMarker {
     #[kafka(versions = "0+")]
     pub coordinator_epoch: i32,
     /// Transaction version of the marker. Ex: 0/1 = legacy (TV0/TV1), 2 = TV2 etc.
-    #[kafka(versions = "2+", nullable_versions = "2+", default = 0)]
+    #[kafka(versions = "2+", default = 0)]
     pub transaction_version: i8,
 }
 

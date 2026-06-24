@@ -158,15 +158,24 @@ fn parse_field_recursive(
         _ => false,
     });
 
-    // 如果字段有 ignorable 标记，应该被视为可空
-    let is_nullable = is_nullable || field.ignorable;
+    // 只有引用类型（string, bytes, records, uuid, [] 数组, 或自定义结构体类型）才能为 null
+    // ignorable 只表示该字段可以跳过，不等于 null。不能将 ignorable 作为 nullable 的条件。
+    // 否则 int32 等标量类型会被错误地标记为 Option<i32>
+    let can_be_nullable = matches!(
+        field.field_type.as_str(),
+        "string" | "bytes" | "records" | "uuid"
+    ) || field.field_type.starts_with("[]")
+        || field.fields.is_some();
 
-    // 如果字段有 ignorable 标记且没有显式的 nullable_versions，使用相同的版本范围
-    let nullable_versions = if field.ignorable && field.nullable_versions.is_none() {
-        Some(field.versions.clone())
-    } else {
+    let nullable_versions = if can_be_nullable {
+        // 只有引用类型才使用 nullable_versions
         field.nullable_versions.clone()
+    } else {
+        None
     };
+
+    // 只有引用类型才考虑 is_nullable
+    let is_nullable = if can_be_nullable { is_nullable } else { false };
 
     // 检查是否有内联字段（嵌套结构体）
     let rust_type = if field.fields.is_some() {
@@ -239,15 +248,21 @@ fn parse_field_simple(field: &FieldDef) -> ParsedField {
         _ => false,
     });
 
-    // 如果字段有 ignorable 标记，应该被视为可空
-    let is_nullable = is_nullable || field.ignorable;
+    // 只有引用类型（string, bytes, records, uuid, [] 数组, 或自定义结构体类型）才能为 null
+    // ignorable 只表示该字段可以跳过，不等于 null。不能将 ignorable 作为 nullable 的条件。
+    let can_be_nullable = matches!(
+        field.field_type.as_str(),
+        "string" | "bytes" | "records" | "uuid"
+    ) || field.field_type.starts_with("[]")
+        || field.fields.is_some();
 
-    // 如果字段有 ignorable 标记且没有显式的 nullable_versions，使用相同的版本范围
-    let nullable_versions = if field.ignorable && field.nullable_versions.is_none() {
-        Some(field.versions.clone())
-    } else {
+    let nullable_versions = if can_be_nullable {
         field.nullable_versions.clone()
+    } else {
+        None
     };
+
+    let is_nullable = if can_be_nullable { is_nullable } else { false };
 
     let rust_type = map_kafka_type_to_rust(&field.field_type, is_nullable, default_is_null);
 

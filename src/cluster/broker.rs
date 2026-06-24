@@ -279,8 +279,8 @@ impl BrokerManager {
                         if let Some(conn) = conn {
                             let mut guard = conn.lock().await;
                             let request = ApiVersionsRequest {
-                                client_software_name: None,
-                                client_software_version: None,
+                                client_software_name: String::new(),
+                                client_software_version: String::new(),
                             };
                             match guard
                                 .send_request::<_, crate::protocol::ApiVersionsResponse>(&request)

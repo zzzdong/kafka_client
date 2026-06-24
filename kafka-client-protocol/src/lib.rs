@@ -1,6 +1,7 @@
 //! Kafka 协议定义
 //!
 //! 包含 Kafka 协议的具体定义，由 codegen 生成，随 Kafka 版本更新
+#![allow(unused)]
 
 pub mod api;
 pub mod version;

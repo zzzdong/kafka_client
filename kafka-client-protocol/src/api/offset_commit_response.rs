@@ -19,11 +19,11 @@ pub struct OffsetCommitResponsePartition {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetCommitResponseTopic {
     /// The topic name.
-    #[kafka(versions = "0-9", nullable_versions = "0-9")]
-    pub name: Option<String>,
+    #[kafka(versions = "0-9")]
+    pub name: String,
     /// The topic ID.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// The responses for each partition in the topic.
     #[kafka(versions = "0+")]
     pub partitions: Vec<OffsetCommitResponsePartition>,
@@ -38,7 +38,7 @@ pub struct OffsetCommitResponseTopic {
 )]
 pub struct OffsetCommitResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
+    #[kafka(versions = "3+")]
     pub throttle_time_ms: i32,
     /// The responses for each topic.
     #[kafka(versions = "0+")]

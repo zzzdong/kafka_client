@@ -48,7 +48,7 @@ pub struct AddPartitionsToTxnResponse {
     #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// The response top level error code.
-    #[kafka(versions = "4+", nullable_versions = "4+")]
+    #[kafka(versions = "4+")]
     pub error_code: i16,
     /// Results categorized by transactional ID.
     #[kafka(versions = "4+")]

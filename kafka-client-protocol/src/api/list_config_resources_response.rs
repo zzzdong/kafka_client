@@ -12,7 +12,7 @@ pub struct ConfigResource {
     #[kafka(versions = "0+")]
     pub resource_name: String,
     /// The resource type.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = 16)]
+    #[kafka(versions = "1+", default = 16)]
     pub resource_type: i8,
 }
 

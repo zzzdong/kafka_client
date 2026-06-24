@@ -83,7 +83,7 @@ pub struct NodeEndpoint {
 )]
 pub struct FetchSnapshotResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
+    #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// The top level response error code.
     #[kafka(versions = "0+")]

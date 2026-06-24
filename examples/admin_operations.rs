@@ -133,7 +133,7 @@ async fn main() {
             name: Some(topic_name.to_string()),
             topic_id: uuid::Uuid::nil(),
         }],
-        topic_names: Some(vec![topic_name.to_string()]), // For older versions
+        topic_names: vec![topic_name.to_string()], // For older versions
         timeout_ms: 10000,
     };
 

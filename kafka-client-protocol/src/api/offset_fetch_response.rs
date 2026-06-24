@@ -15,7 +15,7 @@ pub struct OffsetFetchResponsePartition {
     #[kafka(versions = "0-7")]
     pub committed_offset: i64,
     /// The leader epoch.
-    #[kafka(versions = "5-7", nullable_versions = "5-7", default = -1)]
+    #[kafka(versions = "5-7", default = -1)]
     pub committed_leader_epoch: i32,
     /// The partition metadata.
     #[kafka(versions = "0-7", nullable_versions = "0-7")]
@@ -44,7 +44,7 @@ pub struct OffsetFetchResponsePartitions {
     #[kafka(versions = "8+")]
     pub committed_offset: i64,
     /// The leader epoch.
-    #[kafka(versions = "8+", nullable_versions = "8+", default = -1)]
+    #[kafka(versions = "8+", default = -1)]
     pub committed_leader_epoch: i32,
     /// The partition metadata.
     #[kafka(versions = "8+", nullable_versions = "8+")]
@@ -57,11 +57,11 @@ pub struct OffsetFetchResponsePartitions {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchResponseTopics {
     /// The topic name.
-    #[kafka(versions = "8-9", nullable_versions = "8-9")]
-    pub name: Option<String>,
+    #[kafka(versions = "8-9")]
+    pub name: String,
     /// The topic ID.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// The responses per partition.
     #[kafka(versions = "8+")]
     pub partitions: Vec<OffsetFetchResponsePartitions>,
@@ -89,13 +89,13 @@ pub struct OffsetFetchResponseGroup {
 )]
 pub struct OffsetFetchResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
+    #[kafka(versions = "3+")]
     pub throttle_time_ms: i32,
     /// The responses per topic.
     #[kafka(versions = "0-7")]
     pub topics: Vec<OffsetFetchResponseTopic>,
     /// The top-level error code, or 0 if there was no error.
-    #[kafka(versions = "2-7", nullable_versions = "2-7", default = 0)]
+    #[kafka(versions = "2-7", default = 0)]
     pub error_code: i16,
     /// The responses per group id.
     #[kafka(versions = "8+")]

@@ -717,7 +717,7 @@ fn generate_mod_file(
 
     for msg in messages {
         let file_name = msg.name.to_snake_case();
-        content.push_str(&format!("mod {};\n", file_name));
+        content.push_str(&format!("pub mod {};\n", file_name));
         content.push_str(&format!("pub use {}::{};\n", file_name, msg.struct_name));
     }
 

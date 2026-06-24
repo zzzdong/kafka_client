@@ -27,7 +27,7 @@ pub struct PartitionResult {
     #[kafka(versions = "0+")]
     pub start_offset: i64,
     /// The number of offsets greater than or equal to share-partition start offset for which delivery has been completed.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub delivery_complete_count: i32,
 }
 

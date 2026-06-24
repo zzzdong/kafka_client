@@ -6,77 +6,78 @@ use quote::quote;
 
 /// 生成 encode 方法
 pub fn generate_encode(fields: &[FieldInfo], flexible_version: Option<i16>) -> TokenStream {
-    let encode_fields: Vec<TokenStream> = fields
+    let inline_fields: Vec<TokenStream> = fields
         .iter()
-        .map(|field| generate_encode_field(field, flexible_version))
+        .filter(|f| f.tagged_versions.is_none())
+        .map(|field| generate_encode_field_inline(field, flexible_version))
         .collect();
 
-    let tag_buffer = match flexible_version {
-        Some(v) => quote! {
-            if version >= #v {
-                encode_unsigned_varint(buf, 0);
+    let tagged_check: Vec<TokenStream> = fields
+        .iter()
+        .filter(|f| f.tagged_versions.is_some())
+        .map(|field| {
+            let field_name = &field.name;
+            let condition = field.versions.as_check_expr();
+            quote! {
+                if #condition && !self.#field_name.is_default() {
+                    tagged_count += 1;
+                }
             }
-        },
-        None => quote! {},
-    };
+        })
+        .collect();
+
+    let tagged_encode: Vec<TokenStream> = fields
+        .iter()
+        .filter(|f| f.tagged_versions.is_some())
+        .map(|field| {
+            let field_name = &field.name;
+            let condition = field.versions.as_check_expr();
+            let tag = field.tag.expect("tagged field must have a tag");
+
+            quote! {
+                if #condition && !self.#field_name.is_default() {
+                    encode_unsigned_varint(&mut tagged_buf, #tag);
+                    let len_pos = tagged_buf.len();
+                    tagged_buf.extend_from_slice(&[0u8; 5]);
+                    let start_len = tagged_buf.len();
+                    self.#field_name.encode(&mut tagged_buf, version, is_flexible)?;
+                    let data_len = (tagged_buf.len() - start_len) as u32;
+                    let len_bytes = varint_len(data_len);
+                    let mut len_buf = ::bytes::BytesMut::with_capacity(5);
+                    encode_unsigned_varint(&mut len_buf, data_len + 1);
+                    tagged_buf[len_pos..len_pos + len_bytes].copy_from_slice(&len_buf[..len_bytes]);
+                }
+            }
+        })
+        .collect();
 
     quote! {
-        fn encode(&self, buf: &mut ::bytes::BytesMut, version: i16) -> kafka_client_protocol_core::ProtocolResult<()> {
+        fn encode(&self, buf: &mut ::bytes::BytesMut, version: i16, is_flexible: bool) -> kafka_client_protocol_core::ProtocolResult<()> {
             use kafka_client_protocol_core::codec::*;
             use ::bytes::BufMut;
 
-            #(#encode_fields)*
+            #(#inline_fields)*
 
-            #tag_buffer
+            // 灵活版本：编码 tagged fields
+            if is_flexible {
+                let mut tagged_count = 0u32;
+                #(#tagged_check)*
+                encode_unsigned_varint(buf, tagged_count);
+                if tagged_count > 0 {
+                    let mut tagged_buf = ::bytes::BytesMut::new();
+                    #(#tagged_encode)*
+                    buf.extend_from_slice(&tagged_buf);
+                }
+            }
 
             Ok(())
         }
     }
 }
 
-/// 生成运行时版本是否使用 flexible 格式的检查表达式
-fn flexible_check(flexible_version: Option<i16>) -> TokenStream {
-    match flexible_version {
-        Some(v) => quote! { version >= #v },
-        None => quote! { false },
-    }
-}
-
-/// 生成单个字段的编码代码
-fn generate_encode_field(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
-    let field_name = &field.name;
+/// 生成内联字段（非 tagged）的编码代码
+fn generate_encode_field_inline(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
     let condition = field.versions.as_check_expr();
-    #[allow(unused_variables)]
-    let is_flex = flexible_check(flexible_version);
-
-    // 标签字段特殊处理
-    if field.tagged_versions.is_some() {
-        if let Some(tag) = field.tag {
-            return quote! {
-                if #condition {
-                    // 检查是否需要跳过（所有字段都是默认值）
-                    if !self.#field_name.is_default() {
-                        encode_unsigned_varint(buf, #tag);
-                        let len_pos = buf.len();
-                        // 预留最大 varint 长度（5 bytes for u32）
-                        buf.extend_from_slice(&[0u8; 5]);
-                        let start_len = buf.len();
-                        self.#field_name.encode(buf, version)?;
-                        let data_len = (buf.len() - start_len) as u32;
-                        // 计算实际 varint 长度
-                        let len_bytes = varint_len(data_len);
-                        // 创建临时 buffer 编码长度
-                        let mut len_buf = ::bytes::BytesMut::with_capacity(5);
-                        encode_unsigned_varint(&mut len_buf, data_len + 1);
-                        // 回填长度
-                        buf[len_pos..len_pos + len_bytes].copy_from_slice(&len_buf[..len_bytes]);
-                    }
-                }
-            };
-        }
-    }
-
-    // 普通字段
     let encode_body = generate_encode_body(field, flexible_version);
 
     if field.versions == VersionRange::All {
@@ -91,9 +92,10 @@ fn generate_encode_field(field: &FieldInfo, flexible_version: Option<i16>) -> To
 }
 
 /// 生成字段编码体
-fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
+fn generate_encode_body(field: &FieldInfo, _flexible_version: Option<i16>) -> TokenStream {
     let field_name = &field.name;
-    let is_flex = flexible_check(flexible_version);
+    // is_flexible 是生成函数的参数名，由外层传入
+    let is_flex = quote! { is_flexible };
 
     // Option 类型特殊处理
     if field.is_option() {
@@ -137,7 +139,7 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                     // Option<OtherStruct>: use default value
                     quote! {
                         let empty: #inner = ::core::default::Default::default();
-                        ::kafka_client_protocol_core::Message::encode(&empty, buf, version)?;
+                        ::kafka_client_protocol_core::Message::encode(&empty, buf, version, is_flexible)?;
                     }
                 }
             });
@@ -154,12 +156,12 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                     quote! {
                         if #is_flex {
                             encode_compact_array(buf, self.#field_name.as_ref().unwrap(), |b, item| -> kafka_client_protocol_core::ProtocolResult<()> {
-                                item.encode(b, version)?;
+                                item.encode(b, version, is_flexible)?;
                                 Ok(())
                             }).ok();
                         } else {
                             encode_array(buf, self.#field_name.as_ref().unwrap(), |b, item| -> kafka_client_protocol_core::ProtocolResult<()> {
-                                item.encode(b, version)?;
+                                item.encode(b, version, is_flexible)?;
                                 Ok(())
                             }).ok();
                         }
@@ -185,7 +187,7 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                     quote! {
                         let batch = self.#field_name.as_ref().unwrap();
                         let mut batch_buf = ::bytes::BytesMut::new();
-                        ::kafka_client_protocol_core::Message::encode(batch, &mut batch_buf, version)?;
+                        ::kafka_client_protocol_core::Message::encode(batch, &mut batch_buf, version, is_flexible)?;
                         if #is_flex {
                             encode_unsigned_varint(buf, batch_buf.len() as u32 + 1);
                             buf.extend_from_slice(&batch_buf);
@@ -196,7 +198,7 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                     }
                 } else {
                     quote! {
-                        self.#field_name.encode(buf, version)?;
+                        self.#field_name.encode(buf, version, is_flexible)?;
                     }
                 }
             });
@@ -219,7 +221,7 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
             };
         } else {
             return quote! {
-                self.#field_name.encode(buf, version)?;
+                self.#field_name.encode(buf, version, is_flexible)?;
             };
         }
     }
@@ -245,12 +247,12 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
         quote! {
             if #is_flex {
                 encode_compact_array(buf, &self.#field_name, |b, item| -> kafka_client_protocol_core::ProtocolResult<()> {
-                    item.encode(b, version)?;
+                    item.encode(b, version, is_flexible)?;
                     Ok(())
                 }).ok();
             } else {
                 encode_array(buf, &self.#field_name, |b, item| -> kafka_client_protocol_core::ProtocolResult<()> {
-                    item.encode(b, version)?;
+                    item.encode(b, version, is_flexible)?;
                     Ok(())
                 }).ok();
             }
@@ -265,10 +267,10 @@ fn generate_encode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
     } else if field.is_float() {
         quote! { buf.put_f64(self.#field_name); }
     } else if field.is_uuid() {
-        quote! { self.#field_name.encode(buf, version)?; }
+        quote! { self.#field_name.encode(buf, version, is_flexible)?; }
     } else {
         // 默认：使用 Message trait 的 encode
-        quote! { self.#field_name.encode(buf, version)?; }
+        quote! { self.#field_name.encode(buf, version, is_flexible)?; }
     }
 }
 

@@ -35,13 +35,19 @@ pub trait Message: Sized + Default + PartialEq {
     }
 
     /// 编码消息（不包括长度前缀和头）
-    fn encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()>;
+    ///
+    /// `is_flexible` 表示当前消息是否使用灵活编码（compact format）。
+    /// 这由顶层消息的 `flexible_versions` 决定，并向下传递到所有嵌套结构。
+    fn encode(&self, buf: &mut BytesMut, version: i16, is_flexible: bool) -> ProtocolResult<()>;
 
     /// 解码消息（不包括长度前缀和头）
-    fn decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self>;
+    ///
+    /// `is_flexible` 表示当前消息是否使用灵活编码（compact format）。
+    /// 这由顶层消息的 `flexible_versions` 决定，并向下传递到所有嵌套结构。
+    fn decode(buf: &mut Bytes, version: i16, is_flexible: bool) -> ProtocolResult<Self>;
 
     /// 计算编码后的大小
-    fn size(&self, version: i16) -> usize;
+    fn size(&self, version: i16, is_flexible: bool) -> usize;
 
     /// 默认版本
     fn default_version() -> i16 {
@@ -88,7 +94,7 @@ pub trait Request: Message {
         }
 
         // 2. 编码请求体
-        self.encode(&mut buf, version)?;
+        self.encode(&mut buf, version, use_flexible)?;
 
         Ok(buf.freeze())
     }
@@ -109,7 +115,7 @@ pub trait Response: Message {
         let mut buf = data;
 
         let header = ResponseHeader::decode(&mut buf, use_flexible)?;
-        let body = Self::decode(&mut buf, version)?;
+        let body = Self::decode(&mut buf, version, use_flexible)?;
 
         Ok((header, body))
     }

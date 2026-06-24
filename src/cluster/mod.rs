@@ -182,7 +182,12 @@ impl ClusterClient {
             match conn_guard.send_request(request).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    warn!("Request to broker {} failed: {}", addr, e);
+                    warn!(
+                        "Request api_key: {} to broker {} failed: {}",
+                        request.api_key(),
+                        addr,
+                        e
+                    );
                     self.broker_manager.mark_unhealthy(addr);
                 }
             }
@@ -233,7 +238,7 @@ impl ClusterClient {
         let request_topics: Vec<protocol::MetadataRequestTopic> = topics
             .iter()
             .map(|name| protocol::MetadataRequestTopic {
-                topic_id: None,
+                topic_id: uuid::Uuid::nil(),
                 name: Some(name.clone()),
             })
             .collect();

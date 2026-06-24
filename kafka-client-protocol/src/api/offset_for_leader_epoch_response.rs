@@ -15,7 +15,7 @@ pub struct EpochEndOffset {
     #[kafka(versions = "0+")]
     pub partition: i32,
     /// The leader epoch of the partition.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub leader_epoch: i32,
     /// The end offset of the epoch.
     #[kafka(versions = "0+", default = -1)]
@@ -41,7 +41,7 @@ pub struct OffsetForLeaderTopicResult {
 )]
 pub struct OffsetForLeaderEpochResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
+    #[kafka(versions = "2+")]
     pub throttle_time_ms: i32,
     /// Each topic we fetched offsets for.
     #[kafka(versions = "0+")]

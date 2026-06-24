@@ -18,10 +18,10 @@ pub struct ReplicaState {
     #[kafka(versions = "0+")]
     pub log_end_offset: i64,
     /// The last known leader wall clock time time when a follower fetched from the leader. This is reported as -1 both for the current leader or if it is unknown for a voter.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub last_fetch_timestamp: i64,
     /// The leader wall clock append time of the offset for which the follower made the most recent fetch request. This is reported as the current time for the leader and -1 if unknown for a voter.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub last_caught_up_timestamp: i64,
 }
 

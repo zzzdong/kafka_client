@@ -31,7 +31,7 @@ pub struct JoinGroupRequest {
     #[kafka(versions = "0+")]
     pub session_timeout_ms: i32,
     /// The maximum time in milliseconds that the coordinator will wait for each member to rejoin when rebalancing the group.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub rebalance_timeout_ms: i32,
     /// The member id assigned by the group coordinator.
     #[kafka(versions = "0+")]

@@ -28,8 +28,8 @@ pub struct DeleteTopicsRequest {
     #[kafka(versions = "6+")]
     pub topics: Vec<DeleteTopicState>,
     /// The names of the topics to delete.
-    #[kafka(versions = "0-5", nullable_versions = "0-5")]
-    pub topic_names: Option<Vec<String>>,
+    #[kafka(versions = "0-5")]
+    pub topic_names: Vec<String>,
     /// The length of time in milliseconds to wait for the deletions to complete.
     #[kafka(versions = "0+")]
     pub timeout_ms: i32,

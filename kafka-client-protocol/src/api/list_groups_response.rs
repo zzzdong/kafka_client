@@ -15,11 +15,11 @@ pub struct ListedGroup {
     #[kafka(versions = "0+")]
     pub protocol_type: String,
     /// The group state name.
-    #[kafka(versions = "4+", nullable_versions = "4+")]
-    pub group_state: Option<String>,
+    #[kafka(versions = "4+")]
+    pub group_state: String,
     /// The group type name.
-    #[kafka(versions = "5+", nullable_versions = "5+")]
-    pub group_type: Option<String>,
+    #[kafka(versions = "5+")]
+    pub group_type: String,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -31,7 +31,7 @@ pub struct ListedGroup {
 )]
 pub struct ListGroupsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// The error code, or 0 if there was no error.
     #[kafka(versions = "0+")]

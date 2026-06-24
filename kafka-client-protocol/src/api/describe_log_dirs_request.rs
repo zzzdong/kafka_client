@@ -20,7 +20,7 @@ pub struct DescribableLogDirTopic {
 #[kafka(
     api_key = 35,
     msg_type = "request",
-    valid_versions = "1-4",
+    valid_versions = "1-5",
     flexible_versions = "2+"
 )]
 pub struct DescribeLogDirsRequest {

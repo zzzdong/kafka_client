@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[command(name = "kafka-download")]
 #[command(about = "Download Kafka protocol JSON definitions")]
 struct Args {
-    #[arg(short, long, default_value = "4.2")]
+    #[arg(short, long, default_value = "4.3")]
     version: String,
 
     #[arg(short, long, default_value = "protocol-definitions")]

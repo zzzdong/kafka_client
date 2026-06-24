@@ -2,9 +2,8 @@
 //! Kafka 协议头定义
 
 use crate::{
-    ProtocolError, ProtocolResult, decode_compact_nullable_string, decode_nullable_string,
-    decode_unsigned_varint, encode_compact_nullable_string, encode_nullable_string,
-    encode_unsigned_varint,
+    ProtocolError, ProtocolResult, decode_nullable_string, decode_unsigned_varint,
+    encode_nullable_string, encode_unsigned_varint,
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -58,7 +57,7 @@ impl RequestHeaderV2 {
         buf.put_i16(self.api_key);
         buf.put_i16(self.api_version);
         buf.put_i32(self.correlation_id);
-        encode_compact_nullable_string(buf, &self.client_id);
+        encode_nullable_string(buf, &self.client_id);
 
         // 编码 tagged fields
         encode_unsigned_varint(buf, self.tagged_fields.len() as u32);
@@ -74,7 +73,7 @@ impl RequestHeaderV2 {
         let api_key = buf.get_i16();
         let api_version = buf.get_i16();
         let correlation_id = buf.get_i32();
-        let client_id = decode_compact_nullable_string(buf)?;
+        let client_id = decode_nullable_string(buf)?;
 
         let tagged_fields = decode_tagged_fields(buf)?;
 

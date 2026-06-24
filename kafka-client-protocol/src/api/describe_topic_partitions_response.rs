@@ -18,7 +18,7 @@ pub struct DescribeTopicPartitionsResponsePartition {
     #[kafka(versions = "0+")]
     pub leader_id: i32,
     /// The leader epoch of this partition.
-    #[kafka(versions = "0+", nullable_versions = "0+", default = -1)]
+    #[kafka(versions = "0+", default = -1)]
     pub leader_epoch: i32,
     /// The set of all nodes that host this partition.
     #[kafka(versions = "0+")]
@@ -33,8 +33,8 @@ pub struct DescribeTopicPartitionsResponsePartition {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub last_known_elr: Option<Vec<i32>>,
     /// The set of offline replicas of this partition.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
-    pub offline_replicas: Option<Vec<i32>>,
+    #[kafka(versions = "0+")]
+    pub offline_replicas: Vec<i32>,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -46,10 +46,10 @@ pub struct DescribeTopicPartitionsResponseTopic {
     #[kafka(versions = "0+", nullable_versions = "0+", map_key)]
     pub name: Option<String>,
     /// The topic id.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "0+")]
+    pub topic_id: Uuid,
     /// True if the topic is internal.
-    #[kafka(versions = "0+", nullable_versions = "0+", default = false)]
+    #[kafka(versions = "0+", default = false)]
     pub is_internal: bool,
     /// Each partition in the topic.
     #[kafka(versions = "0+")]
@@ -78,7 +78,7 @@ pub struct Cursor {
 )]
 pub struct DescribeTopicPartitionsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
+    #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// Each topic in the response.
     #[kafka(versions = "0+")]

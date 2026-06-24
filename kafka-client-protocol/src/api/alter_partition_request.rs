@@ -41,8 +41,8 @@ pub struct PartitionData {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The ID of the topic to alter ISRs for.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "2+")]
+    pub topic_id: Uuid,
     /// The partitions to alter ISRs for.
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,

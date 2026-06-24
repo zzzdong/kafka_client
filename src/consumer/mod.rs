@@ -17,7 +17,7 @@ use crate::protocol::{
     FindCoordinatorRequest, FindCoordinatorResponse, HeartbeatRequest, JoinGroupRequest,
     JoinGroupRequestProtocol, JoinGroupResponse, LeaveGroupRequest, ListOffsetsPartition,
     ListOffsetsRequest, ListOffsetsTopic, OffsetCommitRequest, OffsetCommitRequestPartition,
-    OffsetCommitRequestTopic, OffsetFetchRequest, OffsetFetchRequestGroup,
+    OffsetCommitRequestTopic, OffsetFetchRequest, OffsetFetchRequestGroup, OffsetFetchRequestTopic,
     OffsetFetchRequestTopics, SyncGroupRequest, SyncGroupRequestAssignment, SyncGroupResponse,
     TopicPartition,
 };
@@ -480,7 +480,7 @@ impl Consumer {
 
         let mut buf = bytes::BytesMut::new();
         protocol_assignment
-            .encode(&mut buf, 0)
+            .encode(&mut buf, 0, false)
             .map_err(|e| KafkaError::Protocol(e.to_string()))?;
         Ok(buf.freeze())
     }
@@ -595,37 +595,37 @@ impl Consumer {
         config: &ConsumerConfig,
         topics: &[String],
     ) -> Result<()> {
-        // 1. Find coordinator
+        // 1. Find coordinator (with retryable error handling)
         let coord_addr = {
             let request = FindCoordinatorRequest {
                 key: group_id.to_string(),
                 key_type: 0,
-                coordinator_keys: vec![],
+                coordinator_keys: vec![group_id.to_string()],
             };
 
             let response: FindCoordinatorResponse = cluster.send_to_any_broker(&request).await?;
+
+            // error_code 15 = GROUP_COORDINATOR_NOT_AVAILABLE (retryable)
+            if response.error_code == 15 {
+                return Err(KafkaError::NoCoordinator);
+            }
 
             if response.error_code != 0 {
                 return Err(KafkaError::NoCoordinator);
             }
 
-            let host = if response.host.is_empty() {
-                response
-                    .coordinators
-                    .first()
-                    .map(|c| c.host.clone())
-                    .unwrap_or_default()
+            let (host, port) = if !response.host.is_empty() {
+                (response.host.clone(), response.port)
+            } else if let Some(coord) = response.coordinators.first() {
+                if coord.error_code == 15 {
+                    return Err(KafkaError::NoCoordinator);
+                }
+                if coord.error_code != 0 {
+                    return Err(KafkaError::NoCoordinator);
+                }
+                (coord.host.clone(), coord.port)
             } else {
-                response.host
-            };
-            let port = if response.port == 0 {
-                response
-                    .coordinators
-                    .first()
-                    .map(|c| c.port)
-                    .unwrap_or(9092)
-            } else {
-                response.port
+                return Err(KafkaError::NoCoordinator);
             };
 
             format!("{}:{}", host, port)
@@ -733,8 +733,9 @@ impl Consumer {
 
                 let assignment = {
                     let mut buf_data = sync_response.assignment;
-                    let assignment_result = ConsumerProtocolAssignment::decode(&mut buf_data, 0)
-                        .map_err(|e| KafkaError::Protocol(e.to_string()))?;
+                    let assignment_result =
+                        ConsumerProtocolAssignment::decode(&mut buf_data, 0, false)
+                            .map_err(|e| KafkaError::Protocol(e.to_string()))?;
                     let mut result = HashMap::new();
                     for tp in assignment_result.assigned_partitions {
                         result.insert(tp.topic, tp.partitions);
@@ -808,18 +809,44 @@ impl Consumer {
             }
         };
 
+        // Build topics with topic_id (needed for v10+)
+        let mut topic_ids = Vec::with_capacity(assignment.len());
+        for topic in assignment.keys() {
+            let tid = cluster
+                .metadata()
+                .get_topic(topic)
+                .await
+                .map(|t| t.topic_id)
+                .unwrap_or_else(uuid::Uuid::nil);
+            topic_ids.push(tid);
+        }
+
         let topics: Vec<OffsetFetchRequestTopics> = assignment
             .iter()
-            .map(|(topic, partitions)| OffsetFetchRequestTopics {
-                name: Some(topic.clone()),
-                topic_id: None,
+            .zip(topic_ids)
+            .map(|((topic, partitions), topic_id)| OffsetFetchRequestTopics {
+                name: topic.clone(),
+                topic_id,
+                partition_indexes: partitions.clone(),
+            })
+            .collect();
+
+        // v0-7: legacy topic-based format
+        let legacy_topics: Vec<OffsetFetchRequestTopic> = assignment
+            .iter()
+            .map(|(topic, partitions)| OffsetFetchRequestTopic {
+                name: topic.clone(),
                 partition_indexes: partitions.clone(),
             })
             .collect();
 
         let request = OffsetFetchRequest {
             group_id: String::new(),
-            topics: None,
+            topics: if !legacy_topics.is_empty() {
+                Some(legacy_topics)
+            } else {
+                None
+            },
             groups: vec![OffsetFetchRequestGroup {
                 group_id: group_id.to_string(),
                 member_id: None,
@@ -836,9 +863,17 @@ impl Consumer {
         for group in response.groups {
             if group.group_id == group_id {
                 for topic in group.topics {
-                    let topic_name = match topic.name.as_deref() {
-                        Some(name) => name.to_string(),
-                        None => continue,
+                    // v0-7: name is populated; v10+: topic_id is populated
+                    let topic_name = if !topic.name.is_empty() {
+                        topic.name.clone()
+                    } else if !topic.topic_id.is_nil() {
+                        cluster
+                            .metadata()
+                            .get_topic_name_by_id(topic.topic_id)
+                            .await
+                            .unwrap_or_else(|| format!("unknown-{}", topic.topic_id))
+                    } else {
+                        continue;
                     };
                     let entry = result.entry(topic_name).or_default();
                     for p in topic.partitions {
@@ -1131,6 +1166,13 @@ impl Consumer {
             .await
             .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
 
+        let topic_id = cluster
+            .metadata()
+            .get_topic(topic)
+            .await
+            .map(|t| t.topic_id)
+            .unwrap_or_else(uuid::Uuid::nil);
+
         let request = FetchRequest {
             cluster_id: None,
             replica_id: -1,
@@ -1142,8 +1184,8 @@ impl Consumer {
             session_id: 0,
             session_epoch: -1,
             topics: vec![FetchTopic {
-                topic: Some(topic.to_string()),
-                topic_id: None,
+                topic: topic.to_string(),
+                topic_id,
                 partitions: vec![FetchPartition {
                     partition,
                     current_leader_epoch: -1,
@@ -1151,27 +1193,33 @@ impl Consumer {
                     last_fetched_epoch: -1,
                     log_start_offset: -1,
                     partition_max_bytes: params.partition_max_bytes,
-                    replica_directory_id: None,
-                    high_watermark: 9223372036854775807,
+                    replica_directory_id: uuid::Uuid::nil(),
+                    high_watermark: 0, // default (i64::default()), skip tagged encoding
                 }],
             }],
             forgotten_topics_data: vec![],
-            rack_id: Some(String::new()),
+            rack_id: String::new(),
         };
 
         let response: FetchResponse = cluster.send_to_broker(leader_addr, &request).await?;
-        Self::parse_fetch_response(response, topic, partition)
+        Self::parse_fetch_response(response, topic, topic_id, partition)
     }
 
     fn parse_fetch_response(
         response: FetchResponse,
         topic_name: &str,
+        topic_id: uuid::Uuid,
         partition_index: i32,
     ) -> Result<Vec<ConsumerRecord>> {
         let mut records = Vec::new();
 
         for topic_response in response.responses {
-            if topic_response.topic.as_deref() != Some(topic_name) {
+            // v0-12: name-based match; v13+: uuid-based match
+            let name_matches =
+                !topic_response.topic.is_empty() && topic_response.topic == topic_name;
+            let id_matches =
+                !topic_response.topic_id.is_nil() && topic_response.topic_id == topic_id;
+            if !name_matches && !id_matches {
                 continue;
             }
 
@@ -1290,7 +1338,7 @@ impl Consumer {
                 let request = FindCoordinatorRequest {
                     key: group_id.to_string(),
                     key_type: 0,
-                    coordinator_keys: vec![],
+                    coordinator_keys: vec![group_id.to_string()],
                 };
 
                 let response: FindCoordinatorResponse =
@@ -1298,25 +1346,18 @@ impl Consumer {
                 if response.error_code != 0 {
                     return Err(KafkaError::NoCoordinator);
                 }
+                if let Some(coord) = response.coordinators.first() {
+                    if coord.error_code != 0 {
+                        return Err(KafkaError::NoCoordinator);
+                    }
+                }
 
-                let host = if response.host.is_empty() {
-                    response
-                        .coordinators
-                        .first()
-                        .map(|c| c.host.clone())
-                        .unwrap_or_default()
+                let (host, port) = if !response.host.is_empty() {
+                    (response.host.clone(), response.port)
+                } else if let Some(coord) = response.coordinators.first() {
+                    (coord.host.clone(), coord.port)
                 } else {
-                    response.host
-                };
-
-                let port = if response.port == 0 {
-                    response
-                        .coordinators
-                        .first()
-                        .map(|c| c.port)
-                        .unwrap_or(9092)
-                } else {
-                    response.port
+                    return Err(KafkaError::NoCoordinator);
                 };
 
                 let addr: std::net::SocketAddr = format!("{}:{}", host, port)
@@ -1329,11 +1370,26 @@ impl Consumer {
             }
         };
 
+        let topic_ids: Vec<uuid::Uuid> = {
+            let mut ids = Vec::with_capacity(topic_partitions.len());
+            for topic in topic_partitions.keys() {
+                let tid = cluster
+                    .metadata()
+                    .get_topic(topic)
+                    .await
+                    .map(|t| t.topic_id)
+                    .unwrap_or_else(uuid::Uuid::nil);
+                ids.push(tid);
+            }
+            ids
+        };
+
         let topics: Vec<OffsetCommitRequestTopic> = topic_partitions
             .into_iter()
-            .map(|(topic, partitions)| OffsetCommitRequestTopic {
-                name: Some(topic),
-                topic_id: None,
+            .zip(topic_ids)
+            .map(|((topic, partitions), topic_id)| OffsetCommitRequestTopic {
+                name: topic,
+                topic_id,
                 partitions: partitions
                     .into_iter()
                     .map(
@@ -1351,7 +1407,7 @@ impl Consumer {
         let request = OffsetCommitRequest {
             group_id: group_id.to_string(),
             generation_id_or_member_epoch: generation_id,
-            member_id,
+            member_id: member_id.unwrap_or_default(),
             group_instance_id: None,
             retention_time_ms: -1,
             topics,
@@ -1394,7 +1450,7 @@ impl Consumer {
         let request = FindCoordinatorRequest {
             key: self.config.group_id.clone(),
             key_type: 0,
-            coordinator_keys: vec![],
+            coordinator_keys: vec![self.config.group_id.clone()],
         };
 
         let response: FindCoordinatorResponse = self.cluster.send_to_any_broker(&request).await?;
@@ -1402,25 +1458,18 @@ impl Consumer {
         if response.error_code != 0 {
             return Err(KafkaError::NoCoordinator);
         }
+        if let Some(coord) = response.coordinators.first() {
+            if coord.error_code != 0 {
+                return Err(KafkaError::NoCoordinator);
+            }
+        }
 
-        let host = if response.host.is_empty() {
-            response
-                .coordinators
-                .first()
-                .map(|c| c.host.clone())
-                .unwrap_or_default()
+        let (host, port) = if !response.host.is_empty() {
+            (response.host.clone(), response.port)
+        } else if let Some(coord) = response.coordinators.first() {
+            (coord.host.clone(), coord.port)
         } else {
-            response.host
-        };
-
-        let port = if response.port == 0 {
-            response
-                .coordinators
-                .first()
-                .map(|c| c.port)
-                .unwrap_or(9092)
-        } else {
-            response.port
+            return Err(KafkaError::NoCoordinator);
         };
 
         let addr: std::net::SocketAddr = format!("{}:{}", host, port)

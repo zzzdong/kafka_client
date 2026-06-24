@@ -60,34 +60,18 @@ pub struct ApiVersionsResponse {
     #[kafka(versions = "0+")]
     pub api_keys: Vec<ApiVersion>,
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// Features supported by the broker. Note: in v0-v3, features with MinSupportedVersion = 0 are omitted.
-    #[kafka(
-        versions = "3+",
-        nullable_versions = "3+",
-        tag = 0,
-        tagged_versions = "3+"
-    )]
-    pub supported_features: Option<Vec<SupportedFeatureKey>>,
+    #[kafka(versions = "3+", tag = 0, tagged_versions = "3+")]
+    pub supported_features: Vec<SupportedFeatureKey>,
     /// The monotonically increasing epoch for the finalized features information. Valid values are >= 0. A value of -1 is special and represents unknown epoch.
-    #[kafka(versions = "3+", nullable_versions = "3+", tag = 1, tagged_versions = "3+", default = -1)]
+    #[kafka(versions = "3+", tag = 1, tagged_versions = "3+", default = -1)]
     pub finalized_features_epoch: i64,
     /// List of cluster-wide finalized features. The information is valid only if FinalizedFeaturesEpoch >= 0.
-    #[kafka(
-        versions = "3+",
-        nullable_versions = "3+",
-        tag = 2,
-        tagged_versions = "3+"
-    )]
-    pub finalized_features: Option<Vec<FinalizedFeatureKey>>,
+    #[kafka(versions = "3+", tag = 2, tagged_versions = "3+")]
+    pub finalized_features: Vec<FinalizedFeatureKey>,
     /// Set by a KRaft controller if the required configurations for ZK migration are present.
-    #[kafka(
-        versions = "3+",
-        nullable_versions = "3+",
-        tag = 3,
-        tagged_versions = "3+",
-        default = false
-    )]
+    #[kafka(versions = "3+", tag = 3, tagged_versions = "3+", default = false)]
     pub zk_migration_ready: bool,
 }

@@ -216,13 +216,14 @@ impl ProducerInner {
             return Ok(Vec::new());
         }
 
-        let request = self.build_request(topic, partition, records)?;
+        let request = self.build_request(topic, partition, records).await?;
         let response = self.send_with_retry(topic, partition, &request).await?;
-        let metadata = self.parse_response(topic, partition, response)?;
+        let metadata = self.parse_response(topic, partition, response).await?;
+
         Ok(vec![metadata])
     }
 
-    fn build_request(
+    async fn build_request(
         &self,
         topic: &str,
         partition: i32,
@@ -230,13 +231,22 @@ impl ProducerInner {
     ) -> Result<ProduceRequest> {
         let batch = self.build_record_batch(records)?;
 
+        // Look up topic UUID from metadata for v13+ compatibility
+        let topic_id = self
+            .cluster
+            .metadata()
+            .get_topic(topic)
+            .await
+            .map(|t| t.topic_id)
+            .unwrap_or_else(uuid::Uuid::nil);
+
         Ok(ProduceRequest {
             transactional_id: None,
             acks: self.config.acks,
             timeout_ms: self.config.timeout_ms,
             topic_data: vec![TopicProduceData {
-                name: Some(topic.to_string()),
-                topic_id: None,
+                name: topic.to_string(),
+                topic_id,
                 partition_data: vec![PartitionProduceData {
                     index: partition,
                     records: Some(batch),
@@ -333,26 +343,42 @@ impl ProducerInner {
         Err(last_error.unwrap_or(KafkaError::ProduceError(-1)))
     }
 
-    fn parse_response(
+    async fn parse_response(
         &self,
         topic: &str,
         partition: i32,
         response: ProduceResponse,
     ) -> Result<RecordMetadata> {
-        for topic_response in response.responses {
-            if topic_response.name.as_deref() == Some(topic) {
-                for partition_response in topic_response.partition_responses {
-                    if partition_response.index == partition {
-                        if partition_response.error_code != 0 {
-                            return Err(KafkaError::ProduceError(partition_response.error_code));
-                        }
-                        return Ok(RecordMetadata {
-                            topic: topic.to_string(),
-                            partition,
-                            offset: partition_response.base_offset,
-                            timestamp: partition_response.log_append_time_ms,
-                        });
+        // Look up topic_id from metadata for v13+ response matching
+        let topic_id = self
+            .cluster
+            .metadata()
+            .get_topic(topic)
+            .await
+            .map(|t| t.topic_id);
+
+        for topic_response in &response.responses {
+            // v0-12: name is populated; v13+: topic_id is populated
+            let name_matches = !topic_response.name.is_empty() && topic_response.name == topic;
+            let id_matches = topic_id
+                .map(|id| !id.is_nil() && topic_response.topic_id == id)
+                .unwrap_or(false);
+
+            if !name_matches && !id_matches {
+                continue;
+            }
+
+            for partition_response in &topic_response.partition_responses {
+                if partition_response.index == partition {
+                    if partition_response.error_code != 0 {
+                        return Err(KafkaError::ProduceError(partition_response.error_code));
                     }
+                    return Ok(RecordMetadata {
+                        topic: topic.to_string(),
+                        partition,
+                        offset: partition_response.base_offset,
+                        timestamp: partition_response.log_append_time_ms,
+                    });
                 }
             }
         }

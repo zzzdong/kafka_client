@@ -18,11 +18,11 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub replica_id: i32,
     /// The directory id of the voter sending the request
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub replica_directory_id: Option<Uuid>,
+    #[kafka(versions = "1+")]
+    pub replica_directory_id: Uuid,
     /// The directory id of the voter receiving the request
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub voter_directory_id: Option<Uuid>,
+    #[kafka(versions = "1+")]
+    pub voter_directory_id: Uuid,
     /// The epoch of the last record written to the metadata log.
     #[kafka(versions = "0+")]
     pub last_offset_epoch: i32,
@@ -56,7 +56,7 @@ pub struct VoteRequest {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub cluster_id: Option<String>,
     /// The replica id of the voter receiving the request.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub voter_id: i32,
     /// The topic data.
     #[kafka(versions = "0+")]

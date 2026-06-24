@@ -37,6 +37,6 @@ pub struct UpdateFeaturesResponse {
     #[kafka(versions = "0+", nullable_versions = "0+")]
     pub error_message: Option<String>,
     /// Results for each feature update.
-    #[kafka(versions = "0-1", nullable_versions = "0-1")]
-    pub results: Option<Vec<UpdatableFeatureResult>>,
+    #[kafka(versions = "0-1")]
+    pub results: Vec<UpdatableFeatureResult>,
 }

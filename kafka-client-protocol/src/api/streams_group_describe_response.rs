@@ -134,7 +134,7 @@ pub struct Member {
     #[kafka(versions = "0+")]
     pub process_id: String,
     /// User-defined endpoint for Interactive Queries. Null if not defined for this client.
-    #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
+    #[kafka(versions = "0+", default = None)]
     pub user_endpoint: Option<Endpoint>,
     /// Used for rack-aware assignment algorithm.
     #[kafka(versions = "0+")]

@@ -15,7 +15,7 @@ pub struct TxnOffsetCommitRequestPartition {
     #[kafka(versions = "0+")]
     pub committed_offset: i64,
     /// The leader epoch of the last consumed record.
-    #[kafka(versions = "2+", nullable_versions = "2+", default = -1)]
+    #[kafka(versions = "2+", default = -1)]
     pub committed_leader_epoch: i32,
     /// Any associated metadata the client wants to keep.
     #[kafka(versions = "0+", nullable_versions = "0+")]

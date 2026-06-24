@@ -18,7 +18,7 @@ pub struct DescribeShareGroupOffsetsResponsePartition {
     #[kafka(versions = "0+")]
     pub leader_epoch: i32,
     /// The share-partition lag.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub lag: i64,
     /// The partition-level error code, or 0 if there was no error.
     #[kafka(versions = "0+")]

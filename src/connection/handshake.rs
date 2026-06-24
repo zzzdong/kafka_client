@@ -21,8 +21,8 @@ impl Handshake {
         client_version: String,
     ) -> Result<NegotiatedVersions> {
         let request = protocol::ApiVersionsRequest {
-            client_software_name: Some(client_name),
-            client_software_version: Some(client_version),
+            client_software_name: client_name,
+            client_software_version: client_version,
         };
 
         let response: protocol::ApiVersionsResponse = conn.send_request(&request).await?;
@@ -37,13 +37,8 @@ impl Handshake {
         let mut negotiated = NegotiatedVersions::new();
         for api in response.api_keys {
             if let Some((client_min, client_max)) = protocol::get_version_range(api.api_key) {
-                let mut version = api.max_version.min(client_max);
-                // Avoid flexible versions for stability
-                if let Some(flex) = protocol::get_flexible_version(api.api_key) {
-                    if version >= flex {
-                        version = flex - 1;
-                    }
-                }
+                let version = api.max_version.min(client_max);
+
                 if version >= api.min_version && version >= client_min {
                     negotiated.set_version(api.api_key, version);
                     debug!(

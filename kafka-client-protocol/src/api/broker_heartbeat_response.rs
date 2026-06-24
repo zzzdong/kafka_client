@@ -10,7 +10,7 @@ use uuid::Uuid;
 #[kafka(
     api_key = 63,
     msg_type = "response",
-    valid_versions = "0-1",
+    valid_versions = "0-2",
     flexible_versions = "0+"
 )]
 pub struct BrokerHeartbeatResponse {

@@ -24,6 +24,6 @@ pub struct SaslAuthenticateResponse {
     #[kafka(versions = "0+")]
     pub auth_bytes: Bytes,
     /// Number of milliseconds after which only re-authentication over the existing connection to create a new session can occur.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = 0)]
+    #[kafka(versions = "1+", default = 0)]
     pub session_lifetime_ms: i64,
 }

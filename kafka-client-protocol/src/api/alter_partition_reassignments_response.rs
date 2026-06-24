@@ -41,7 +41,7 @@ pub struct AlterPartitionReassignmentsResponse {
     #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// The option indicating whether changing the replication factor of any given partition as part of the request was allowed.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = true)]
+    #[kafka(versions = "1+", default = true)]
     pub allow_replication_factor_change: bool,
     /// The top-level error code, or 0 if there was no error.
     #[kafka(versions = "0+")]

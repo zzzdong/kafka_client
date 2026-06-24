@@ -76,7 +76,7 @@ pub struct ShareAcknowledgeResponse {
     #[kafka(versions = "0+", nullable_versions = "0+", default = None)]
     pub error_message: Option<String>,
     /// The time in milliseconds for which the acquired records are locked.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
+    #[kafka(versions = "2+")]
     pub acquisition_lock_timeout_ms: i32,
     /// The response topics.
     #[kafka(versions = "0+")]

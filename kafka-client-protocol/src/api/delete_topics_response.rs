@@ -12,8 +12,8 @@ pub struct DeletableTopicResult {
     #[kafka(versions = "0+", nullable_versions = "6+", map_key)]
     pub name: Option<String>,
     /// The unique topic ID.
-    #[kafka(versions = "6+", nullable_versions = "6+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "6+")]
+    pub topic_id: Uuid,
     /// The deletion error, or 0 if the deletion succeeded.
     #[kafka(versions = "0+")]
     pub error_code: i16,
@@ -31,7 +31,7 @@ pub struct DeletableTopicResult {
 )]
 pub struct DeleteTopicsResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// The results for each topic we tried to delete.
     #[kafka(versions = "0+")]

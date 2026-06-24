@@ -38,7 +38,7 @@ pub struct OffsetDeleteResponse {
     #[kafka(versions = "0+")]
     pub error_code: i16,
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
+    #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// The responses for each topic.
     #[kafka(versions = "0+")]

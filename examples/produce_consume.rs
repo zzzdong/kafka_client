@@ -119,8 +119,7 @@ async fn main() {
         eprintln!("WARNING: Topic '{}' not found in metadata", topic);
     }
 
-    // Produce messages
-    println!("\n[4] Producing messages...");
+    // Create producer config (will be used later)
     let producer_config = ProducerConfig {
         acks: 1,
         timeout_ms: 5000,
@@ -138,26 +137,10 @@ async fn main() {
         }
     };
 
-    for i in 0..3 {
-        let record = ProducerRecord::new(&topic, Bytes::from(format!("message-{}", i)))
-            .with_key(Bytes::from(format!("key-{}", i)));
-
-        match producer.send(record).await {
-            Ok(meta) => println!(
-                "  Sent to partition {} at offset {}",
-                meta.partition, meta.offset
-            ),
-            Err(e) => eprintln!("  ERROR: Failed to send message {}: {}", i, e),
-        }
-    }
-
-    producer.flush().await.expect("Failed to flush producer");
-    println!("All messages flushed.");
-
-    // Consume messages
-    println!("\n[5] Consuming messages...");
+    // Consume messages — start before producing
+    println!("\n[4] Consuming messages...");
     let consumer_config = ConsumerConfig {
-        group_id: "example-consumer-group".to_string(), // Valid group ID
+        group_id: "example-consumer-group".to_string(),
         auto_commit: true,
         auto_commit_interval_ms: 1000,
         auto_offset_reset: AutoOffsetReset::Earliest,
@@ -181,34 +164,60 @@ async fn main() {
         }
     }
 
-    // Wait for group assignment
-    println!("Waiting for consumer group assignment...");
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    // Poll for messages
-    let mut records = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-
-    while records.len() < 3 && std::time::Instant::now() < deadline {
-        match consumer.poll(3000).await {
-            Ok(recs) => {
-                for r in recs {
-                    println!(
-                        "  Received: partition={}, offset={}, key={:?}, value={}",
-                        r.partition,
-                        r.offset,
-                        r.key
-                            .as_ref()
-                            .map(|k| String::from_utf8_lossy(k).to_string()),
-                        String::from_utf8_lossy(&r.value)
-                    );
-                    records.push(r);
+    // Start polling in background before producing
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_clone = received.clone();
+    let poll_handle = tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            match consumer.poll(2000).await {
+                Ok(recs) => {
+                    let mut guard = received_clone.lock().unwrap();
+                    for r in recs {
+                        println!(
+                            "  Received: partition={}, offset={}, key={:?}, value={}",
+                            r.partition,
+                            r.offset,
+                            r.key
+                                .as_ref()
+                                .map(|k| String::from_utf8_lossy(k).to_string()),
+                            String::from_utf8_lossy(&r.value)
+                        );
+                        guard.push(r);
+                    }
+                    if guard.len() >= 3 {
+                        break;
+                    }
                 }
+                Err(e) => eprintln!("  WARNING: Poll error: {}", e),
             }
-            Err(e) => eprintln!("  WARNING: Poll error: {}", e),
+        }
+    });
+
+    // Wait for consumer group assignment
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    // Now produce — consumer is already listening
+    println!("\n[5] Producing messages...");
+    for i in 0..3 {
+        let record = ProducerRecord::new(&topic, Bytes::from(format!("message-{}", i)))
+            .with_key(Bytes::from(format!("key-{}", i)));
+
+        match producer.send(record).await {
+            Ok(meta) => println!(
+                "  Sent to partition {} at offset {}",
+                meta.partition, meta.offset
+            ),
+            Err(e) => eprintln!("  ERROR: Failed to send message {}: {}", i, e),
         }
     }
 
+    producer.flush().await.expect("Failed to flush producer");
+    println!("All messages flushed.");
+
+    // Wait for consumer to finish
+    poll_handle.await.ok();
+    let records = received.lock().unwrap();
     println!("\nConsumed {} messages total", records.len());
 
     // Clean shutdown

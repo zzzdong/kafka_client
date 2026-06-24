@@ -65,9 +65,9 @@ pub struct BrokerRegistrationRequest {
     #[kafka(versions = "1+", default = false)]
     pub is_migrating_zk_broker: bool,
     /// Log directories configured in this broker which are available.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
-    pub log_dirs: Option<Vec<Uuid>>,
+    #[kafka(versions = "2+")]
+    pub log_dirs: Vec<Uuid>,
     /// The epoch before a clean shutdown.
-    #[kafka(versions = "3+", nullable_versions = "3+", default = -1)]
+    #[kafka(versions = "3+", default = -1)]
     pub previous_broker_epoch: i64,
 }

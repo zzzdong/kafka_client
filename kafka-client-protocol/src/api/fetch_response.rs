@@ -58,10 +58,10 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub high_watermark: i64,
     /// The last stable offset (or LSO) of the partition. This is the last offset such that the state of all transactional records prior to this offset have been decided (ABORTED or COMMITTED).
-    #[kafka(versions = "4+", nullable_versions = "4+", default = -1)]
+    #[kafka(versions = "4+", default = -1)]
     pub last_stable_offset: i64,
     /// The current log start offset.
-    #[kafka(versions = "5+", nullable_versions = "5+", default = -1)]
+    #[kafka(versions = "5+", default = -1)]
     pub log_start_offset: i64,
     /// In case divergence is detected based on the `LastFetchedEpoch` and `FetchOffset` in the request, this field indicates the largest epoch and its end offset such that subsequent records are known to diverge.
     #[kafka(versions = "12+", tag = 0, tagged_versions = "12+")]
@@ -86,11 +86,11 @@ pub struct PartitionData {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct FetchableTopicResponse {
     /// The topic name.
-    #[kafka(versions = "0-12", nullable_versions = "0-12")]
-    pub topic: Option<String>,
+    #[kafka(versions = "0-12")]
+    pub topic: String,
     /// The unique topic ID.
-    #[kafka(versions = "13+", nullable_versions = "13+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "13+")]
+    pub topic_id: Uuid,
     /// The topic partitions.
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,
@@ -121,10 +121,10 @@ pub struct NodeEndpoint {
 )]
 pub struct FetchResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// The top level response error code.
-    #[kafka(versions = "7+", nullable_versions = "7+")]
+    #[kafka(versions = "7+")]
     pub error_code: i16,
     /// The fetch session ID, or 0 if this is not part of a fetch session.
     #[kafka(versions = "7+", default = 0)]

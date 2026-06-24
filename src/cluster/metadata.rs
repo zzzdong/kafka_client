@@ -28,6 +28,7 @@ struct CachedMetadata {
     controller_id: Option<i32>,
     brokers: HashMap<i32, MetadataResponseBroker>,
     topics: HashMap<String, MetadataResponseTopic>,
+    topic_ids: HashMap<uuid::Uuid, String>, // topic_id → topic_name
     broker_addresses: HashMap<String, i32>,
     broker_sockets: HashMap<i32, SocketAddr>,
 }
@@ -40,6 +41,7 @@ impl CachedMetadata {
             controller_id: None,
             brokers: HashMap::new(),
             topics: HashMap::new(),
+            topic_ids: HashMap::new(),
             broker_addresses: HashMap::new(),
             broker_sockets: HashMap::new(),
         }
@@ -67,9 +69,16 @@ impl CachedMetadata {
 
         // Update topics
         self.topics.clear();
+        self.topic_ids.clear();
         for topic in response.topics {
-            if let Some(name) = topic.name.clone() {
-                self.topics.insert(name, topic);
+            let topic_id = topic.topic_id;
+            let topic_name = topic.name.clone();
+            if let Some(name) = topic_name {
+                self.topics.insert(name, topic.clone());
+            }
+            if !topic_id.is_nil() {
+                self.topic_ids
+                    .insert(topic_id, topic.name.unwrap_or_default());
             }
         }
 
@@ -174,6 +183,11 @@ impl MetadataCache {
     pub async fn get_topic(&self, name: &str) -> Option<MetadataResponseTopic> {
         let inner = self.inner.read().await;
         inner.topics.get(name).cloned()
+    }
+
+    pub async fn get_topic_name_by_id(&self, topic_id: uuid::Uuid) -> Option<String> {
+        let inner = self.inner.read().await;
+        inner.topic_ids.get(&topic_id).cloned()
     }
 
     pub async fn get_all_brokers(&self) -> Vec<MetadataResponseBroker> {

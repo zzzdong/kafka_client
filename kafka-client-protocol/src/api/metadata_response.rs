@@ -34,7 +34,7 @@ pub struct MetadataResponsePartition {
     #[kafka(versions = "0+")]
     pub leader_id: i32,
     /// The leader epoch of this partition.
-    #[kafka(versions = "7+", nullable_versions = "7+", default = -1)]
+    #[kafka(versions = "7+", default = -1)]
     pub leader_epoch: i32,
     /// The set of all nodes that host this partition.
     #[kafka(versions = "0+")]
@@ -43,8 +43,8 @@ pub struct MetadataResponsePartition {
     #[kafka(versions = "0+")]
     pub isr_nodes: Vec<i32>,
     /// The set of offline replicas of this partition.
-    #[kafka(versions = "5+", nullable_versions = "5+")]
-    pub offline_replicas: Option<Vec<i32>>,
+    #[kafka(versions = "5+")]
+    pub offline_replicas: Vec<i32>,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -56,10 +56,10 @@ pub struct MetadataResponseTopic {
     #[kafka(versions = "0+", nullable_versions = "12+", map_key)]
     pub name: Option<String>,
     /// The topic id. Zero for non-existing topics queried by name. This is never zero when ErrorCode is zero. One of Name and TopicId is always populated.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// True if the topic is internal.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = false)]
+    #[kafka(versions = "1+", default = false)]
     pub is_internal: bool,
     /// Each partition in the topic.
     #[kafka(versions = "0+")]
@@ -78,7 +78,7 @@ pub struct MetadataResponseTopic {
 )]
 pub struct MetadataResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
+    #[kafka(versions = "3+")]
     pub throttle_time_ms: i32,
     /// A list of brokers present in the cluster.
     #[kafka(versions = "0+")]
@@ -87,7 +87,7 @@ pub struct MetadataResponse {
     #[kafka(versions = "2+", nullable_versions = "2+", default = None)]
     pub cluster_id: Option<String>,
     /// The ID of the controller broker.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub controller_id: i32,
     /// Each topic in the response.
     #[kafka(versions = "0+")]
@@ -96,6 +96,6 @@ pub struct MetadataResponse {
     #[kafka(versions = "8-10", default = -2147483648)]
     pub cluster_authorized_operations: i32,
     /// The top-level error code, or 0 if there was no error.
-    #[kafka(versions = "13+", nullable_versions = "13+")]
+    #[kafka(versions = "13+")]
     pub error_code: i16,
 }

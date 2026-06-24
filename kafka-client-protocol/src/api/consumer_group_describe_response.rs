@@ -59,7 +59,7 @@ pub struct Member {
     #[kafka(versions = "0+")]
     pub target_assignment: Assignment,
     /// -1 for unknown. 0 for classic member. +1 for consumer member.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub member_type: i8,
 }
 

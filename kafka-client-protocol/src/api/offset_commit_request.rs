@@ -15,7 +15,7 @@ pub struct OffsetCommitRequestPartition {
     #[kafka(versions = "0+")]
     pub committed_offset: i64,
     /// The leader epoch of this partition.
-    #[kafka(versions = "6+", nullable_versions = "6+", default = -1)]
+    #[kafka(versions = "6+", default = -1)]
     pub committed_leader_epoch: i32,
     /// Any associated metadata the client wants to keep.
     #[kafka(versions = "0+", nullable_versions = "0+")]
@@ -25,11 +25,11 @@ pub struct OffsetCommitRequestPartition {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetCommitRequestTopic {
     /// The topic name.
-    #[kafka(versions = "0-9", nullable_versions = "0-9")]
-    pub name: Option<String>,
+    #[kafka(versions = "0-9")]
+    pub name: String,
     /// The topic ID.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// Each partition to commit offsets for.
     #[kafka(versions = "0+")]
     pub partitions: Vec<OffsetCommitRequestPartition>,
@@ -47,16 +47,16 @@ pub struct OffsetCommitRequest {
     #[kafka(versions = "0+")]
     pub group_id: String,
     /// The generation of the group if using the classic group protocol or the member epoch if using the consumer protocol.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = -1)]
+    #[kafka(versions = "1+", default = -1)]
     pub generation_id_or_member_epoch: i32,
     /// The member ID assigned by the group coordinator.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub member_id: Option<String>,
+    #[kafka(versions = "1+")]
+    pub member_id: String,
     /// The unique identifier of the consumer instance provided by end user.
     #[kafka(versions = "7+", nullable_versions = "7+", default = None)]
     pub group_instance_id: Option<String>,
     /// The time period in ms to retain the offset.
-    #[kafka(versions = "2-4", nullable_versions = "2-4", default = -1)]
+    #[kafka(versions = "2-4", default = -1)]
     pub retention_time_ms: i64,
     /// The topics to commit offsets for.
     #[kafka(versions = "0+")]

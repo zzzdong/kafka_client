@@ -4,17 +4,6 @@ use crate::version_range::VersionRange;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// 判断字段是否应该使用 flexible format
-fn should_use_flexible(field: &FieldInfo, flexible_version: Option<i16>) -> bool {
-    if field.tagged_versions.is_some() {
-        return true;
-    }
-    match flexible_version {
-        Some(v) => field.versions.min_version() >= v,
-        None => false,
-    }
-}
-
 /// 生成 size 方法
 pub fn generate_size(fields: &[FieldInfo], flexible_version: Option<i16>) -> TokenStream {
     let size_fields: Vec<TokenStream> = fields
@@ -23,29 +12,34 @@ pub fn generate_size(fields: &[FieldInfo], flexible_version: Option<i16>) -> Tok
         .collect();
 
     quote! {
-        fn size(&self, version: i16) -> usize {
+        fn size(&self, version: i16, is_flexible: bool) -> usize {
             use kafka_client_protocol_core::codec::*;
 
             let mut total = 0;
             #(#size_fields)*
+
+            // 灵活版本：空的 tagged fields 占 1 byte (varint 0)
+            if is_flexible {
+                total += 1;
+            }
+
             total
         }
     }
 }
 
 /// 生成单个字段的大小计算
-fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
+fn generate_size_field(field: &FieldInfo, _flexible_version: Option<i16>) -> TokenStream {
     let field_name = &field.name;
     let condition = field.versions.as_check_expr();
-    let use_flexible = should_use_flexible(field, flexible_version);
 
     // 标签字段
     if field.tagged_versions.is_some() {
         return quote! {
             if #condition {
                 if !self.#field_name.is_default() {
-                    total += varint_len(self.#field_name.size(version) as u32 + 1);
-                    total += self.#field_name.size(version);
+                    total += varint_len(self.#field_name.size(version, is_flexible) as u32 + 1);
+                    total += self.#field_name.size(version, is_flexible);
                 }
             }
         };
@@ -60,13 +54,13 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
             return quote! {
                 if #condition {
                     if #null_condition && self.#field_name.is_none() {
-                        if #use_flexible {
+                        if is_flexible {
                             total += 1; // varint(0)
                         } else {
                             total += 4; // -1
                         }
                     } else {
-                        total += self.#field_name.size(version);
+                        total += self.#field_name.size(version, is_flexible);
                     }
                 }
             };
@@ -75,7 +69,7 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
             // 不需要 is_none 检查，直接计算大小
             return quote! {
                 if #condition {
-                    total += self.#field_name.size(version);
+                    total += self.#field_name.size(version, is_flexible);
                 }
             };
         }
@@ -83,11 +77,11 @@ fn generate_size_field(field: &FieldInfo, flexible_version: Option<i16>) -> Toke
 
     // 普通字段
     if field.versions == VersionRange::All {
-        quote! { total += self.#field_name.size(version); }
+        quote! { total += self.#field_name.size(version, is_flexible); }
     } else {
         quote! {
             if #condition {
-                total += self.#field_name.size(version);
+                total += self.#field_name.size(version, is_flexible);
             }
         }
     }

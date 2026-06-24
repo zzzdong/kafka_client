@@ -28,11 +28,11 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub leader_epoch: i32,
     /// A sorted list of preferred successors to start the election.
-    #[kafka(versions = "0", nullable_versions = "0")]
-    pub preferred_successors: Option<Vec<i32>>,
+    #[kafka(versions = "0")]
+    pub preferred_successors: Vec<i32>,
     /// A sorted list of preferred candidates to start the election.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub preferred_candidates: Option<Vec<ReplicaInfo>>,
+    #[kafka(versions = "1+")]
+    pub preferred_candidates: Vec<ReplicaInfo>,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
@@ -73,6 +73,6 @@ pub struct EndQuorumEpochRequest {
     #[kafka(versions = "0+")]
     pub topics: Vec<TopicData>,
     /// Endpoints for the leader.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
-    pub leader_endpoints: Option<Vec<LeaderEndpoint>>,
+    #[kafka(versions = "1+")]
+    pub leader_endpoints: Vec<LeaderEndpoint>,
 }

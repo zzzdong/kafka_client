@@ -21,9 +21,9 @@ pub struct EndTxnResponse {
     #[kafka(versions = "0+")]
     pub error_code: i16,
     /// The producer ID.
-    #[kafka(versions = "5+", nullable_versions = "5+", default = -1)]
+    #[kafka(versions = "5+", default = -1)]
     pub producer_id: i64,
     /// The current epoch associated with the producer.
-    #[kafka(versions = "5+", nullable_versions = "5+", default = -1)]
+    #[kafka(versions = "5+", default = -1)]
     pub producer_epoch: i16,
 }

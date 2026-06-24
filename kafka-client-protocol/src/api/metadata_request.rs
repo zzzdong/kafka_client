@@ -9,8 +9,8 @@ use uuid::Uuid;
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct MetadataRequestTopic {
     /// The topic id.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// The topic name.
     #[kafka(versions = "0+", nullable_versions = "10+")]
     pub name: Option<String>,

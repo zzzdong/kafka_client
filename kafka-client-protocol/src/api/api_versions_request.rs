@@ -15,9 +15,9 @@ use uuid::Uuid;
 )]
 pub struct ApiVersionsRequest {
     /// The name of the client.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
-    pub client_software_name: Option<String>,
+    #[kafka(versions = "3+")]
+    pub client_software_name: String,
     /// The version of the client.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
-    pub client_software_version: Option<String>,
+    #[kafka(versions = "3+")]
+    pub client_software_version: String,
 }

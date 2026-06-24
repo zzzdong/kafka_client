@@ -37,7 +37,7 @@ pub struct Coordinator {
 )]
 pub struct FindCoordinatorResponse {
     /// The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota.
-    #[kafka(versions = "1+", nullable_versions = "1+")]
+    #[kafka(versions = "1+")]
     pub throttle_time_ms: i32,
     /// The error code, or 0 if there was no error.
     #[kafka(versions = "0-3")]

@@ -44,18 +44,21 @@ pub struct DescribeLogDirsResult {
     #[kafka(versions = "0+")]
     pub topics: Vec<DescribeLogDirsTopic>,
     /// The total size in bytes of the volume the log directory is in. This value does not include the size of data stored in remote storage.
-    #[kafka(versions = "4+", nullable_versions = "4+", default = -1)]
+    #[kafka(versions = "4+", default = -1)]
     pub total_bytes: i64,
     /// The usable size in bytes of the volume the log directory is in. This value does not include the size of data stored in remote storage.
-    #[kafka(versions = "4+", nullable_versions = "4+", default = -1)]
+    #[kafka(versions = "4+", default = -1)]
     pub usable_bytes: i64,
+    /// True if this log directory is cordoned.
+    #[kafka(versions = "5+", default = false)]
+    pub is_cordoned: bool,
 }
 
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 #[kafka(
     api_key = 35,
     msg_type = "response",
-    valid_versions = "1-4",
+    valid_versions = "1-5",
     flexible_versions = "2+"
 )]
 pub struct DescribeLogDirsResponse {
@@ -63,7 +66,7 @@ pub struct DescribeLogDirsResponse {
     #[kafka(versions = "0+")]
     pub throttle_time_ms: i32,
     /// The error code, or 0 if there was no error.
-    #[kafka(versions = "3+", nullable_versions = "3+")]
+    #[kafka(versions = "3+")]
     pub error_code: i16,
     /// The log directories.
     #[kafka(versions = "0+")]

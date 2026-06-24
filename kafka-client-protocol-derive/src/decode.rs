@@ -13,36 +13,22 @@ pub fn generate_decode(fields: &[FieldInfo], flexible_version: Option<i16>) -> T
 
     let field_names: Vec<_> = fields.iter().map(|f| &f.name).collect();
 
-    let tag_buffer = match flexible_version {
-        Some(v) => quote! {
-            if version >= #v {
-                let _ = ::kafka_client_protocol_core::header::decode_tagged_fields(buf)?;
-            }
-        },
-        None => quote! {},
-    };
-
     quote! {
-        fn decode(buf: &mut ::bytes::Bytes, version: i16) -> kafka_client_protocol_core::ProtocolResult<Self> {
+        fn decode(buf: &mut ::bytes::Bytes, version: i16, is_flexible: bool) -> kafka_client_protocol_core::ProtocolResult<Self> {
             use kafka_client_protocol_core::codec::*;
             use ::bytes::Buf;
 
             #(#decode_fields)*
 
-            #tag_buffer
+            // 灵活版本：跳过 tagged fields
+            if is_flexible {
+                let _ = ::kafka_client_protocol_core::header::decode_tagged_fields(buf)?;
+            }
 
             Ok(Self {
                 #(#field_names,)*
             })
         }
-    }
-}
-
-/// 生成运行时版本是否使用 flexible 格式的检查表达式
-fn flexible_check(flexible_version: Option<i16>) -> TokenStream {
-    match flexible_version {
-        Some(v) => quote! { version >= #v },
-        None => quote! { false },
     }
 }
 
@@ -87,8 +73,19 @@ fn generate_decode_field(field: &FieldInfo, flexible_version: Option<i16>) -> To
     let field_name = &field.name;
     let condition = field.versions.as_check_expr();
     let default_expr = generate_default_value(field);
-    #[allow(unused_variables)]
-    let is_flex = flexible_check(flexible_version);
+
+    // Tagged fields are NOT decoded inline — they appear in the tagged section
+    // at the end of the struct in compact format. Use default value for inline decode.
+    if field.tagged_versions.is_some() {
+        return quote! {
+            let #field_name = if #condition && !is_flexible {
+                // Non-flexible: tagged fields are inlined
+                #default_expr
+            } else {
+                #default_expr
+            };
+        };
+    }
 
     let decode_body = generate_decode_body(field, flexible_version);
 
@@ -119,7 +116,7 @@ fn is_record_batch_type(ty: &syn::Type) -> bool {
 
 /// 生成字段解码体
 fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
-    let is_flex = flexible_check(flexible_version);
+    let is_flex = quote! { is_flexible };
 
     // Option<RecordBatch> 特殊处理：按 nullable bytes 读取长度后再解码
     if field.is_option() {
@@ -135,7 +132,7 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                                     None
                                 } else {
                                     let mut batch_buf = buf.split_to((len - 1) as usize);
-                                    Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version)?)
+                                    Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version, is_flexible)?)
                                 }
                             } else {
                                 if buf.remaining() < 4 {
@@ -146,7 +143,7 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                                     None
                                 } else {
                                     let mut batch_buf = buf.split_to(len as usize);
-                                    Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version)?)
+                                    Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version, is_flexible)?)
                                 }
                             }
                         } else {
@@ -160,7 +157,7 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
                                 }
                                 buf.split_to(len as usize)
                             };
-                            Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version)?)
+                            Some(<::kafka_client_protocol_core::RecordBatch as ::kafka_client_protocol_core::Message>::decode(&mut batch_buf, version, is_flexible)?)
                         }
                     };
                 }
@@ -177,8 +174,15 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
             return quote! {
                 if #null_condition {
                     if #is_flex {
-                        let len = decode_unsigned_varint(buf);
-                        if len == 0 {
+                        // Compact nullable: varint(0) = null (0x00 byte).
+                        // Peek first byte: 0x00 → null; otherwise pass through.
+                        if buf.is_empty() {
+                            return Err(
+                                ::kafka_client_protocol_core::ProtocolError::insufficient_data(1, 0)
+                            );
+                        }
+                        if buf[0] == 0 {
+                            buf.advance(1);
                             None
                         } else {
                             Some(#inner_decode)
@@ -209,9 +213,9 @@ fn generate_decode_body(field: &FieldInfo, flexible_version: Option<i16>) -> Tok
 }
 
 /// 生成内部类型的解码体
-fn generate_decode_body_inner(field: &FieldInfo, flexible_version: Option<i16>) -> TokenStream {
+fn generate_decode_body_inner(field: &FieldInfo, _flexible_version: Option<i16>) -> TokenStream {
     let ty = &field.ty;
-    let is_flex = flexible_check(flexible_version);
+    let is_flex = quote! { is_flexible };
 
     // 移除可能的 Option 包装
     let inner_ty = if let Some(inner) = FieldInfo::extract_option_inner(ty) {
@@ -224,9 +228,9 @@ fn generate_decode_body_inner(field: &FieldInfo, flexible_version: Option<i16>) 
     if let Some(vec_inner_ty) = FieldInfo::extract_vec_inner(&inner_ty) {
         quote! {
             if #is_flex {
-                decode_compact_array(buf, |b| <#vec_inner_ty as ::kafka_client_protocol_core::Message>::decode(b, version))?
+                decode_compact_array(buf, |b| <#vec_inner_ty as ::kafka_client_protocol_core::Message>::decode(b, version, is_flexible))?
             } else {
-                decode_array(buf, |b| <#vec_inner_ty as ::kafka_client_protocol_core::Message>::decode(b, version))?
+                decode_array(buf, |b| <#vec_inner_ty as ::kafka_client_protocol_core::Message>::decode(b, version, is_flexible))?
             }
         }
     } else {
@@ -271,11 +275,11 @@ fn generate_decode_body_inner(field: &FieldInfo, flexible_version: Option<i16>) 
         } else if inner_ty_str == "f64" {
             quote! { buf.get_f64() }
         } else if inner_ty_str == "Uuid" {
-            quote! { <uuid::Uuid as ::kafka_client_protocol_core::Message>::decode(buf, version)? }
+            quote! { <uuid::Uuid as ::kafka_client_protocol_core::Message>::decode(buf, version, is_flexible)? }
         } else {
             // 将字符串转换为 Ident
             let type_ident = syn::Ident::new(&inner_ty_str, proc_macro2::Span::call_site());
-            quote! { <#type_ident as ::kafka_client_protocol_core::Message>::decode(buf, version)? }
+            quote! { <#type_ident as ::kafka_client_protocol_core::Message>::decode(buf, version, is_flexible)? }
         }
     }
 }

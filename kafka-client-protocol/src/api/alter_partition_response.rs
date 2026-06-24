@@ -24,7 +24,7 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub isr: Vec<i32>,
     /// 1 if the partition is recovering from an unclean leader election; 0 otherwise.
-    #[kafka(versions = "1+", nullable_versions = "1+", default = 0)]
+    #[kafka(versions = "1+", default = 0)]
     pub leader_recovery_state: i8,
     /// The current epoch for the partition for KRaft controllers.
     #[kafka(versions = "0+")]
@@ -34,8 +34,8 @@ pub struct PartitionData {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicData {
     /// The ID of the topic.
-    #[kafka(versions = "2+", nullable_versions = "2+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "2+")]
+    pub topic_id: Uuid,
     /// The responses for each partition.
     #[kafka(versions = "0+")]
     pub partitions: Vec<PartitionData>,

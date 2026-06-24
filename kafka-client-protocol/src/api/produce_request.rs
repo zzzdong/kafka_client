@@ -19,11 +19,11 @@ pub struct PartitionProduceData {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct TopicProduceData {
     /// The topic name.
-    #[kafka(versions = "0-12", nullable_versions = "0-12", map_key)]
-    pub name: Option<String>,
+    #[kafka(versions = "0-12", map_key)]
+    pub name: String,
     /// The unique topic ID
-    #[kafka(versions = "13+", nullable_versions = "13+", map_key)]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "13+", map_key)]
+    pub topic_id: Uuid,
     /// Each partition to produce to.
     #[kafka(versions = "0+")]
     pub partition_data: Vec<PartitionProduceData>,

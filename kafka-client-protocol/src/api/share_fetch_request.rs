@@ -85,7 +85,7 @@ pub struct ShareFetchRequest {
     #[kafka(versions = "1+")]
     pub batch_size: i32,
     /// The acquire mode to control the fetch behavior - 0:batch-optimized,1:record-limit.
-    #[kafka(versions = "2+", nullable_versions = "2+", default = 0)]
+    #[kafka(versions = "2+", default = 0)]
     pub share_acquire_mode: i8,
     /// Whether Renew type acknowledgements present in AcknowledgementBatches.
     #[kafka(versions = "2+", default = false)]

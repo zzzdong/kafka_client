@@ -19,11 +19,11 @@ pub struct OffsetFetchRequestTopic {
 #[derive(KafkaMessage, Debug, Clone, Default, PartialEq)]
 pub struct OffsetFetchRequestTopics {
     /// The topic name.
-    #[kafka(versions = "8-9", nullable_versions = "8-9")]
-    pub name: Option<String>,
+    #[kafka(versions = "8-9")]
+    pub name: String,
     /// The topic ID.
-    #[kafka(versions = "10+", nullable_versions = "10+")]
-    pub topic_id: Option<Uuid>,
+    #[kafka(versions = "10+")]
+    pub topic_id: Uuid,
     /// The partition indexes we would like to fetch offsets for.
     #[kafka(versions = "8+")]
     pub partition_indexes: Vec<i32>,
@@ -38,7 +38,7 @@ pub struct OffsetFetchRequestGroup {
     #[kafka(versions = "9+", nullable_versions = "9+", default = None)]
     pub member_id: Option<String>,
     /// The member epoch if using the new consumer protocol (KIP-848).
-    #[kafka(versions = "9+", nullable_versions = "9+", default = -1)]
+    #[kafka(versions = "9+", default = -1)]
     pub member_epoch: i32,
     /// Each topic we would like to fetch offsets for, or null to fetch offsets for all topics.
     #[kafka(versions = "8+", nullable_versions = "8+")]
