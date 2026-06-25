@@ -669,7 +669,7 @@ pub fn download_protocol_definitions(config: &DownloadConfig) -> Result<PathBuf,
         )));
     }
 
-    fs::create_dir_all(&proto_dir)?;
+    fs::create_dir_all(proto_dir)?;
 
     // 确定要下载的 API
     let apis_to_download: Vec<&ApiDefinition> = if let Some(ref api_names) = config.apis {

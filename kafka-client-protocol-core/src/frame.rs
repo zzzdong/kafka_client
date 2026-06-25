@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn test_encode_decode_raw_frame() {
         let data = b"hello world";
-        let mut frame = encode_raw_frame(data);
+        let frame = encode_raw_frame(data);
 
         let decoded = decode_raw_frame(&mut frame.freeze()).unwrap();
         assert_eq!(&decoded[..], data);

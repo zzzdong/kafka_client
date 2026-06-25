@@ -32,6 +32,8 @@ pub struct FieldInfo {
     pub map_key: bool,
     /// 字段说明
     pub about: Option<String>,
+    /// 字段在线格式中是 bytes 类型但映射为结构体（如 records: Option<RecordBatch>）
+    pub encoded_as_bytes: bool,
 }
 
 impl FieldInfo {
@@ -59,6 +61,7 @@ impl FieldInfo {
             default: state.default,
             map_key: state.map_key,
             about: state.about,
+            encoded_as_bytes: state.encoded_as_bytes,
         }
     }
 
@@ -299,6 +302,7 @@ struct FieldParseState {
     default: Option<String>,
     map_key: bool,
     about: Option<String>,
+    encoded_as_bytes: bool,
 }
 
 impl Default for FieldParseState {
@@ -312,6 +316,7 @@ impl Default for FieldParseState {
             default: None,
             map_key: false,
             about: None,
+            encoded_as_bytes: false,
         }
     }
 }
@@ -341,6 +346,8 @@ fn parse_kafka_attr(attr: &syn::Attribute, state: &mut FieldParseState) {
         } else if meta.path.is_ident("about") {
             let value: syn::LitStr = meta.value()?.parse()?;
             state.about = Some(value.value());
+        } else if meta.path.is_ident("encoded_as_bytes") {
+            state.encoded_as_bytes = true;
         }
         Ok(())
     })

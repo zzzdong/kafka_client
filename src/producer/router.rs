@@ -118,7 +118,7 @@ mod tests {
 
         for _ in 0..10 {
             let partition = router.select_partition(None, 3);
-            assert!(partition >= 0 && partition < 3);
+            assert!((0..3).contains(&partition));
         }
     }
 

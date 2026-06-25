@@ -29,24 +29,35 @@ macro_rules! impl_message_for_int {
                 None
             }
 
-            fn encode(
-                &self,
-                buf: &mut BytesMut,
-                _version: i16,
-                _is_flexible: bool,
-            ) -> ProtocolResult<()> {
+            fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
                 buf.$putter(*self);
                 Ok(())
             }
 
-            fn decode(buf: &mut Bytes, _version: i16, _is_flexible: bool) -> ProtocolResult<Self> {
+            fn flexible_encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+                buf.$putter(*self);
+                Ok(())
+            }
+
+            fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
                 if buf.remaining() < $size {
                     return Err(ProtocolError::insufficient_data($size, buf.remaining()));
                 }
                 Ok(buf.$getter())
             }
 
-            fn size(&self, _version: i16, _is_flexible: bool) -> usize {
+            fn flexible_decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+                if buf.remaining() < $size {
+                    return Err(ProtocolError::insufficient_data($size, buf.remaining()));
+                }
+                Ok(buf.$getter())
+            }
+
+            fn size(&self, _version: i16) -> usize {
+                $size
+            }
+
+            fn flexible_size(&self, _version: i16) -> usize {
                 $size
             }
         }
@@ -84,19 +95,35 @@ impl Message for bool {
         None
     }
 
-    fn encode(&self, buf: &mut BytesMut, _version: i16, _is_flexible: bool) -> ProtocolResult<()> {
+    fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
         buf.put_i8(if *self { 1 } else { 0 });
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, _version: i16, _is_flexible: bool) -> ProtocolResult<Self> {
+    fn flexible_encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        buf.put_i8(if *self { 1 } else { 0 });
+        Ok(())
+    }
+
+    fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
         if buf.remaining() < 1 {
             return Err(ProtocolError::insufficient_data(1, buf.remaining()));
         }
         Ok(buf.get_i8() != 0)
     }
 
-    fn size(&self, _version: i16, _is_flexible: bool) -> usize {
+    fn flexible_decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::insufficient_data(1, buf.remaining()));
+        }
+        Ok(buf.get_i8() != 0)
+    }
+
+    fn size(&self, _version: i16) -> usize {
+        1
+    }
+
+    fn flexible_size(&self, _version: i16) -> usize {
         1
     }
 }
@@ -122,29 +149,30 @@ impl Message for String {
         Some(9)
     }
 
-    fn encode(&self, buf: &mut BytesMut, _version: i16, is_flexible: bool) -> ProtocolResult<()> {
-        if is_flexible {
-            encode_compact_string(buf, self);
-        } else {
-            encode_string(buf, self);
-        }
+    fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        encode_string(buf, self);
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, _version: i16, is_flexible: bool) -> ProtocolResult<Self> {
-        if is_flexible {
-            decode_compact_string(buf)
-        } else {
-            decode_string(buf)
-        }
+    fn flexible_encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        encode_compact_string(buf, self);
+        Ok(())
     }
 
-    fn size(&self, _version: i16, is_flexible: bool) -> usize {
-        if is_flexible {
-            compact_string_size(self)
-        } else {
-            string_size(self)
-        }
+    fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        decode_string(buf)
+    }
+
+    fn flexible_decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        decode_compact_string(buf)
+    }
+
+    fn size(&self, _version: i16) -> usize {
+        string_size(self)
+    }
+
+    fn flexible_size(&self, _version: i16) -> usize {
+        compact_string_size(self)
     }
 }
 
@@ -169,29 +197,30 @@ impl Message for Bytes {
         Some(9)
     }
 
-    fn encode(&self, buf: &mut BytesMut, _version: i16, is_flexible: bool) -> ProtocolResult<()> {
-        if is_flexible {
-            encode_compact_bytes(buf, self);
-        } else {
-            encode_bytes(buf, self);
-        }
+    fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        encode_bytes(buf, self);
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, _version: i16, is_flexible: bool) -> ProtocolResult<Self> {
-        if is_flexible {
-            decode_compact_bytes(buf)
-        } else {
-            decode_bytes(buf)
-        }
+    fn flexible_encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        encode_compact_bytes(buf, self);
+        Ok(())
     }
 
-    fn size(&self, _version: i16, is_flexible: bool) -> usize {
-        if is_flexible {
-            compact_bytes_size(self)
-        } else {
-            bytes_size(self)
-        }
+    fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        decode_bytes(buf)
+    }
+
+    fn flexible_decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        decode_compact_bytes(buf)
+    }
+
+    fn size(&self, _version: i16) -> usize {
+        bytes_size(self)
+    }
+
+    fn flexible_size(&self, _version: i16) -> usize {
+        compact_bytes_size(self)
     }
 }
 
@@ -216,70 +245,76 @@ impl<T: Message> Message for Option<T> {
         T::flexible_version()
     }
 
-    fn encode(&self, buf: &mut BytesMut, version: i16, is_flexible: bool) -> ProtocolResult<()> {
+    fn encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()> {
         match self {
-            Some(v) => v.encode(buf, version, is_flexible),
+            Some(v) => v.encode(buf, version),
             None => {
-                if is_flexible {
-                    encode_unsigned_varint(buf, 0);
-                } else {
-                    buf.put_i32(-1);
-                }
+                buf.put_i32(-1);
                 Ok(())
             }
         }
     }
 
-    fn decode(buf: &mut Bytes, version: i16, is_flexible: bool) -> ProtocolResult<Self> {
-        if is_flexible {
-            // Compact nullable encoding: varint(0) = null (single 0x00 byte).
-            // Non-null values always start with a non-zero varint byte.
-            // We can peek at the first byte without consuming it:
-            //   - 0x00 → null, consume 1 byte and return None
-            //   - otherwise → pass through to T::decode directly
-            if buf.is_empty() {
-                return Err(ProtocolError::insufficient_data(1, 0));
-            }
-            if buf[0] == 0 {
-                buf.advance(1);
-                return Ok(None);
-            }
-            let value = T::decode(buf, version, is_flexible)?;
-            Ok(Some(value))
-        } else {
-            if buf.remaining() < 4 {
-                return Err(ProtocolError::insufficient_data(4, buf.remaining()));
-            }
-            let len = buf.get_i32();
-            if len < 0 {
-                Ok(None)
-            } else {
-                let value = T::decode(buf, version, is_flexible)?;
-                Ok(Some(value))
+    fn flexible_encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()> {
+        match self {
+            Some(v) => v.flexible_encode(buf, version),
+            None => {
+                encode_unsigned_varint(buf, 0);
+                Ok(())
             }
         }
     }
 
-    fn size(&self, version: i16, is_flexible: bool) -> usize {
+    fn decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self> {
+        if buf.remaining() < 4 {
+            return Err(ProtocolError::insufficient_data(4, buf.remaining()));
+        }
+        let len = buf.get_i32();
+        if len < 0 {
+            Ok(None)
+        } else {
+            let value = T::decode(buf, version)?;
+            Ok(Some(value))
+        }
+    }
+
+    fn flexible_decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self> {
+        // Compact nullable encoding: varint(0) = null (single 0x00 byte).
+        // Non-null values always start with a non-zero varint byte.
+        // We can peek at the first byte without consuming it:
+        //   - 0x00 → null, consume 1 byte and return None
+        //   - otherwise → pass through to T::flexible_decode directly
+        if buf.is_empty() {
+            return Err(ProtocolError::insufficient_data(1, 0));
+        }
+        if buf[0] == 0 {
+            buf.advance(1);
+            return Ok(None);
+        }
+        let value = T::flexible_decode(buf, version)?;
+        Ok(Some(value))
+    }
+
+    fn size(&self, version: i16) -> usize {
         match self {
             Some(v) => {
-                let inner_size = v.size(version, is_flexible);
-                if is_flexible {
-                    // Need to add the varint prefix overhead that the encoder writes
-                    // In compact format, Option encodes as varint(inner_size + 1)
-                    varint_len((inner_size as u32) + 1) + inner_size
-                } else {
-                    // In standard format, Option has 4-byte null flag
-                    4 + inner_size
-                }
+                let inner_size = v.size(version);
+                // In standard format, Option has 4-byte null flag
+                4 + inner_size
             }
-            None => {
-                if is_flexible {
-                    1
-                } else {
-                    4
-                }
+            None => 4,
+        }
+    }
+
+    fn flexible_size(&self, version: i16) -> usize {
+        match self {
+            Some(v) => {
+                let inner_size = v.flexible_size(version);
+                // Need to add the varint prefix overhead that the encoder writes
+                // In compact format, Option encodes as varint(inner_size + 1)
+                varint_len((inner_size as u32) + 1) + inner_size
             }
+            None => 1,
         }
     }
 }
@@ -305,29 +340,30 @@ impl<T: Message> Message for Vec<T> {
         T::flexible_version()
     }
 
-    fn encode(&self, buf: &mut BytesMut, version: i16, is_flexible: bool) -> ProtocolResult<()> {
-        if is_flexible {
-            encode_compact_array(buf, self, |b, item| item.encode(b, version, is_flexible))?;
-        } else {
-            encode_array(buf, self, |b, item| item.encode(b, version, is_flexible))?;
-        }
+    fn encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()> {
+        encode_array(buf, self, |b, item| item.encode(b, version))?;
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, version: i16, is_flexible: bool) -> ProtocolResult<Self> {
-        if is_flexible {
-            decode_compact_array(buf, |b| T::decode(b, version, is_flexible))
-        } else {
-            decode_array(buf, |b| T::decode(b, version, is_flexible))
-        }
+    fn flexible_encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()> {
+        encode_compact_array(buf, self, |b, item| item.flexible_encode(b, version))?;
+        Ok(())
     }
 
-    fn size(&self, version: i16, is_flexible: bool) -> usize {
-        if is_flexible {
-            compact_array_size(self, |item| item.size(version, is_flexible))
-        } else {
-            array_size(self, |item| item.size(version, is_flexible))
-        }
+    fn decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self> {
+        decode_array(buf, |b| T::decode(b, version))
+    }
+
+    fn flexible_decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self> {
+        decode_compact_array(buf, |b| T::flexible_decode(b, version))
+    }
+
+    fn size(&self, version: i16) -> usize {
+        array_size(self, |item| item.size(version))
+    }
+
+    fn flexible_size(&self, version: i16) -> usize {
+        compact_array_size(self, |item| item.flexible_size(version))
     }
 }
 
@@ -352,12 +388,17 @@ impl Message for uuid::Uuid {
         None
     }
 
-    fn encode(&self, buf: &mut BytesMut, _version: i16, _is_flexible: bool) -> ProtocolResult<()> {
+    fn encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
         buf.put_slice(self.as_bytes());
         Ok(())
     }
 
-    fn decode(buf: &mut Bytes, _version: i16, _is_flexible: bool) -> ProtocolResult<Self> {
+    fn flexible_encode(&self, buf: &mut BytesMut, _version: i16) -> ProtocolResult<()> {
+        buf.put_slice(self.as_bytes());
+        Ok(())
+    }
+
+    fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
         if buf.remaining() < 16 {
             return Err(ProtocolError::insufficient_data(16, buf.remaining()));
         }
@@ -366,7 +407,20 @@ impl Message for uuid::Uuid {
         Ok(uuid::Uuid::from_bytes(bytes))
     }
 
-    fn size(&self, _version: i16, _is_flexible: bool) -> usize {
+    fn flexible_decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        if buf.remaining() < 16 {
+            return Err(ProtocolError::insufficient_data(16, buf.remaining()));
+        }
+        let mut bytes = [0u8; 16];
+        buf.copy_to_slice(&mut bytes);
+        Ok(uuid::Uuid::from_bytes(bytes))
+    }
+
+    fn size(&self, _version: i16) -> usize {
+        16
+    }
+
+    fn flexible_size(&self, _version: i16) -> usize {
         16
     }
 }

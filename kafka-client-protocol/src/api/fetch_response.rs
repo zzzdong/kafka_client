@@ -79,7 +79,7 @@ pub struct PartitionData {
     #[kafka(versions = "11+", default = -1)]
     pub preferred_read_replica: i32,
     /// The record data.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
+    #[kafka(versions = "0+", nullable_versions = "0+", encoded_as_bytes)]
     pub records: Option<RecordBatch>,
 }
 

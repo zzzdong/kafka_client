@@ -12,6 +12,7 @@ use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::error::{KafkaError, Result};
+use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{self as protocol, Request, Response};
 
@@ -22,6 +23,8 @@ pub struct ClusterConfig {
     pub security_protocol: SecurityProtocol,
     pub client_id: String,
     pub metadata_ttl: Duration,
+    /// SASL authentication credentials (None = no authentication)
+    pub sasl: Option<SaslCredentials>,
 }
 
 impl Default for ClusterConfig {
@@ -31,6 +34,7 @@ impl Default for ClusterConfig {
             security_protocol: SecurityProtocol::Plaintext,
             client_id: "rust-kafka-client".to_string(),
             metadata_ttl: Duration::from_secs(300),
+            sasl: None,
         }
     }
 }
@@ -57,6 +61,7 @@ impl ClusterClient {
             config.client_id.clone(),
             crate::NAME.to_string(),
             crate::VERSION.to_string(),
+            config.sasl.clone(),
         ));
 
         broker_manager.bootstrap().await.map_err(|e| {

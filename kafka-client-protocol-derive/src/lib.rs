@@ -56,6 +56,7 @@ pub fn kafka_message_derive(input: TokenStream) -> TokenStream {
     let mut msg_type = None;
     let mut valid_versions = VersionRange::All;
     let mut flexible_versions = None;
+    let mut flexible_versions_raw = String::new();
 
     for attr in &input.attrs {
         if attr.path().is_ident("kafka") {
@@ -65,6 +66,7 @@ pub fn kafka_message_derive(input: TokenStream) -> TokenStream {
                 &mut msg_type,
                 &mut valid_versions,
                 &mut flexible_versions,
+                &mut flexible_versions_raw,
             );
         }
     }
@@ -98,10 +100,14 @@ pub fn kafka_message_derive(input: TokenStream) -> TokenStream {
 
     let min_version = valid_versions.min_version();
     let max_version = valid_versions.max_version().unwrap_or(i16::MAX);
-    let flexible_version_impl = flexible_versions.map(|v| v.min_version());
-    let flexible_version_expr = match flexible_version_impl {
-        Some(v) => quote! { Some(#v) },
-        None => quote! { None },
+    // "none" 表示不支持 flexible，即使 parse 后 min_version=0
+    let flexible_version_expr = if flexible_versions_raw == "none" {
+        quote! { None }
+    } else if let Some(ref fv) = flexible_versions {
+        let v = fv.min_version();
+        quote! { Some(#v) }
+    } else {
+        quote! { None }
     };
 
     let type_name = name.to_string();
@@ -173,6 +179,7 @@ fn parse_struct_attr(
     msg_type: &mut Option<String>,
     valid_versions: &mut VersionRange,
     flexible_versions: &mut Option<VersionRange>,
+    flexible_versions_raw: &mut String,
 ) {
     attr.parse_nested_meta(|meta| {
         if meta.path.is_ident("api_key") {
@@ -186,7 +193,9 @@ fn parse_struct_attr(
             *valid_versions = VersionRange::parse(&value.value());
         } else if meta.path.is_ident("flexible_versions") {
             let value: syn::LitStr = meta.value()?.parse()?;
-            *flexible_versions = Some(VersionRange::parse(&value.value()));
+            let raw = value.value();
+            *flexible_versions_raw = raw.clone();
+            *flexible_versions = Some(VersionRange::parse(&raw));
         }
         Ok(())
     })

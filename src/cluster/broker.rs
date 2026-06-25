@@ -10,6 +10,7 @@ use tracing::{debug, warn};
 
 use crate::connection::{Builder, Connection};
 use crate::error::{KafkaError, Result};
+use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{ApiVersionsRequest, MetadataResponseBroker};
 
@@ -30,6 +31,7 @@ pub struct BrokerManager {
     client_id: String,
     client_name: String,
     client_version: String,
+    sasl: Option<SaslCredentials>,
     brokers: DashMap<i32, BrokerEntry>,
     addr_to_node: DashMap<SocketAddr, i32>,
     next_unknown_node_id: AtomicI32,
@@ -42,6 +44,7 @@ impl BrokerManager {
         client_id: String,
         client_name: String,
         client_version: String,
+        sasl: Option<SaslCredentials>,
     ) -> Self {
         Self {
             bootstrap_servers,
@@ -49,6 +52,7 @@ impl BrokerManager {
             client_id,
             client_name,
             client_version,
+            sasl,
             brokers: DashMap::new(),
             addr_to_node: DashMap::new(),
             next_unknown_node_id: AtomicI32::new(i32::MIN),
@@ -56,13 +60,17 @@ impl BrokerManager {
     }
 
     async fn connect_to_broker(&self, addr: SocketAddr) -> Result<Connection> {
-        let builder = Builder::new(
+        let mut builder = Builder::new(
             addr,
             self.security_protocol.clone(),
             self.client_name.clone(),
             self.client_version.clone(),
         )
         .with_client_id(self.client_id.clone());
+
+        if let Some(ref sasl) = self.sasl {
+            builder = builder.with_sasl(sasl.mechanism, sasl.clone());
+        }
 
         builder.build().await
     }

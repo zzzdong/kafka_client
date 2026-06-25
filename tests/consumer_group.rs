@@ -9,7 +9,7 @@
 mod common;
 
 use common::{KafkaInstance, consumer_config};
-use kafka_client::{AutoOffsetReset, Consumer};
+use kafka_client::AutoOffsetReset;
 use std::time::Duration;
 use tokio::time::sleep;
 

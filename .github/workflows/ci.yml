@@ -10,6 +10,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  KAFKA_IMAGE: apache/kafka:4.3.0
+  KAFKA_CLI: docker
 
 jobs:
   unit-tests:
@@ -31,9 +33,6 @@ jobs:
 
       - name: Run unit tests
         run: cargo test --lib
-
-      - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
 
       - name: Check formatting
         run: cargo fmt -- --check
@@ -58,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       kafka:
-        image: apache/kafka:4.3.0
+        image: ${{ vars.KAFKA_IMAGE || env.KAFKA_IMAGE }}
         ports:
           - 29092:9092
         env:

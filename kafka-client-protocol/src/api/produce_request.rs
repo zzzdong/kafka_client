@@ -12,7 +12,7 @@ pub struct PartitionProduceData {
     #[kafka(versions = "0+")]
     pub index: i32,
     /// The record data to be produced.
-    #[kafka(versions = "0+", nullable_versions = "0+")]
+    #[kafka(versions = "0+", nullable_versions = "0+", encoded_as_bytes)]
     pub records: Option<RecordBatch>,
 }
 

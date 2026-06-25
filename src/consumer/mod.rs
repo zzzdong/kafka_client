@@ -47,8 +47,8 @@ pub struct ConsumerConfig {
     pub group_id: String,
     /// Enable automatic offset commit at intervals
     pub auto_commit: bool,
-    /// Interval in milliseconds between automatic commits
-    pub auto_commit_interval_ms: u64,
+    /// Interval between automatic commits
+    pub auto_commit_interval: Duration,
     /// Offset reset strategy when no committed offset exists
     pub auto_offset_reset: AutoOffsetReset,
     /// Minimum bytes to wait for in fetch response
@@ -57,14 +57,14 @@ pub struct ConsumerConfig {
     pub max_bytes: i32,
     /// Maximum bytes per partition in fetch response
     pub partition_max_bytes: i32,
-    /// Maximum time in milliseconds to wait for fetch response
-    pub max_wait_ms: i32,
-    /// Session timeout in milliseconds for consumer group
-    pub session_timeout_ms: i32,
-    /// Rebalance timeout in milliseconds for consumer group
-    pub rebalance_timeout_ms: i32,
-    /// Interval in milliseconds between heartbeat requests
-    pub heartbeat_interval_ms: u64,
+    /// Maximum time to wait for fetch response
+    pub max_wait: Duration,
+    /// Session timeout for consumer group
+    pub session_timeout: Duration,
+    /// Rebalance timeout for consumer group
+    pub rebalance_timeout: Duration,
+    /// Interval between heartbeat requests
+    pub heartbeat_interval: Duration,
     /// Strategy for partition assignment among group members
     pub partition_assignment_strategy: PartitionAssignmentStrategy,
 }
@@ -96,15 +96,15 @@ impl Default for ConsumerConfig {
         Self {
             group_id: format!("{}-consumer", crate::NAME),
             auto_commit: true,
-            auto_commit_interval_ms: 5000,
+            auto_commit_interval: Duration::from_secs(5),
             auto_offset_reset: AutoOffsetReset::Latest,
             min_bytes: 1,
             max_bytes: 50 * 1024 * 1024,
             partition_max_bytes: 1024 * 1024,
-            max_wait_ms: 500,
-            session_timeout_ms: 45000,
-            rebalance_timeout_ms: 300000,
-            heartbeat_interval_ms: 3000,
+            max_wait: Duration::from_millis(500),
+            session_timeout: Duration::from_secs(10),
+            rebalance_timeout: Duration::from_secs(30),
+            heartbeat_interval: Duration::from_secs(3),
             partition_assignment_strategy: PartitionAssignmentStrategy::Range,
         }
     }
@@ -204,8 +204,8 @@ impl Consumer {
         let coordinator = self.coordinator.clone();
         let running = self.running.clone();
 
-        let mut commit_interval = interval(Duration::from_millis(config.auto_commit_interval_ms));
-        let mut heartbeat_interval = interval(Duration::from_millis(config.heartbeat_interval_ms));
+        let mut commit_interval = interval(config.auto_commit_interval);
+        let mut heartbeat_interval = interval(config.heartbeat_interval);
 
         let mut current_topics: Vec<String> = Vec::new();
         let mut needs_rejoin = false;
@@ -293,6 +293,44 @@ impl Consumer {
                             gs.member_id.clear();
                             *coordinator.write().await = None;
                             needs_rejoin = true;
+                            // 退避 1-2 秒后再重试，避免忙循环
+                            tokio::time::sleep(Duration::from_millis(
+                                1000 + (rand::random::<u64>() % 1000),
+                            ))
+                            .await;
+                        }
+                    }
+                }
+            }
+
+            // 退出时发送 LeaveGroup，通知 broker 此成员已离开
+            if !config.group_id.is_empty() {
+                let coord_addr = {
+                    let c = coordinator.read().await;
+                    *c
+                };
+                if let Some(coord_addr) = coord_addr {
+                    let member_id = {
+                        let gs = group_state.read().await;
+                        gs.member_id.clone()
+                    };
+                    if !member_id.is_empty() {
+                        use crate::protocol::leave_group_request::MemberIdentity;
+                        let request = LeaveGroupRequest {
+                            group_id: config.group_id.clone(),
+                            member_id: member_id.clone(),
+                            members: vec![MemberIdentity {
+                                member_id,
+                                group_instance_id: None,
+                                reason: None,
+                            }],
+                        };
+                        let leave_response: std::result::Result<
+                            crate::protocol::LeaveGroupResponse,
+                            _,
+                        > = cluster.send_to_broker(coord_addr, &request).await;
+                        if let Err(e) = leave_response {
+                            debug!("LeaveGroup on shutdown failed: {}", e);
                         }
                     }
                 }
@@ -480,7 +518,7 @@ impl Consumer {
 
         let mut buf = bytes::BytesMut::new();
         protocol_assignment
-            .encode(&mut buf, 0, false)
+            .encode(&mut buf, 0)
             .map_err(|e| KafkaError::Protocol(e.to_string()))?;
         Ok(buf.freeze())
     }
@@ -658,8 +696,8 @@ impl Consumer {
         for _join_attempt in 0..10u32 {
             let request = JoinGroupRequest {
                 group_id: group_id.to_string(),
-                session_timeout_ms: config.session_timeout_ms,
-                rebalance_timeout_ms: config.rebalance_timeout_ms,
+                session_timeout_ms: config.session_timeout.as_millis() as i32,
+                rebalance_timeout_ms: config.rebalance_timeout.as_millis() as i32,
                 member_id: member_id.clone(),
                 group_instance_id: None,
                 protocol_type: "consumer".to_string(),
@@ -733,9 +771,8 @@ impl Consumer {
 
                 let assignment = {
                     let mut buf_data = sync_response.assignment;
-                    let assignment_result =
-                        ConsumerProtocolAssignment::decode(&mut buf_data, 0, false)
-                            .map_err(|e| KafkaError::Protocol(e.to_string()))?;
+                    let assignment_result = ConsumerProtocolAssignment::decode(&mut buf_data, 0)
+                        .map_err(|e| KafkaError::Protocol(e.to_string()))?;
                     let mut result = HashMap::new();
                     for tp in assignment_result.assigned_partitions {
                         result.insert(tp.topic, tp.partitions);
@@ -1484,8 +1521,11 @@ impl Consumer {
 
     /// Leave consumer group
     pub async fn leave_group(&self) -> Result<()> {
-        let group_state = self.group_state.read().await;
-        if group_state.member_id.is_empty() {
+        let member_id = {
+            let gs = self.group_state.read().await;
+            gs.member_id.clone()
+        };
+        if member_id.is_empty() {
             return Ok(());
         }
 
@@ -1497,10 +1537,15 @@ impl Consumer {
 
         let coordinator = self.find_coordinator().await?;
 
+        use crate::protocol::leave_group_request::MemberIdentity;
         let request = LeaveGroupRequest {
             group_id: self.config.group_id.clone(),
-            member_id: group_state.member_id.clone(),
-            ..Default::default()
+            member_id: member_id.clone(),
+            members: vec![MemberIdentity {
+                member_id,
+                group_instance_id: None,
+                reason: None,
+            }],
         };
 
         let response: crate::protocol::LeaveGroupResponse =

@@ -7,8 +7,9 @@
 //!
 //! 运行时通过环境变量控制：
 //! - `KAFKA_RUNTIME` = "auto" | "podman" | "docker" | "direct" | "external"（默认: auto）
-//!     - auto：优先 podman，其次 direct
+//!     - auto：优先 podman，其次 docker，最后 direct
 //!     - external：不启动 Kafka，使用 `KAFKA_BOOTSTRAP` 指向的外部集群
+//! - `KAFKA_CLI`：容器 CLI 命令，auto-detect 时用于覆盖（"podman" | "docker"）
 //! - `KAFKA_BOOTSTRAP`：逗号分隔的 bootstrap 地址，集群模式可填多个（默认: 127.0.0.1:29092）
 //! - `KAFKA_IMAGE`：容器镜像名（默认: apache/kafka:4.3.0）
 //! - `KAFKA_HOME`：direct 模式下 Kafka 发行版路径（默认: tests/kafka）
@@ -138,6 +139,7 @@ impl TestConfig {
             security_protocol: SecurityProtocol::Plaintext,
             client_id: "integration-test".to_string(),
             metadata_ttl: Duration::from_secs(10),
+            sasl: None,
         }
     }
 
@@ -217,24 +219,24 @@ impl KafkaInstance {
 
         let backend = match config.runtime {
             RuntimeBackend::External => BackendKind::None,
-            RuntimeBackend::Podman => Self::start_podman(&config)
-                .await
-                .unwrap_or_else(|e| panic!("Podman backend requested but unavailable: {}", e)),
-            RuntimeBackend::Docker => Self::start_docker(&config)
-                .await
-                .unwrap_or_else(|e| panic!("Docker backend requested but unavailable: {}", e)),
+            RuntimeBackend::Podman | RuntimeBackend::Docker => {
+                Self::start_container(&config).await.unwrap_or_else(|e| {
+                    panic!(
+                        "{:?} backend requested but unavailable: {}",
+                        config.runtime, e
+                    )
+                })
+            }
             RuntimeBackend::Direct => Self::start_direct(&config).await,
             RuntimeBackend::Auto => {
-                // 优先 podman，其次 direct，最后 external（如果已配置）
-                if let Ok(b) = Self::start_podman(&config).await {
-                    b
-                } else if let Ok(b) = Self::start_docker(&config).await {
+                // auto-detect: podman → docker → direct → external
+                if let Ok(b) = Self::start_container(&config).await {
                     b
                 } else {
                     println!(
                         "Container backend unavailable, falling back to direct JVM or external"
                     );
-                    if config.bootstrap_addrs.iter().any(|a| is_port_open(a)) {
+                    if config.bootstrap_addrs.iter().any(is_port_open) {
                         println!("External Kafka already reachable, using external mode");
                         BackendKind::None
                     } else {
@@ -253,27 +255,29 @@ impl KafkaInstance {
 
     // ── 容器后端 ────────────────────────────────────────────────────
 
-    async fn start_podman(config: &TestConfig) -> Result<BackendKind, String> {
-        Self::ensure_container_cli("podman")?;
-        Self::ensure_image_present("podman", &config.image).await?;
-        let container_id = Self::run_container("podman", config).await?;
-        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 30).await;
-        Ok(BackendKind::Podman { container_id })
+    /// Auto-detect available container CLI: podman → docker
+    fn detect_container_cli() -> &'static str {
+        // 允许用户通过环境变量强制指定
+        if let Ok(cli) = std::env::var("KAFKA_CLI") {
+            return Box::leak(cli.into_boxed_str());
+        }
+        if Command::new("podman")
+            .args(["version", "--format", "{{.Server.Version}}"])
+            .output()
+            .is_ok()
+        {
+            "podman"
+        } else {
+            "docker"
+        }
     }
 
-    async fn start_docker(config: &TestConfig) -> Result<BackendKind, String> {
-        Self::ensure_container_cli("docker")?;
-        Self::ensure_image_present("docker", &config.image).await?;
-        let container_id = Self::run_container("docker", config).await?;
-        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 30).await;
-        Ok(BackendKind::Docker { container_id })
-    }
-
-    fn ensure_container_cli(cli: &str) -> Result<(), String> {
+    async fn start_container(config: &TestConfig) -> Result<BackendKind, String> {
+        let cli = Self::detect_container_cli();
         let version_check = Command::new(cli)
             .args(["version", "--format", "{{.Server.Version}}"])
             .output()
-            .map_err(|e| format!("{} not found: {}", cli, e))?;
+            .map_err(|e| format!("{} not available: {}", cli, e))?;
         if !version_check.status.success() {
             return Err(format!("{} version check failed", cli));
         }
@@ -281,7 +285,16 @@ impl KafkaInstance {
             .trim()
             .to_string();
         println!("  [{}] version={}", cli, version);
-        Ok(())
+
+        Self::ensure_image_present(cli, &config.image).await?;
+        let container_id = Self::run_container(cli, config).await?;
+        Self::wait_for_cluster(&config.bootstrap_addrs, config.cluster_size, 30).await;
+
+        let backend = match cli {
+            "podman" => BackendKind::Podman { container_id },
+            _ => BackendKind::Docker { container_id },
+        };
+        Ok(backend)
     }
 
     async fn ensure_image_present(cli: &str, image: &str) -> Result<(), String> {
@@ -662,7 +675,6 @@ pub fn default_producer_config() -> ProducerConfig {
         batch_size: 16384,
         linger_ms: 50,
         routing: PartitionRouting::HashKey,
-        ..Default::default()
     }
 }
 
@@ -670,15 +682,15 @@ pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig
     ConsumerConfig {
         group_id: group_id.to_string(),
         auto_commit: true,
-        auto_commit_interval_ms: 1000,
+        auto_commit_interval: Duration::from_secs(1),
         auto_offset_reset: reset,
         min_bytes: 0,
         max_bytes: 1048576,
         partition_max_bytes: 1048576,
-        max_wait_ms: 5000,
-        session_timeout_ms: 45000,
-        rebalance_timeout_ms: 60000,
-        heartbeat_interval_ms: 3000,
+        max_wait: Duration::from_secs(5),
+        session_timeout: Duration::from_secs(10),
+        rebalance_timeout: Duration::from_secs(30),
+        heartbeat_interval: Duration::from_secs(3),
         partition_assignment_strategy: PartitionAssignmentStrategy::Range,
     }
 }

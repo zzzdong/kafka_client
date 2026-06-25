@@ -9,7 +9,6 @@
 mod common;
 
 use common::KafkaInstance;
-use kafka_client::KafkaClient;
 
 #[tokio::test]
 async fn test_produce_and_consume() {

@@ -12,6 +12,10 @@ use bytes::{Bytes, BytesMut};
 /// 可编解码的基础 trait
 ///
 /// 所有需要序列化/反序列化的类型都实现此 trait
+///
+/// 每种操作分为普通版本和灵活（compact）版本：
+/// - `encode` / `decode` / `size`：标准编码格式（int16 长度前缀等）
+/// - `flexible_encode` / `flexible_decode` / `flexible_size`：灵活编码格式（varint 长度前缀等）
 pub trait Message: Sized + Default + PartialEq {
     /// 消息类型名称
     fn type_name() -> &'static str;
@@ -34,20 +38,23 @@ pub trait Message: Sized + Default + PartialEq {
             .unwrap_or(false)
     }
 
-    /// 编码消息（不包括长度前缀和头）
-    ///
-    /// `is_flexible` 表示当前消息是否使用灵活编码（compact format）。
-    /// 这由顶层消息的 `flexible_versions` 决定，并向下传递到所有嵌套结构。
-    fn encode(&self, buf: &mut BytesMut, version: i16, is_flexible: bool) -> ProtocolResult<()>;
+    /// 标准编码：使用 int16/32 长度前缀（非 compact 格式）
+    fn encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()>;
 
-    /// 解码消息（不包括长度前缀和头）
-    ///
-    /// `is_flexible` 表示当前消息是否使用灵活编码（compact format）。
-    /// 这由顶层消息的 `flexible_versions` 决定，并向下传递到所有嵌套结构。
-    fn decode(buf: &mut Bytes, version: i16, is_flexible: bool) -> ProtocolResult<Self>;
+    /// 灵活编码：使用 varint 长度前缀（compact 格式）
+    fn flexible_encode(&self, buf: &mut BytesMut, version: i16) -> ProtocolResult<()>;
 
-    /// 计算编码后的大小
-    fn size(&self, version: i16, is_flexible: bool) -> usize;
+    /// 标准解码
+    fn decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self>;
+
+    /// 灵活解码（compact 格式）
+    fn flexible_decode(buf: &mut Bytes, version: i16) -> ProtocolResult<Self>;
+
+    /// 标准编码后的大小
+    fn size(&self, version: i16) -> usize;
+
+    /// 灵活编码后的大小
+    fn flexible_size(&self, version: i16) -> usize;
 
     /// 默认版本
     fn default_version() -> i16 {
@@ -94,7 +101,11 @@ pub trait Request: Message {
         }
 
         // 2. 编码请求体
-        self.encode(&mut buf, version, use_flexible)?;
+        if use_flexible {
+            self.flexible_encode(&mut buf, version)?;
+        } else {
+            self.encode(&mut buf, version)?;
+        }
 
         Ok(buf.freeze())
     }
@@ -115,7 +126,11 @@ pub trait Response: Message {
         let mut buf = data;
 
         let header = ResponseHeader::decode(&mut buf, use_flexible)?;
-        let body = Self::decode(&mut buf, version, use_flexible)?;
+        let body = if use_flexible {
+            Self::flexible_decode(&mut buf, version)?
+        } else {
+            Self::decode(&mut buf, version)?
+        };
 
         Ok((header, body))
     }

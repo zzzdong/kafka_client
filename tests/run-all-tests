@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# 一站式集成测试启动脚本（受 kafka-rust 项目 tests/run-all-tests 启发）。
+# 一站式集成测试启动脚本。
 #
-# 默认启动 3-broker KRaft 集群，并运行全部集成测试（含 cluster feature）。
-# 可通过环境变量覆盖行为：
+# 自动检测 podman/docker compose，支持本地开发和 CI 两种场景。
+# 默认启动 3-broker KRaft 集群，运行全部集成测试（含 cluster feature）。
+#
+# 环境变量：
+#   KAFKA_CLI          容器 CLI：podman | docker（默认：auto-detect）
 #   KAFKA_IMAGE        容器镜像（默认 apache/kafka:4.3.0）
 #   KAFKA_BOOTSTRAP    逗号分隔 bootstrap 地址（默认本脚本启动的集群端口）
-#   KAFKA_CLUSTER_SIZE 默认 3
-#   RUST_TEST_THREADS  默认 1，避免测试并行时主题/消费者组冲突
-#   KAFKA_RUNTIME      默认 external（脚本负责启动集群）
+#   KAFKA_CLUSTER_SIZE 集群 broker 数量（默认 3）
+#   RUST_TEST_THREADS  测试并发数（默认 1）
+#   KAFKA_RUNTIME      运行时后端（默认 external，脚本负责启动集群）
 
 set -euo pipefail
 
@@ -19,33 +22,48 @@ KAFKA_CLUSTER_SIZE="${KAFKA_CLUSTER_SIZE:-3}"
 RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
 KAFKA_RUNTIME="${KAFKA_RUNTIME:-external}"
 
-# 默认使用 docker compose 启动的集群端口
+# Auto-detect container CLI
+detect_cli() {
+    if command -v podman &>/dev/null && podman ps &>/dev/null 2>&1; then
+        echo "podman"
+    elif command -v docker &>/dev/null && docker ps &>/dev/null 2>&1; then
+        echo "docker"
+    else
+        echo "docker"
+    fi
+}
+CLI="${KAFKA_CLI:-$(detect_cli)}"
+COMPOSE_CMD="${CLI} compose"
+
+# Default bootstrap for the 3-broker cluster
 DEFAULT_BOOTSTRAP="127.0.0.1:29092,127.0.0.1:29094,127.0.0.1:29095"
 KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-${DEFAULT_BOOTSTRAP}}"
 
 cd "${SCRIPT_DIR}"
 
 echo "=== Stopping any leftover Kafka test containers ==="
-docker compose down -v 2>/dev/null || true
+${COMPOSE_CMD} down -v 2>/dev/null || true
 
 echo "=== Starting Kafka ${KAFKA_CLUSTER_SIZE}-broker cluster ==="
-KAFKA_IMAGE="${KAFKA_IMAGE}" docker compose up -d
+echo "    CLI: ${CLI}, Image: ${KAFKA_IMAGE}"
+KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} up -d
 
-# 等待最后一个 broker 健康
+# Wait for cluster to be healthy
 echo "=== Waiting for Kafka cluster to be healthy ==="
-docker compose ps -a
+${COMPOSE_CMD} ps -a
+BROKER_LAST="kafka-${KAFKA_CLUSTER_SIZE}"
 for i in $(seq 1 60); do
-    if docker compose ps | grep -qE "kafka-3.*healthy"; then
+    if ${COMPOSE_CMD} ps 2>/dev/null | grep -qE "${BROKER_LAST}.*healthy"; then
         echo "  Cluster healthy after ~${i}s"
         break
     fi
     sleep 1
 done
 
-if ! docker compose ps | grep -qE "kafka-3.*healthy"; then
+if ! ${COMPOSE_CMD} ps 2>/dev/null | grep -qE "${BROKER_LAST}.*healthy"; then
     echo "ERROR: Kafka cluster did not become healthy in time"
-    docker compose logs --tail=50
-    docker compose down -v
+    ${COMPOSE_CMD} logs --tail=50
+    ${COMPOSE_CMD} down -v
     exit 1
 fi
 
@@ -60,6 +78,6 @@ cargo test --features integration_tests -- --nocapture
 
 echo "=== Cleaning up ==="
 cd "${SCRIPT_DIR}"
-docker compose down -v
+${COMPOSE_CMD} down -v
 
 echo "=== Done ==="

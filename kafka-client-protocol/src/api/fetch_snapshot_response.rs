@@ -47,7 +47,7 @@ pub struct PartitionSnapshot {
     #[kafka(versions = "0+")]
     pub position: i64,
     /// Snapshot data in records format which may not be aligned on an offset boundary.
-    #[kafka(versions = "0+")]
+    #[kafka(versions = "0+", encoded_as_bytes)]
     pub unaligned_records: RecordBatch,
 }
 

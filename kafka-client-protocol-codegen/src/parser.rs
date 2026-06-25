@@ -106,7 +106,7 @@ fn parse_message(def: MessageDef) -> ParsedMessage {
 fn parse_struct(def: StructDef) -> ParsedStruct {
     let struct_name = to_pascal_case(&def.name);
 
-    let fields = def.fields.iter().map(|f| parse_field_simple(f)).collect();
+    let fields = def.fields.iter().map(parse_field_simple).collect();
 
     ParsedStruct {
         name: def.name,
@@ -138,21 +138,21 @@ fn parse_fields_recursive(
 /// 解析简单字段列表（不处理字段级别的内联结构体）
 fn parse_fields_simple_list(
     fields: &[FieldDef],
-    inline_structs: &mut Vec<InlineStructInfo>,
-    visited: &mut HashSet<String>,
+    _inline_structs: &mut Vec<InlineStructInfo>,
+    _visited: &mut HashSet<String>,
 ) -> Vec<ParsedField> {
-    fields.iter().map(|f| parse_field_simple(f)).collect()
+    fields.iter().map(parse_field_simple).collect()
 }
 
 /// 递归解析字段（支持嵌套内联结构体）
 fn parse_field_recursive(
     field: &FieldDef,
-    parent_name: &str,
+    _parent_name: &str,
     inline_structs: &mut Vec<InlineStructInfo>,
     visited: &mut HashSet<String>,
 ) -> ParsedField {
     let is_nullable = field.nullable_versions.is_some();
-    let default_is_null = field.default.as_ref().map_or(false, |d| match d {
+    let default_is_null = field.default.as_ref().is_some_and(|d| match d {
         DefaultValue::Null => true,
         DefaultValue::Str(s) => s == "null",
         _ => false,
@@ -228,7 +228,7 @@ fn parse_field_recursive(
         rust_name: to_field_name(&field.name), // 使用 to_field_name 而不是 to_snake_case
         rust_type,
         versions: field.versions.clone(),
-        nullable_versions: nullable_versions,
+        nullable_versions,
         tag: field.tag,
         tagged_versions: field.tagged_versions.clone(),
         default,
@@ -242,7 +242,7 @@ fn parse_field_recursive(
 /// 简单解析字段（用于共享结构体，无内联嵌套）
 fn parse_field_simple(field: &FieldDef) -> ParsedField {
     let is_nullable = field.nullable_versions.is_some();
-    let default_is_null = field.default.as_ref().map_or(false, |d| match d {
+    let default_is_null = field.default.as_ref().is_some_and(|d| match d {
         DefaultValue::Null => true,
         DefaultValue::Str(s) => s == "null",
         _ => false,

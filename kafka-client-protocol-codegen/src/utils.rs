@@ -1,7 +1,4 @@
 // src/utils.rs
-use inflector::Inflector;
-use regex::Regex;
-use std::collections::HashSet;
 
 /// Rust 关键字列表
 pub const RUST_KEYWORDS: &[&str] = &[
@@ -52,7 +49,7 @@ pub fn to_snake_case(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c.is_uppercase() {
             // 检查是否是大写缩写的一部分
-            let is_acronym = chars.peek().map_or(false, |&next| next.is_uppercase());
+            let is_acronym = chars.peek().is_some_and(|&next| next.is_uppercase());
 
             if !result.is_empty() {
                 result.push('_');
@@ -76,8 +73,8 @@ pub fn to_snake_case(s: &str) -> String {
     }
 
     // 处理特殊情况：KRaft -> k_raft
-    let result = result.replace("k_raft", "k_raft");
-    result
+
+    result.replace("k_raft", "k_raft")
 }
 
 /// 转换为 PascalCase（用于结构体名）

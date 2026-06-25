@@ -50,7 +50,7 @@ pub struct PartitionData {
     #[kafka(versions = "0+")]
     pub current_leader: LeaderIdAndEpoch,
     /// The record data.
-    #[kafka(versions = "0+", nullable_versions = "0")]
+    #[kafka(versions = "0+", nullable_versions = "0", encoded_as_bytes)]
     pub records: Option<RecordBatch>,
     /// The acquired records.
     #[kafka(versions = "0+")]

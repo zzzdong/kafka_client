@@ -25,6 +25,7 @@ use kafka_client::{
 };
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 fn get_bootstrap_addr() -> SocketAddr {
     let bootstrap =
@@ -142,15 +143,15 @@ async fn main() {
     let consumer_config = ConsumerConfig {
         group_id: "example-consumer-group".to_string(),
         auto_commit: true,
-        auto_commit_interval_ms: 1000,
+        auto_commit_interval: Duration::from_secs(1),
         auto_offset_reset: AutoOffsetReset::Earliest,
         min_bytes: 1,
         max_bytes: 1048576,
         partition_max_bytes: 1048576,
-        max_wait_ms: 5000,
-        session_timeout_ms: 45000,
-        rebalance_timeout_ms: 60000,
-        heartbeat_interval_ms: 3000,
+        max_wait: Duration::from_secs(5),
+        session_timeout: Duration::from_secs(10),
+        rebalance_timeout: Duration::from_secs(30),
+        heartbeat_interval: Duration::from_secs(3),
         partition_assignment_strategy: PartitionAssignmentStrategy::Range,
     };
 
@@ -165,14 +166,14 @@ async fn main() {
     }
 
     // Start polling in background before producing
-    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let received_clone = received.clone();
+    let (records_tx, mut records_rx) = mpsc::channel::<kafka_client::ConsumerRecord>(32);
+
     let poll_handle = tokio::spawn(async move {
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        while std::time::Instant::now() < deadline {
+        let mut count = 0usize;
+        while std::time::Instant::now() < deadline && count < 3 {
             match consumer.poll(2000).await {
                 Ok(recs) => {
-                    let mut guard = received_clone.lock().unwrap();
                     for r in recs {
                         println!(
                             "  Received: partition={}, offset={}, key={:?}, value={}",
@@ -183,10 +184,10 @@ async fn main() {
                                 .map(|k| String::from_utf8_lossy(k).to_string()),
                             String::from_utf8_lossy(&r.value)
                         );
-                        guard.push(r);
-                    }
-                    if guard.len() >= 3 {
-                        break;
+                        if records_tx.send(r).await.is_err() {
+                            return;
+                        }
+                        count += 1;
                     }
                 }
                 Err(e) => eprintln!("  WARNING: Poll error: {}", e),
@@ -215,9 +216,13 @@ async fn main() {
     producer.flush().await.expect("Failed to flush producer");
     println!("All messages flushed.");
 
-    // Wait for consumer to finish
+    // Wait for consumer to finish and drain remaining records from channel
     poll_handle.await.ok();
-    let records = received.lock().unwrap();
+    // sender 已被 task 退出时 drop，channel 会在 buffer 排空后返回 None
+    let mut records = vec![];
+    while let Some(r) = records_rx.recv().await {
+        records.push(r);
+    }
     println!("\nConsumed {} messages total", records.len());
 
     // Clean shutdown

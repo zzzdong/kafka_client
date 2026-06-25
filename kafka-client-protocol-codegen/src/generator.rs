@@ -58,7 +58,7 @@ fn generate_message_file(msg: &ParsedMessage, output_dir: &Path) -> Result<()> {
     // 先生成所有内联结构体（只实现 Message）
     for s in &msg.inline_structs {
         generate_inline_struct_def(&mut content, s);
-        content.push_str("\n");
+        content.push('\n');
     }
 
     // 生成主消息结构体
@@ -79,8 +79,8 @@ fn determine_message_type(msg: &ParsedMessage) -> MessageType {
 }
 
 /// 生成主消息结构体定义
-fn generate_main_struct_def(content: &mut String, msg: &ParsedMessage, msg_type: MessageType) {
-    let has_api_key = msg.api_key.is_some();
+fn generate_main_struct_def(content: &mut String, msg: &ParsedMessage, _msg_type: MessageType) {
+    let _has_api_key = msg.api_key.is_some();
 
     // 结构体属性
     let mut attrs = Vec::new();
@@ -147,7 +147,7 @@ fn generate_message_impl(content: &mut String, msg: &ParsedMessage) {
     let flexible_version = msg.flexible_versions.as_ref().map(|v| parse_min_version(v));
 
     content.push_str(&format!("impl Message for {} {{\n", struct_name));
-    content.push_str(&format!("    fn type_name() -> &'static str {{\n"));
+    content.push_str("    fn type_name() -> &'static str {\n");
     content.push_str(&format!("        \"{}\"\n", type_name));
     content.push_str("    }\n\n");
 
@@ -261,6 +261,11 @@ fn generate_field(content: &mut String, field: &ParsedField) {
 
     if field.map_key {
         attrs.push("map_key".to_string());
+    }
+
+    // bytes→struct 映射：线格式中用 bytes 长度前缀，实际类型是结构体
+    if field.rust_type.contains("RecordBatch") {
+        attrs.push("encoded_as_bytes".to_string());
     }
 
     content.push_str(&format!("    #[kafka({})]\n", attrs.join(", ")));
@@ -506,7 +511,7 @@ fn generate_inner_decode_body(field: &ParsedField) -> String {
 fn generate_size_field(content: &mut String, field: &ParsedField) {
     let condition = generate_version_condition(&field.versions);
     let field_name = &field.rust_name;
-    let rust_type = &field.rust_type;
+    let _rust_type = &field.rust_type;
 
     if field.versions != "0+" && field.versions != "all" {
         content.push_str(&format!("        if {} {{\n", condition));
@@ -736,37 +741,51 @@ fn generate_version_map_file(messages: &[ParsedMessage], output_dir: &Path) -> R
     content.push_str("//! API version mapping\n");
     content.push_str("//! DO NOT EDIT\n\n");
 
-    // 生成静态数组
+    // 生成静态数组（按 API Key 编号排序）
     content.push_str("/// 客户端支持的 API 版本范围（静态数组）\n");
     content.push_str("pub const CLIENT_SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[\n");
 
-    for msg in messages {
-        if let Some(api_key) = msg.api_key {
+    let mut version_entries: Vec<(&ParsedMessage, i16, i16, i16)> = messages
+        .iter()
+        .filter_map(|msg| msg.api_key.map(|key| (msg, key)))
+        .map(|(msg, key)| {
             let (min, max) = parse_version_range(&msg.valid_versions);
-            content.push_str(&format!(
-                "    ({}, {}, {}), // {}\n",
-                api_key, min, max, msg.struct_name
-            ));
-        }
+            (msg, key, min, max)
+        })
+        .collect();
+    version_entries.sort_by_key(|e| e.1);
+
+    for (msg, api_key, min, max) in &version_entries {
+        content.push_str(&format!(
+            "    ({}, {}, {}), // {}\n",
+            api_key, min, max, msg.struct_name
+        ));
     }
 
     content.push_str("];\n\n");
 
-    // 生成辅助函数
+    // 生成辅助函数（已按 api_key 排序，使用二分查找）
     content.push_str("/// 获取指定 API 的支持版本范围\n");
     content.push_str("pub fn get_version_range(api_key: i16) -> Option<(i16, i16)> {\n");
     content.push_str("    CLIENT_SUPPORTED_VERSIONS\n");
-    content.push_str("        .iter()\n");
-    content.push_str("        .find(|&&(key, _, _)| key == api_key)\n");
-    content.push_str("        .map(|&(_, min, max)| (min, max))\n");
+    content.push_str("        .binary_search_by_key(&api_key, |&(key, _, _)| key)\n");
+    content.push_str("        .ok()\n");
+    content.push_str("        .map(|idx| {\n");
+    content.push_str("            let (_, min, max) = CLIENT_SUPPORTED_VERSIONS[idx];\n");
+    content.push_str("            (min, max)\n");
+    content.push_str("        })\n");
     content.push_str("}\n\n");
 
     content.push_str("/// 检查是否支持指定版本\n");
     content.push_str("pub fn supports_version(api_key: i16, version: i16) -> bool {\n");
     content.push_str("    CLIENT_SUPPORTED_VERSIONS\n");
-    content.push_str("        .iter()\n");
-    content.push_str("        .find(|&&(key, _, _)| key == api_key)\n");
-    content.push_str("        .map_or(false, |&(_, min, max)| version >= min && version <= max)\n");
+    content.push_str("        .binary_search_by_key(&api_key, |&(key, _, _)| key)\n");
+    content.push_str("        .ok()\n");
+    content.push_str("        .map(|idx| {\n");
+    content.push_str("            let (_, min, max) = CLIENT_SUPPORTED_VERSIONS[idx];\n");
+    content.push_str("            version >= min && version <= max\n");
+    content.push_str("        })\n");
+    content.push_str("        .unwrap_or(false)\n");
     content.push_str("}\n");
 
     fs::write(file_path, content)?;

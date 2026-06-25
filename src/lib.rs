@@ -112,7 +112,7 @@ impl KafkaClientBuilder {
         Self {
             bootstrap_servers,
             security_protocol: crate::transport::SecurityProtocol::Plaintext,
-            client_id: "rust-kafka-client".to_string(),
+            client_id: NAME.to_string(),
             sasl_credentials: None,
             metadata_ttl: Duration::from_secs(300),
         }
@@ -247,14 +247,8 @@ impl KafkaClientBuilder {
             security_protocol: self.security_protocol,
             client_id: self.client_id,
             metadata_ttl: self.metadata_ttl,
+            sasl: self.sasl_credentials,
         };
-
-        // Handle SASL credentials for connection builder
-        if let Some(_credentials) = self.sasl_credentials {
-            // SASL configuration is stored in security_protocol or needs special handling
-            // For now, we pass it through the security protocol
-            // This will be refined when SASL is properly integrated with connection builder
-        }
 
         let cluster = ClusterClient::connect(config).await?;
         Ok(KafkaClient {
