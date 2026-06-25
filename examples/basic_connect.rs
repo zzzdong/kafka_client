@@ -16,12 +16,13 @@
 use kafka_client::KafkaClient;
 use std::net::SocketAddr;
 
-fn get_bootstrap_addr() -> SocketAddr {
+fn get_bootstrap_addrs() -> Vec<SocketAddr> {
     let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
-        .parse()
-        .expect("Invalid bootstrap address format. Expected: host:port")
+        .split(',')
+        .map(|s| s.trim().parse().expect("Invalid bootstrap address format. Expected: host:port"))
+        .collect()
 }
 
 #[tokio::main]
@@ -31,11 +32,11 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let addr = get_bootstrap_addr();
-    println!("=== Connecting to Kafka at {} ===", addr);
+    let addrs = get_bootstrap_addrs();
+    println!("=== Connecting to Kafka at {:?} ===", addrs);
 
     // Build and connect the client
-    let client = match KafkaClient::builder(vec![addr])
+    let client = match KafkaClient::builder(addrs)
         .with_client_id("basic-connect-example")
         .build()
         .await

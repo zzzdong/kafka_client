@@ -43,7 +43,8 @@ pub use producer::{
 
 // Consumer types
 pub use consumer::{
-    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, PartitionAssignmentStrategy,
+    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, GroupHandle, OffsetHandle,
+    PartitionAssignmentStrategy,
 };
 
 // Metadata types (for advanced users)

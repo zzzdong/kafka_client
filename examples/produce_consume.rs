@@ -27,12 +27,13 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-fn get_bootstrap_addr() -> SocketAddr {
+fn get_bootstrap_addrs() -> Vec<SocketAddr> {
     let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
-        .parse()
-        .expect("Invalid bootstrap address format. Expected: host:port")
+        .split(',')
+        .map(|s| s.trim().parse().expect("Invalid bootstrap address format. Expected: host:port"))
+        .collect()
 }
 
 fn get_topic_name() -> String {
@@ -46,15 +47,15 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let addr = get_bootstrap_addr();
+    let addrs = get_bootstrap_addrs();
     let topic = get_topic_name();
     println!("=== Produce-Consume Example ===");
-    println!("Bootstrap: {}", addr);
+    println!("Bootstrap: {:?}", addrs);
     println!("Topic: {}", topic);
 
     // Connect to Kafka
     println!("\n[1] Connecting to Kafka...");
-    let client = match KafkaClient::builder(vec![addr])
+    let client = match KafkaClient::builder(addrs)
         .with_client_id("produce-consume-example")
         .with_metadata_ttl(Duration::from_secs(10))
         .build()
@@ -74,7 +75,7 @@ async fn main() {
         topics: vec![CreatableTopic {
             name: topic.clone(),
             num_partitions: 3,
-            replication_factor: 1,
+            replication_factor: 3,
             assignments: vec![],
             configs: vec![],
         }],

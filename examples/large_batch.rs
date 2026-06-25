@@ -24,7 +24,7 @@ use std::time::Duration;
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
     let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
         .split(',')
         .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
@@ -78,7 +78,7 @@ async fn main() {
         topics: vec![CreatableTopic {
             name: topic.clone(),
             num_partitions: 3,
-            replication_factor: 1,
+            replication_factor: 3,
             assignments: vec![],
             configs: vec![],
         }],
@@ -181,7 +181,7 @@ async fn main() {
 
     // Wait for partition assignment
     for i in 0..20 {
-        let assignment = consumer.assignment().await;
+        let assignment = consumer.group().assignment().await;
         let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
         if has_partitions > 0 {
             println!(

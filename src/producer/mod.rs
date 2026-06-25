@@ -1,4 +1,8 @@
 //! Producer - high-level Kafka message producer
+//!
+//! Uses a consistent internal architecture: all messages go through a shared
+//! buffer, with automatic flush based on `batch_size` and `linger_ms`.
+//! [`Producer`] provides the public facade with `send`, `flush`, and `close`.
 
 mod router;
 
@@ -18,32 +22,30 @@ use crate::protocol::{
     PartitionProduceData, ProduceRequest, ProduceResponse, Record, RecordBatch, TopicProduceData,
 };
 
-/// Command sent to Producer background event loop
+/// Command sent to the background event loop.
 enum ProducerCommand {
-    /// Send single message, immediately send and return result
+    /// Send a single record (buffer + immediate flush).
     Send {
         record: ProducerRecord,
         result_tx: oneshot::Sender<Result<RecordMetadata>>,
     },
-    /// Batch send messages, add to buffer and return count
+    /// Buffer records for batched sending.
     SendBatch {
         records: Vec<ProducerRecord>,
         result_tx: oneshot::Sender<Result<usize>>,
     },
-    /// Force flush buffer, notify caller when done
+    /// Force flush the buffer.
     Flush {
         barrier: oneshot::Sender<Result<()>>,
     },
+    /// Shut down the background loop.
+    Shutdown,
 }
 
 /// Message header
-///
-/// Key-value pair attached to a Kafka message.
 #[derive(Debug, Clone)]
 pub struct Header {
-    /// Header key name
     pub key: String,
-    /// Header value data
     pub value: Bytes,
 }
 
@@ -52,22 +54,15 @@ pub struct Header {
 /// A message to be sent to Kafka with optional metadata.
 #[derive(Debug, Clone)]
 pub struct ProducerRecord {
-    /// Topic name to send the message to
     pub topic: String,
-    /// Optional explicit partition number (auto-selected if None)
     pub partition: Option<i32>,
-    /// Optional message key (used for partition routing)
     pub key: Option<Bytes>,
-    /// Message value data
     pub value: Bytes,
-    /// Optional message timestamp (auto-generated if None)
     pub timestamp: Option<i64>,
-    /// Message headers
     pub headers: Vec<Header>,
 }
 
 impl ProducerRecord {
-    /// Create a new producer record with topic and value
     pub fn new(topic: impl Into<String>, value: Bytes) -> Self {
         Self {
             topic: topic.into(),
@@ -79,25 +74,21 @@ impl ProducerRecord {
         }
     }
 
-    /// Set message key for partition routing
     pub fn with_key(mut self, key: Bytes) -> Self {
         self.key = Some(key);
         self
     }
 
-    /// Set explicit partition number
     pub fn with_partition(mut self, partition: i32) -> Self {
         self.partition = Some(partition);
         self
     }
 
-    /// Set explicit message timestamp
     pub fn with_timestamp(mut self, timestamp: i64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 
-    /// Set message headers
     pub fn with_headers(mut self, headers: Vec<Header>) -> Self {
         self.headers = headers;
         self
@@ -105,37 +96,22 @@ impl ProducerRecord {
 }
 
 /// Send metadata
-///
-/// Metadata returned after a successful message send.
 #[derive(Debug, Clone)]
 pub struct RecordMetadata {
-    /// Topic name where the message was sent
     pub topic: String,
-    /// Partition number where the message was stored
     pub partition: i32,
-    /// Offset of the message within the partition
     pub offset: i64,
-    /// Timestamp assigned to the message by the broker
     pub timestamp: i64,
 }
 
 /// Producer configuration
-///
-/// Controls producer behavior including acknowledgment mode,
-/// batching, and retry settings.
 #[derive(Debug, Clone)]
 pub struct ProducerConfig {
-    /// Number of acknowledgments required (0=none, 1=leader, -1=all replicas)
     pub acks: i16,
-    /// Request timeout in milliseconds
     pub timeout_ms: i32,
-    /// Partition routing strategy
     pub routing: PartitionRouting,
-    /// Number of retry attempts on failure
     pub retries: u32,
-    /// Maximum batch size in bytes
     pub batch_size: usize,
-    /// Time to wait before sending batch (linger time)
     pub linger_ms: u64,
 }
 
@@ -152,8 +128,11 @@ impl Default for ProducerConfig {
     }
 }
 
-/// Producer internal state
-struct ProducerInner {
+// ===========================================================================
+// Internal state — shared between background task and Producer
+// ===========================================================================
+
+struct ProducerState {
     cluster: Arc<ClusterClient>,
     router: PartitionRouter,
     config: ProducerConfig,
@@ -161,28 +140,12 @@ struct ProducerInner {
     buffer: HashMap<(String, i32), Vec<ProducerRecord>>,
     /// Approximate buffered bytes (for batch_size check)
     buffered_bytes: usize,
-    /// Last send time
+    /// Last buffer flush time
     last_send: Instant,
 }
 
-impl ProducerInner {
-    async fn flush_buffer(&mut self) -> Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-
-        let records: HashMap<(String, i32), Vec<ProducerRecord>> = std::mem::take(&mut self.buffer);
-        self.buffered_bytes = 0;
-        self.last_send = Instant::now();
-
-        for ((topic, partition), recs) in records {
-            debug!("Flushing {} records to {}/{}", recs.len(), topic, partition);
-            self.send_batch_inner(&topic, partition, recs).await?;
-            debug!("Successfully sent batch to {}/{}", topic, partition);
-        }
-        Ok(())
-    }
-
+impl ProducerState {
+    /// Buffer records, auto-flush if batch_size or linger_ms triggers.
     async fn buffer_records(&mut self, records: Vec<ProducerRecord>) -> Result<usize> {
         let count = records.len();
         for record in records {
@@ -195,19 +158,40 @@ impl ProducerInner {
                 .or_default()
                 .push(record);
         }
-
-        let should_flush = self.buffered_bytes >= self.config.batch_size
-            || self.last_send.elapsed() >= Duration::from_millis(self.config.linger_ms);
-
-        if should_flush {
-            self.flush_buffer().await?;
-        }
-
         Ok(count)
     }
 
-    async fn send_batch_inner(
-        &mut self,
+    async fn flush_buffer(&mut self) -> Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        let records: HashMap<(String, i32), Vec<ProducerRecord>> =
+            std::mem::take(&mut self.buffer);
+        self.buffered_bytes = 0;
+        self.last_send = Instant::now();
+
+        for ((topic, partition), recs) in records {
+            debug!("Flushing {} records to {}/{}", recs.len(), topic, partition);
+            if let Err(e) = self.send_to_broker(&topic, partition, recs).await {
+                warn!("Flush to {}/{} failed: {}", topic, partition, e);
+            }
+        }
+        Ok(())
+    }
+
+    async fn send_single(&mut self, record: ProducerRecord) -> Result<RecordMetadata> {
+        let partition = self.select_partition(&record).await?;
+        let topic = record.topic.clone();
+        let metadatas = self.send_to_broker(&topic, partition, vec![record]).await?;
+        metadatas
+            .into_iter()
+            .next()
+            .ok_or(KafkaError::ProduceError(-1))
+    }
+
+    async fn send_to_broker(
+        &self,
         topic: &str,
         partition: i32,
         records: Vec<ProducerRecord>,
@@ -307,8 +291,7 @@ impl ProducerInner {
             .ok_or_else(|| KafkaError::TopicNotFound(record.topic.clone()))?;
 
         let key = record.key.as_deref();
-        let partition = self.router.select_partition(key, partition_count);
-        Ok(partition)
+        Ok(self.router.select_partition(key, partition_count))
     }
 
     async fn send_with_retry(
@@ -349,7 +332,6 @@ impl ProducerInner {
         partition: i32,
         response: ProduceResponse,
     ) -> Result<RecordMetadata> {
-        // Look up topic_id from metadata for v13+ response matching
         let topic_id = self
             .cluster
             .metadata()
@@ -358,7 +340,6 @@ impl ProducerInner {
             .map(|t| t.topic_id);
 
         for topic_response in &response.responses {
-            // v0-12: name is populated; v13+: topic_id is populated
             let name_matches = !topic_response.name.is_empty() && topic_response.name == topic;
             let id_matches = topic_id
                 .map(|id| !id.is_nil() && topic_response.topic_id == id)
@@ -386,21 +367,26 @@ impl ProducerInner {
     }
 }
 
-/// High-level Kafka Producer
+// ===========================================================================
+// Producer — public facade
+// ===========================================================================
+
+/// High-level Kafka Producer.
 ///
-/// Provides message batching and automatic partition routing.
-/// Uses a background event loop to handle batch sending.
+/// All messages go through an internal buffer. Automatic flush is triggered
+/// by `batch_size` or `linger_ms`. Use [`flush`](Self::flush) to force-send
+/// all buffered messages, and [`close`](Self::close) to clean up.
 pub struct Producer {
     command_tx: tokio::sync::mpsc::UnboundedSender<ProducerCommand>,
 }
 
 impl Producer {
-    /// Create Producer and start background batch sending task
+    /// Create Producer and start the background batch-sending task.
     pub(crate) async fn new(cluster: Arc<ClusterClient>, config: ProducerConfig) -> Self {
-        let mut inner = ProducerInner {
-            cluster,
+        let mut state = ProducerState {
             router: PartitionRouter::new(config.routing),
             config: config.clone(),
+            cluster,
             buffer: HashMap::new(),
             buffered_bytes: 0,
             last_send: Instant::now(),
@@ -411,51 +397,63 @@ impl Producer {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(linger);
+
             loop {
                 tokio::select! {
-                    _ = interval.tick() => {
-                        if !inner.buffer.is_empty() {
-                            if let Err(e) = inner.flush_buffer().await {
-                                warn!("Linger flush failed: {}", e);
-                            }
-                        }
-                    }
+                    biased; // Shutdown first
+
                     cmd = command_rx.recv() => {
                         match cmd {
+                            Some(ProducerCommand::Shutdown) => {
+                                let _ = state.flush_buffer().await;
+                                break;
+                            }
                             Some(ProducerCommand::Send { record, result_tx }) => {
-                                let result = async {
-                                    let partition = inner.select_partition(&record).await?;
-                                    let topic = record.topic.clone();
-                                    let metadatas = inner
-                                        .send_batch_inner(&topic, partition, vec![record])
-                                        .await?;
-                                    metadatas.into_iter().next().ok_or(KafkaError::ProduceError(-1))
-                                }
-                                .await;
+                                let result = state.send_single(record).await;
                                 let _ = result_tx.send(result);
                             }
                             Some(ProducerCommand::SendBatch { records, result_tx }) => {
-                                let result = inner.buffer_records(records).await;
+                                let result = state.buffer_records(records).await;
+                                let should_flush = result.is_ok() && (
+                                    state.buffered_bytes >= state.config.batch_size
+                                    || state.last_send.elapsed() >= linger
+                                );
+                                if should_flush {
+                                    if let Err(e) = state.flush_buffer().await {
+                                        warn!("Auto-flush failed: {}", e);
+                                    }
+                                }
                                 let _ = result_tx.send(result);
                             }
                             Some(ProducerCommand::Flush { barrier }) => {
-                                let result = inner.flush_buffer().await;
+                                let result = state.flush_buffer().await;
                                 let _ = barrier.send(result);
                             }
                             None => break,
                         }
                     }
+
+                    // Linger timer: periodic flush
+                    _ = interval.tick() => {
+                        if !state.buffer.is_empty() {
+                            if let Err(e) = state.flush_buffer().await {
+                                warn!("Linger flush failed: {}", e);
+                            }
+                        }
+                    }
                 }
             }
+
+            debug!("Producer background task exited");
         });
 
         Self { command_tx }
     }
 
-    /// Send single message and return its metadata
+    /// Send a single message and return its metadata.
     ///
-    /// Immediately sends the message without batching.
-    /// Returns metadata including partition, offset, and timestamp.
+    /// The message is added to the buffer and flushed immediately,
+    /// ensuring the caller gets back partition/offset metadata.
     pub async fn send(&self, record: ProducerRecord) -> Result<RecordMetadata> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
@@ -467,12 +465,13 @@ impl Producer {
         rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
-    /// Batch send messages
+    /// Buffer messages for batched sending.
     ///
-    /// Messages are added to buffer first. Based on linger_ms and batch_size,
-    /// automatically decides when to actually send to Kafka.
-    /// Returns count of records added to buffer.
-    /// Call flush() to ensure all messages are sent.
+    /// Messages are added to the internal buffer. Automatic flush is
+    /// triggered when `batch_size` or `linger_ms` thresholds are met.
+    /// Returns the number of records buffered.
+    ///
+    /// Call [`flush`](Self::flush) to force-send all buffered messages.
     pub async fn send_batch(&self, records: Vec<ProducerRecord>) -> Result<usize> {
         if records.is_empty() {
             return Ok(0);
@@ -488,15 +487,32 @@ impl Producer {
         rx.await.map_err(|_| KafkaError::ConnectionClosed)?
     }
 
-    /// Force flush buffer
+    /// Force flush the buffer.
     ///
     /// Waits for all buffered messages to be sent to Kafka.
-    /// Useful for ensuring all messages are delivered before shutdown.
     pub async fn flush(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.command_tx
             .send(ProducerCommand::Flush { barrier: tx })
             .map_err(|_| KafkaError::ConnectionClosed)?;
         rx.await.map_err(|_| KafkaError::ConnectionClosed)?
+    }
+
+    /// Close the producer.
+    ///
+    /// Flushes any remaining buffered messages and shuts down the
+    /// background task.
+    pub async fn close(&self) -> Result<()> {
+        // Send shutdown signal — the background task will flush then exit.
+        let _ = self.command_tx.send(ProducerCommand::Shutdown);
+        Ok(())
+    }
+}
+
+impl Drop for Producer {
+    fn drop(&mut self) {
+        // Best-effort flush on drop. If the runtime is still active the
+        // Shutdown command will handle it; otherwise buffered data is lost.
+        let _ = self.command_tx.send(ProducerCommand::Shutdown);
     }
 }

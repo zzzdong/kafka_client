@@ -258,8 +258,13 @@ where
     if len < 0 {
         return Ok(Vec::new());
     }
-    let mut items = Vec::with_capacity(len as usize);
-    for _ in 0..len {
+    let count = len as usize;
+    // 每元素至少 1 字节，数量不应超过剩余数据
+    if count > buf.remaining() {
+        return Err(ProtocolError::insufficient_data(count, buf.remaining()));
+    }
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
         items.push(decode_item(buf)?);
     }
     Ok(items)
@@ -291,6 +296,10 @@ where
         return Ok(Vec::new());
     }
     let count = len - 1;
+    // 每元素至少 1 字节，数量不应超过剩余数据
+    if count > buf.remaining() {
+        return Err(ProtocolError::insufficient_data(count, buf.remaining()));
+    }
     let mut items = Vec::with_capacity(count);
     for _ in 0..count {
         items.push(decode_item(buf)?);

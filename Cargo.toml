@@ -1,6 +1,6 @@
 [package]
 name = "kafka_client"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 authors = ["zzzdong <kuwater@163.com>"]
@@ -38,6 +38,7 @@ rand = "0.9"
 
 # 并发集合
 dashmap = "6.1"
+arc-swap = "1.7"
 
 # 错误处理
 thiserror = "2.0"

@@ -50,7 +50,14 @@ impl Decoder for KafkaCodec {
         }
 
         // 2. Read length
-        let size = i32::from_be_bytes([src[0], src[1], src[2], src[3]]) as usize;
+        let raw_size = i32::from_be_bytes([src[0], src[1], src[2], src[3]]);
+        if raw_size < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Negative frame size",
+            ));
+        }
+        let size = raw_size as usize;
 
         // 3. Check size limit
         if size > self.max_frame_size {

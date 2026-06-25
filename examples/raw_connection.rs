@@ -27,7 +27,7 @@ use std::net::SocketAddr;
 
 fn get_bootstrap_addr() -> SocketAddr {
     let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093".to_string());
     bootstrap
         .parse()
         .expect("Invalid bootstrap address format. Expected: host:port")

@@ -1,29 +1,36 @@
-# 3-broker KRaft Kafka cluster for integration tests.
+# 3-broker KRaft Kafka cluster with dual listeners.
+#
+# Architecture:
+#   INTERNAL listener   (9092) — broker-to-broker communication via container name
+#   EXTERNAL listener   (9093) — host/client access via localhost + port mapping
+#   CONTROLLER listener (9094) — KRaft controller quorum
 #
 # Usage:
 #   cd tests
-#   docker compose up -d
-#   KAFKA_BOOTSTRAP=127.0.0.1:29092,127.0.0.1:29093,127.0.0.1:29094 \
-#     KAFKA_CLUSTER_SIZE=3 KAFKA_RUNTIME=external \
-#     cargo test --test cluster --features integration_tests -- --nocapture
-#   docker compose down -v
+#   podman-compose up -d
+#   KAFKA_BOOTSTRAP=127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097 \
+#     cargo run --example stress_test
+#   podman-compose down -v
 
 services:
   kafka-1:
     image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
-    hostname: kafka-1
     container_name: kafka-1
+    hostname: kafka-1
     ports:
-      - "29092:9092"
-      - "29093:9093"
+      - "29093:9093"   # EXTERNAL — host → Kafka
+      - "29094:9094"   # CONTROLLER — for debugging
+    networks:
+      - kafka-cluster
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:29092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093,CONTROLLER://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://127.0.0.1:29093,INTERNAL://kafka-1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9094,2@kafka-2:9094,3@kafka-3:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
@@ -35,23 +42,27 @@ services:
       test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "127.0.0.1:9092"]
       interval: 5s
       timeout: 10s
-      retries: 10
+      retries: 30
       start_period: 30s
 
   kafka-2:
     image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
-    hostname: kafka-2
     container_name: kafka-2
+    hostname: kafka-2
     ports:
-      - "29094:9092"
+      - "29095:9093"   # EXTERNAL
+      - "29096:9094"   # CONTROLLER
+    networks:
+      - kafka-cluster
     environment:
       KAFKA_NODE_ID: 2
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:29094
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093,CONTROLLER://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://127.0.0.1:29095,INTERNAL://kafka-2:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9094,2@kafka-2:9094,3@kafka-3:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
@@ -61,28 +72,32 @@ services:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     depends_on:
       kafka-1:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "127.0.0.1:9092"]
       interval: 5s
       timeout: 10s
-      retries: 10
+      retries: 30
       start_period: 30s
 
   kafka-3:
     image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
-    hostname: kafka-3
     container_name: kafka-3
+    hostname: kafka-3
     ports:
-      - "29095:9092"
+      - "29097:9093"   # EXTERNAL
+      - "29098:9094"   # CONTROLLER
+    networks:
+      - kafka-cluster
     environment:
       KAFKA_NODE_ID: 3
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:29095
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093,CONTROLLER://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://127.0.0.1:29097,INTERNAL://kafka-3:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9094,2@kafka-2:9094,3@kafka-3:9094
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
@@ -92,10 +107,14 @@ services:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     depends_on:
       kafka-2:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "127.0.0.1:9092"]
       interval: 5s
       timeout: 10s
-      retries: 10
+      retries: 30
       start_period: 30s
+
+networks:
+  kafka-cluster:
+    driver: bridge
