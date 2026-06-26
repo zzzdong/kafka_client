@@ -1,6 +1,6 @@
 [package]
 name = "kafka-client-protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 authors = ["zzzdong <kuwater@163.com>"]
@@ -11,6 +11,6 @@ license = "Apache-2.0 OR MIT"
 
 [dependencies]
 bytes = "1.0"
-kafka-client-protocol-core = { version = "0.1.0", path = "../kafka-client-protocol-core" }
-kafka-client-protocol-derive = { version = "0.1.0", path = "../kafka-client-protocol-derive" }
+kafka-client-protocol-core = { version = "0.1.1", path = "../kafka-client-protocol-core" }
+kafka-client-protocol-derive = { version = "0.1.1", path = "../kafka-client-protocol-derive" }
 uuid = { version = "1.0", features = ["v4"] }

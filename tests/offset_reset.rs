@@ -2,21 +2,21 @@
 //!
 //! 验证 Earliest 消费者能从最早偏移量消费，Latest 消费者不阻塞。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test offset_reset --features integration_tests -- --nocapture
+//! 运行: cargo test --test offset_reset --features integration_tests -- --nocapture
+//! （需要先启动 docker compose 集群）
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
-use common::{KafkaInstance, consumer_config};
+use common::{build_test_client, consumer_config};
 use kafka_client::AutoOffsetReset;
 use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_offset_reset_policies() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     // Earliest 测试：先生产再消费
     common::create_topic(&client, "tc-reset", 2).await;
@@ -39,7 +39,7 @@ async fn test_offset_reset_policies() {
     common::create_topic(&client, "tc-latest", 2).await;
     common::produce_messages(&client, "tc-latest", 3).await;
 
-    let latest_client = server.build_client().await;
+    let latest_client = build_test_client().await;
     let mut consumer =
         latest_client.consumer(consumer_config("cg-latest-test", AutoOffsetReset::Latest));
     consumer
@@ -49,7 +49,7 @@ async fn test_offset_reset_policies() {
 
     // 等待组加入
     loop {
-        let a = consumer.assignment().await;
+        let a = consumer.group().assignment().await;
         let total: usize = a.values().map(|v| v.len()).sum();
         if total > 0 {
             break;
@@ -61,7 +61,10 @@ async fn test_offset_reset_policies() {
     let mut records = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     while std::time::Instant::now() < deadline {
-        let r = consumer.poll(3000).await.unwrap();
+        let r = consumer
+            .poll_timeout(Duration::from_millis(3000))
+            .await
+            .unwrap();
         if r.is_empty() {
             break;
         }

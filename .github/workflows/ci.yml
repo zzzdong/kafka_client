@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       kafka:
-        image: ${{ vars.KAFKA_IMAGE || env.KAFKA_IMAGE }}
+        image: ${{ env.KAFKA_IMAGE }}
         ports:
           - 29092:9092
         env:
@@ -76,7 +76,7 @@ jobs:
           KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
           CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
         options: >-
-          --health-cmd "kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092"
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092"
           --health-interval 5s
           --health-timeout 10s
           --health-retries 12
@@ -96,7 +96,6 @@ jobs:
       - name: Run single-node integration tests
         run: cargo test --features integration_tests -- --nocapture
         env:
-          KAFKA_RUNTIME: external
           KAFKA_BOOTSTRAP: 127.0.0.1:29092
           KAFKA_CLUSTER_SIZE: 1
           RUST_TEST_THREADS: 1
@@ -121,20 +120,23 @@ jobs:
         run: |
           docker compose down -v
           docker compose up -d
-          for i in $(seq 1 60); do
-            if docker compose ps | grep -qE "kafka-3.*healthy"; then
-              echo "Cluster healthy after ~${i}s"
-              break
-            fi
-            sleep 1
+          for container in kafka-1 kafka-2 kafka-3; do
+            echo -n "  ${container}... "
+            for i in $(seq 1 60); do
+              if docker exec "${container}" \
+                /opt/kafka/bin/kafka-broker-api-versions.sh \
+                --bootstrap-server "127.0.0.1:9092" &>/dev/null; then
+                echo "ready (~${i}s)"
+                break
+              fi
+              sleep 1
+            done
           done
-          docker compose ps
 
       - name: Run all integration tests against cluster
         run: cargo test --features integration_tests -- --nocapture
         env:
-          KAFKA_RUNTIME: external
-          KAFKA_BOOTSTRAP: 127.0.0.1:29092,127.0.0.1:29094,127.0.0.1:29095
+          KAFKA_BOOTSTRAP: 127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097
           KAFKA_CLUSTER_SIZE: 3
           RUST_TEST_THREADS: 1
 

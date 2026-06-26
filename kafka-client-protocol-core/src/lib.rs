@@ -12,7 +12,7 @@ pub mod record_batch;
 
 // 重新导出核心类型
 pub use codec::*;
-pub use error::{ProtocolError, ProtocolResult};
+pub use error::{KafkaErrorCode, ProtocolError, ProtocolResult};
 pub use kafka_client_protocol_derive::KafkaMessage;
 pub use message::{Message, Request, Response};
 pub use record_batch::{CompressionType, Header, Record, RecordBatch};

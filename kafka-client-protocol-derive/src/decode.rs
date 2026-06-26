@@ -153,14 +153,18 @@ fn generate_decode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
             let decode_ident = syn::Ident::new(decode_method, proc_macro2::Span::call_site());
             let batch_decode = quote! { <#inner_ty as ::kafka_client_protocol_core::Message>::#decode_ident(&mut batch_buf, version)? };
             if flexible {
+                // Fetch v12+: COMPACT_NULLABLE_RECORDS → uvint N+1
                 return quote! {
                     if #null_condition {
                         let len = decode_unsigned_varint(buf);
                         if len <= 1 {
-                            // len=0 → null, len=1 → empty bytes (partition fully consumed)
                             None
                         } else {
-                            let mut batch_buf = buf.split_to((len - 1) as usize);
+                            let data_len = (len - 1) as usize;
+                            if buf.remaining() < data_len {
+                                return Err(::kafka_client_protocol_core::ProtocolError::invalid_data("encoded_as_bytes data exceeds remaining buffer"));
+                            }
+                            let mut batch_buf = buf.split_to(data_len);
                             Some(#batch_decode)
                         }
                     } else {
@@ -168,12 +172,17 @@ fn generate_decode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
                         if len <= 1 {
                             None
                         } else {
-                            let mut batch_buf = buf.split_to((len - 1) as usize);
+                            let data_len = (len - 1) as usize;
+                            if buf.remaining() < data_len {
+                                return Err(::kafka_client_protocol_core::ProtocolError::invalid_data("encoded_as_bytes data exceeds remaining buffer"));
+                            }
+                            let mut batch_buf = buf.split_to(data_len);
                             Some(#batch_decode)
                         }
                     }
                 };
             } else {
+                // Fetch v0-11: NULLABLE_RECORDS → INT32 len
                 return quote! {
                     if #null_condition {
                         if buf.remaining() < 4 {
@@ -183,7 +192,11 @@ fn generate_decode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
                         if len <= 0 {
                             None
                         } else {
-                            let mut batch_buf = buf.split_to(len as usize);
+                            let data_len = len as usize;
+                            if buf.remaining() < data_len {
+                                return Err(::kafka_client_protocol_core::ProtocolError::invalid_data("encoded_as_bytes data exceeds remaining buffer"));
+                            }
+                            let mut batch_buf = buf.split_to(data_len);
                             Some(#batch_decode)
                         }
                     } else {
@@ -191,7 +204,11 @@ fn generate_decode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
                         if len < 0 {
                             return Err(::kafka_client_protocol_core::ProtocolError::invalid_data("unexpected negative length for non-nullable records"));
                         }
-                        let mut batch_buf = buf.split_to(len as usize);
+                        let data_len = len as usize;
+                        if buf.remaining() < data_len {
+                            return Err(::kafka_client_protocol_core::ProtocolError::invalid_data("encoded_as_bytes data exceeds remaining buffer"));
+                        }
+                        let mut batch_buf = buf.split_to(data_len);
                         Some(#batch_decode)
                     }
                 };

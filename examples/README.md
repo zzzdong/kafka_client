@@ -194,7 +194,7 @@ let client = KafkaClient::builder(vec![addr])
 ### Producer
 
 ```rust
-let producer = client.producer(ProducerConfig::default()).await?;
+let producer = client.producer(ProducerConfig::new()).await?;
 let record = ProducerRecord::new("topic", Bytes::from("message"));
 producer.send(record).await?;
 producer.flush().await?;
@@ -203,13 +203,12 @@ producer.flush().await?;
 ### Consumer
 
 ```rust
-let consumer = client.consumer(ConsumerConfig {
-    group_id: "my-group".to_string(),
-    auto_offset_reset: AutoOffsetReset::Earliest,
-    ..Default::default()
-});
+let consumer = client.consumer(
+    ConsumerConfig::new("my-group")
+        .with_earliest()
+);
 consumer.subscribe(vec!["topic".to_string()]).await?;
-let records = consumer.poll(5000).await?;
+let records = consumer.poll_timeout(Duration::from_millis(5000)).await?;
 ```
 
 ### Admin Operations

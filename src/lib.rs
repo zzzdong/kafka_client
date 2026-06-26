@@ -15,7 +15,7 @@
 //!     .build()
 //!     .await?;
 //!
-//! let producer = client.producer(ProducerConfig::default()).await?;
+//! let producer = client.producer(ProducerConfig::new()).await?;
 //! let consumer = client.consumer(ConsumerConfig::default()).await?;
 //! ```
 
@@ -43,8 +43,8 @@ pub use producer::{
 
 // Consumer types
 pub use consumer::{
-    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, GroupHandle, OffsetHandle,
-    PartitionAssignmentStrategy,
+    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, GroupConsumer, GroupHandle,
+    OffsetHandle, PartitionAssignmentStrategy, SimpleConsumer,
 };
 
 // Metadata types (for advanced users)

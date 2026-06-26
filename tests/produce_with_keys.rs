@@ -2,19 +2,19 @@
 //!
 //! 验证相同 key 的消息始终路由到同一分区。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test produce_with_keys --features integration_tests -- --nocapture
+//! 运行: cargo test --test produce_with_keys --features integration_tests -- --nocapture
+//! （需要先启动 docker compose 集群）
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
-use common::KafkaInstance;
+use common::build_test_client;
 use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_produce_with_keys() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     common::create_topic(&client, "tc-keys", 3).await;
 

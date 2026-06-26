@@ -56,7 +56,7 @@ async fn main() {
     )
     .with_client_id("raw-connection-example".to_string());
 
-    let mut conn = match builder.build().await {
+    let conn = match builder.build().await {
         Ok(c) => {
             println!("Connection established");
             c

@@ -38,17 +38,6 @@ fi
 echo ""
 
 # ------------------------------------------------------------------
-# 1. Check cargo login status
-# ------------------------------------------------------------------
-echo "==> Checking crates.io authentication..."
-if ! cargo token list &>/dev/null; then
-    echo "ERROR: Not logged in to crates.io. Run 'cargo login' first."
-    exit 1
-fi
-echo "    OK - authenticated to crates.io"
-echo ""
-
-# ------------------------------------------------------------------
 # 2. Publish sub-crates first (dependency order)
 # ------------------------------------------------------------------
 for crate in "${CRATES[@]}"; do

@@ -54,7 +54,7 @@ let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
     .build()
     .await?;
 
-let producer = client.producer(ProducerConfig::default()).await?;
+let producer = client.producer(ProducerConfig::new()).await?;
 
 // Send messages
 let record = ProducerRecord::new("my-topic", Bytes::from("hello world"));
@@ -68,22 +68,21 @@ producer.flush().await?;
 ### Consumer
 
 ```rust
-use kafka_client::{KafkaClient, ConsumerConfig, AutoOffsetReset};
+use kafka_client::{KafkaClient, ConsumerConfig};
 
 let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
     .build()
     .await?;
 
-let mut consumer = client.consumer(ConsumerConfig {
-    group_id: "my-consumer-group".to_string(),
-    auto_offset_reset: AutoOffsetReset::Earliest,
-    ..Default::default()
-});
+let mut consumer = client.consumer(
+    ConsumerConfig::new("my-consumer-group")
+        .with_earliest()
+);
 
 consumer.subscribe(vec!["my-topic".to_string()]).await?;
 
 // Poll for messages
-let records = consumer.poll(5000).await?;
+let records = consumer.poll_timeout(Duration::from_millis(5000)).await?;
 for record in records {
     println!("Received: {:?}", record.value);
 }

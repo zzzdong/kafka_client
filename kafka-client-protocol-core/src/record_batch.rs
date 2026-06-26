@@ -275,10 +275,26 @@ impl RecordBatch {
         }
         let records_count = buf.get_i32();
 
-        // 解码 records
+        // 解码 records（处理压缩）
+        if records_count < 0 {
+            return Err(ProtocolError::invalid_data("Invalid records count"));
+        }
+        let compression_type = CompressionType::from_attributes(attributes);
+        let records_data = if compression_type != CompressionType::None {
+            // 压缩：records 字段中包含压缩后的整块数据
+            let compressed = buf.copy_to_bytes(buf.remaining());
+            let decompressed = decompress_records(&compressed, compression_type)?;
+            Bytes::from(decompressed)
+        } else {
+            if records_count as usize > buf.remaining() {
+                return Err(ProtocolError::invalid_data("Invalid records count"));
+            }
+            buf.copy_to_bytes(buf.remaining())
+        };
+        let mut records_buf = records_data;
         let mut records = Vec::with_capacity(records_count as usize);
         for _ in 0..records_count {
-            records.push(Record::decode(buf)?);
+            records.push(Record::decode(&mut records_buf)?);
         }
 
         // TODO: 验证 CRC
@@ -396,7 +412,14 @@ impl Record {
 
     /// 解码 Record
     fn decode(buf: &mut Bytes) -> ProtocolResult<Self> {
-        let length = decode_varint(buf)? as i32;
+        let length_raw = decode_varint(buf)?;
+        if length_raw < 0 {
+            return Err(ProtocolError::invalid_data(format!(
+                "Record length is negative: {}",
+                length_raw
+            )));
+        }
+        let length = length_raw as i32;
 
         let _record_start = buf.len();
         let _expected_end = _record_start.saturating_sub(length as usize);
@@ -438,7 +461,11 @@ impl Record {
         };
 
         // 头
-        let headers_count = decode_varint(buf)? as i32;
+        let headers_count_raw = decode_varint(buf)?;
+        if headers_count_raw < 0 || headers_count_raw as usize > buf.remaining() {
+            return Err(ProtocolError::invalid_data("Invalid headers count"));
+        }
+        let headers_count = headers_count_raw as i32;
         let mut headers = Vec::with_capacity(headers_count as usize);
         for _ in 0..headers_count {
             headers.push(Header::decode(buf)?);
@@ -554,6 +581,8 @@ impl Message for RecordBatch {
     }
 
     fn decode(buf: &mut Bytes, _version: i16) -> ProtocolResult<Self> {
+        let total_bytes = buf.remaining();
+
         if buf.remaining() < 8 {
             return Err(ProtocolError::insufficient_data(8, buf.remaining()));
         }
@@ -563,6 +592,13 @@ impl Message for RecordBatch {
             return Err(ProtocolError::insufficient_data(4, buf.remaining()));
         }
         let batch_length = buf.get_i32();
+
+        if batch_length < 0 {
+            return Err(ProtocolError::invalid_data(&format!(
+                "RecordBatch header: total_buf={}, base_offset={}, batch_length={} (negative!)",
+                total_bytes, base_offset, batch_length,
+            )));
+        }
 
         if buf.remaining() < batch_length as usize {
             return Err(ProtocolError::insufficient_data(
@@ -645,6 +681,54 @@ fn decode_varint(buf: &mut Bytes) -> ProtocolResult<i64> {
     }
 
     Ok(zigzag_decode(result))
+}
+
+// ============================================================================
+// 解压辅助函数
+// ============================================================================
+
+/// 解压 records 数据
+fn decompress_records(compressed: &[u8], compression: CompressionType) -> ProtocolResult<Vec<u8>> {
+    use std::io::Read;
+    match compression {
+        CompressionType::None => Ok(compressed.to_vec()),
+        CompressionType::Gzip => {
+            let mut decoder = flate2::read::GzDecoder::new(compressed);
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                ProtocolError::invalid_data(format!("Gzip decompress error: {}", e))
+            })?;
+            Ok(decompressed)
+        }
+        CompressionType::Snappy => {
+            let len = snap::raw::decompress_len(compressed).map_err(|e| {
+                ProtocolError::invalid_data(format!("Snappy decompress error: {}", e))
+            })?;
+            let mut output = vec![0u8; len];
+            snap::raw::Decoder::new()
+                .decompress(compressed, &mut output)
+                .map_err(|e| {
+                    ProtocolError::invalid_data(format!("Snappy decompress error: {}", e))
+                })?;
+            Ok(output)
+        }
+        CompressionType::Lz4 => {
+            let mut decompressed = Vec::new();
+            lz4_flex::frame::FrameDecoder::new(compressed)
+                .read_to_end(&mut decompressed)
+                .map_err(|e| ProtocolError::invalid_data(format!("LZ4 decompress error: {}", e)))?;
+            Ok(decompressed)
+        }
+        CompressionType::Zstd => {
+            let mut decoder = zstd::Decoder::new(compressed)
+                .map_err(|e| ProtocolError::invalid_data(format!("Zstd init error: {}", e)))?;
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).map_err(|e| {
+                ProtocolError::invalid_data(format!("Zstd decompress error: {}", e))
+            })?;
+            Ok(decompressed)
+        }
+    }
 }
 
 // ============================================================================

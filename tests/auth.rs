@@ -9,17 +9,20 @@
 //! docker compose -f docker-compose.sasl.yml up -d
 //!
 //! SASL_MECHANISM=PLAIN SASL_USERNAME=admin SASL_PASSWORD=admin-secret \
-//!   KAFKA_BOOTSTRAP=127.0.0.1:9094 KAFKA_RUNTIME=external \
+//!   KAFKA_BOOTSTRAP_SASL=127.0.0.1:9094 \
 //!   cargo test --test auth --features integration_tests -- --nocapture
 //! ```
+//!
+//! 或者通过 run-all-tests.sh 自动运行（脚本会设置 KAFKA_BOOTSTRAP_SASL）。
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
+use kafka_client::protocol::create_topics_request::CreatableTopic;
+use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::{
-    AutoOffsetReset, ConsumerConfig, KafkaClient, PartitionAssignmentStrategy, ProducerConfig,
-    ProducerRecord, SaslMechanismType,
+    ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord, SaslMechanismType,
 };
 use std::time::Duration;
 
@@ -43,8 +46,9 @@ async fn test_sasl_authentication() {
         return;
     };
 
-    let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9094".to_string());
+    let bootstrap = std::env::var("KAFKA_BOOTSTRAP_SASL")
+        .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
+        .unwrap_or_else(|_| "127.0.0.1:9094".to_string());
     let addrs: Vec<std::net::SocketAddr> = bootstrap
         .split(',')
         .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
@@ -79,19 +83,38 @@ async fn test_sasl_authentication() {
     // 2. 基本生产消费验证
     let topic = "sasl-auth-test-topic";
 
-    // 创建主题
-    common::create_topic(&client, topic, 1).await;
+    // 创建主题（SASL 是单节点集群，rf=1）
+    let request = CreateTopicsRequest {
+        topics: vec![CreatableTopic {
+            name: topic.to_string(),
+            num_partitions: 1,
+            replication_factor: 1,
+            assignments: vec![],
+            configs: vec![],
+        }],
+        timeout_ms: 10000,
+        validate_only: false,
+    };
+    let response: CreateTopicsResponse = client
+        .cluster()
+        .send_to_any_broker(&request)
+        .await
+        .expect("Failed to send CreateTopicsRequest");
+    for t in &response.topics {
+        assert!(
+            t.error_code == 0 || t.error_code == 36,
+            "Create topic '{}' failed: error_code {} ({:?})",
+            topic,
+            t.error_code,
+            t.error_message
+        );
+    }
+    println!("  Topic '{}' created (rf=1)", topic);
+    common::wait_for_topic_ready(&client, topic, 1).await;
 
     // 生产消息
     let producer = client
-        .producer(ProducerConfig {
-            acks: 1,
-            timeout_ms: 10000,
-            retries: 3,
-            batch_size: 16384,
-            linger_ms: 50,
-            ..Default::default()
-        })
+        .producer(ProducerConfig::new())
         .await
         .expect("Failed to create producer");
 
@@ -105,27 +128,14 @@ async fn test_sasl_authentication() {
     producer.flush().await.expect("Failed to flush producer");
     println!("  Produced 5 messages via SASL auth");
 
-    // 消费消息
-    let mut consumer = client.consumer(ConsumerConfig {
-        group_id: "sasl-auth-test-group".to_string(),
-        auto_commit: true,
-        auto_commit_interval: Duration::from_secs(1),
-        auto_offset_reset: AutoOffsetReset::Earliest,
-        min_bytes: 1,
-        max_bytes: 1048576,
-        partition_max_bytes: 1048576,
-        max_wait: Duration::from_secs(5),
-        session_timeout: Duration::from_secs(10),
-        rebalance_timeout: Duration::from_secs(30),
-        heartbeat_interval: Duration::from_secs(3),
-        partition_assignment_strategy: PartitionAssignmentStrategy::Range,
-    });
+    // 消费消息（从最早偏移开始，避免错过已生产的消息）
+    let mut consumer = client.consumer(ConsumerConfig::new("sasl-auth-test-group").with_earliest());
 
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
 
     // 等待分配
     for i in 0..10 {
-        let assignment = consumer.assignment().await;
+        let assignment = consumer.group().assignment().await;
         let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
         if has_partitions > 0 {
             println!("  Consumer joined group after ~{}s", i + 1);
@@ -138,7 +148,7 @@ async fn test_sasl_authentication() {
     let mut all = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while all.len() < 5 && std::time::Instant::now() < deadline {
-        match consumer.poll(3000).await {
+        match consumer.poll_timeout(Duration::from_millis(3000)).await {
             Ok(records) => all.extend(records),
             Err(e) => eprintln!("  WARNING: Poll error: {}", e),
         }

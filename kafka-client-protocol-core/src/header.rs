@@ -159,6 +159,9 @@ impl TaggedField {
 /// 解码 tagged fields
 pub fn decode_tagged_fields(buf: &mut Bytes) -> ProtocolResult<Vec<TaggedField>> {
     let num_fields = decode_unsigned_varint(buf) as usize;
+    if num_fields > buf.remaining() {
+        return Err(ProtocolError::invalid_data("Too many tagged fields"));
+    }
     let mut fields = Vec::with_capacity(num_fields);
     for _ in 0..num_fields {
         fields.push(TaggedField::decode(buf)?);

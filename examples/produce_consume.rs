@@ -19,20 +19,21 @@
 use bytes::Bytes;
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{
-    AutoOffsetReset, ConsumerConfig, KafkaClient, PartitionAssignmentStrategy, ProducerConfig,
-    ProducerRecord,
-};
+use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
+    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
+        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
         .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address format. Expected: host:port"))
+        .map(|s| {
+            s.trim()
+                .parse()
+                .expect("Invalid bootstrap address format. Expected: host:port")
+        })
         .collect()
 }
 
@@ -122,14 +123,7 @@ async fn main() {
     }
 
     // Create producer config (will be used later)
-    let producer_config = ProducerConfig {
-        acks: 1,
-        timeout_ms: 5000,
-        retries: 3,
-        batch_size: 16384,
-        linger_ms: 50,
-        ..Default::default()
-    };
+    let producer_config = ProducerConfig::new();
 
     let producer = match client.producer(producer_config).await {
         Ok(p) => p,
@@ -141,20 +135,7 @@ async fn main() {
 
     // Consume messages — start before producing
     println!("\n[4] Consuming messages...");
-    let consumer_config = ConsumerConfig {
-        group_id: "example-consumer-group".to_string(),
-        auto_commit: true,
-        auto_commit_interval: Duration::from_secs(1),
-        auto_offset_reset: AutoOffsetReset::Earliest,
-        min_bytes: 1,
-        max_bytes: 1048576,
-        partition_max_bytes: 1048576,
-        max_wait: Duration::from_secs(5),
-        session_timeout: Duration::from_secs(10),
-        rebalance_timeout: Duration::from_secs(30),
-        heartbeat_interval: Duration::from_secs(3),
-        partition_assignment_strategy: PartitionAssignmentStrategy::Range,
-    };
+    let consumer_config = ConsumerConfig::new("example-consumer-group");
 
     let mut consumer = client.consumer(consumer_config);
 
@@ -173,7 +154,7 @@ async fn main() {
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let mut count = 0usize;
         while std::time::Instant::now() < deadline && count < 3 {
-            match consumer.poll(2000).await {
+            match consumer.poll_timeout(Duration::from_millis(2000)).await {
                 Ok(recs) => {
                     for r in recs {
                         println!(

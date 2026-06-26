@@ -24,11 +24,15 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
+    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
+        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
         .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address format. Expected: host:port"))
+        .map(|s| {
+            s.trim()
+                .parse()
+                .expect("Invalid bootstrap address format. Expected: host:port")
+        })
         .collect()
 }
 

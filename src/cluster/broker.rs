@@ -9,10 +9,9 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::connection::{Builder, Connection};
+use crate::connection::{Builder, ConnectionHandle};
 use crate::error::{KafkaError, Result};
 use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
@@ -20,19 +19,20 @@ use kafka_client_protocol::{ApiVersionsRequest, MetadataResponseBroker};
 
 /// Broker connection entry.
 ///
-/// `conn` uses `ArcSwap` so that a corrupted connection can be atomically
-/// replaced without breaking `Arc` references held by in-flight tasks.
+/// `conn` uses `ArcSwap` so that a corrupted connection handle can be
+/// atomically replaced without breaking references held by callers that
+/// already hold a clone of the handle.
 struct BrokerEntry {
     addr: SocketAddr,
-    conn: ArcSwap<Mutex<Connection>>,
+    conn: ArcSwap<ConnectionHandle>,
     healthy: AtomicBool,
 }
 
 impl BrokerEntry {
-    fn new(addr: SocketAddr, conn: Connection) -> Self {
+    fn new(addr: SocketAddr, conn: ConnectionHandle) -> Self {
         Self {
             addr,
-            conn: ArcSwap::new(Arc::new(Mutex::new(conn))),
+            conn: ArcSwap::new(Arc::new(conn)),
             healthy: AtomicBool::new(true),
         }
     }
@@ -49,20 +49,24 @@ impl BrokerEntry {
         self.healthy.store(true, Ordering::Relaxed);
     }
 
-    fn load_conn(&self) -> Arc<Mutex<Connection>> {
+    fn load_conn(&self) -> Arc<ConnectionHandle> {
         self.conn.load_full()
     }
 
-    /// Atomically replace the connection and mark healthy.
-    fn swap_conn(&self, new_conn: Connection) {
-        self.conn.store(Arc::new(Mutex::new(new_conn)));
+    /// Atomically replace the connection handle and mark healthy.
+    fn swap_conn(&self, new_conn: ConnectionHandle) {
+        self.conn.store(Arc::new(new_conn));
         self.mark_healthy();
     }
 }
 
 /// Manage connections to all brokers in the cluster.
 ///
-/// Uses `DashMap` for per-broker locking.
+/// Each broker has a single [`ConnectionHandle`] stored behind an
+/// [`ArcSwap`] so that:
+/// - Callers can hold a clone of the handle without a lock.
+/// - A corrupted handle can be atomically replaced.
+/// - Multiple requests can be in-flight concurrently (handles are lock-free).
 pub struct BrokerManager {
     bootstrap_servers: Vec<SocketAddr>,
     security_protocol: SecurityProtocol,
@@ -97,7 +101,7 @@ impl BrokerManager {
         }
     }
 
-    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<Connection> {
+    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
         let mut builder = Builder::new(
             addr,
             self.security_protocol.clone(),
@@ -134,27 +138,26 @@ impl BrokerManager {
     }
 
     /// Register a broker connection.
-    async fn register_broker(&self, node_id: i32, addr: SocketAddr, conn: Connection) {
+    async fn register_broker(&self, node_id: i32, addr: SocketAddr, conn: ConnectionHandle) {
         if let Some(old_node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if old_node_id != node_id {
                 self.brokers.remove(&old_node_id);
             }
         }
         self.addr_to_node.insert(addr, node_id);
-        self.brokers
-            .insert(node_id, BrokerEntry::new(addr, conn));
+        self.brokers.insert(node_id, BrokerEntry::new(addr, conn));
     }
 
-    /// Get connection for a broker by address.
+    /// Get a connection handle for a broker by address.
     ///
-    /// Returns a fresh or healthy connection. Unhealthy entries are
-    /// transparently reconnected.
-    pub async fn get_connection(&self, addr: SocketAddr) -> Result<Arc<Mutex<Connection>>> {
+    /// Returns a handle to a healthy connection. Unhealthy entries trigger an
+    /// automatic reconnect.
+    pub async fn get_connection(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
         // Fast path: find existing entry and return healthy connection
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(entry) = self.brokers.get(&node_id) {
                 if entry.is_healthy() {
-                    return Ok(entry.load_conn());
+                    return Ok(entry.load_conn().as_ref().clone());
                 }
                 // Unhealthy — try to reconnect inline
                 drop(entry);
@@ -173,7 +176,7 @@ impl BrokerManager {
         self.register_broker(node_id, addr, conn).await;
         self.brokers
             .get(&node_id)
-            .map(|e| e.load_conn())
+            .map(|e| e.load_conn().as_ref().clone())
             .ok_or_else(|| {
                 KafkaError::InvalidConfiguration(
                     "Failed to register new broker connection".to_string(),
@@ -182,18 +185,18 @@ impl BrokerManager {
     }
 
     /// Try to reconnect and atomically swap the connection for a node.
-    /// Returns the new connection on success, `None` if the entry was removed.
+    /// Returns the new connection handle on success, `None` if the entry was removed.
     async fn try_swap_connection(
         &self,
         node_id: i32,
         addr: SocketAddr,
-    ) -> Option<Arc<Mutex<Connection>>> {
+    ) -> Option<ConnectionHandle> {
         match self.connect_to_broker(addr).await {
             Ok(new_conn) => {
                 if let Some(entry) = self.brokers.get(&node_id) {
                     entry.swap_conn(new_conn);
                     debug!("Reconnected broker {} at {}", node_id, addr);
-                    return Some(entry.load_conn());
+                    return Some(entry.load_conn().as_ref().clone());
                 }
                 None
             }
@@ -204,12 +207,12 @@ impl BrokerManager {
         }
     }
 
-    /// Get any healthy broker connection.
-    pub fn get_any_healthy_broker(&self) -> Option<(SocketAddr, Arc<Mutex<Connection>>)> {
+    /// Get any healthy broker connection handle.
+    pub fn get_any_healthy_broker(&self) -> Option<(SocketAddr, ConnectionHandle)> {
         self.brokers
             .iter()
             .find(|e| e.is_healthy())
-            .map(|e| (e.addr, e.load_conn()))
+            .map(|e| (e.addr, e.load_conn().as_ref().clone()))
     }
 
     /// Get all known broker addresses.
@@ -246,8 +249,9 @@ impl BrokerManager {
 
     /// Mark a broker as unhealthy.
     ///
-    /// Does *not* remove the entry — the connection is kept for in-flight
-    /// tasks but future callers will trigger a reconnect.
+    /// Does *not* remove the entry — callers that already hold a
+    /// `ConnectionHandle` clone can still use it, but future
+    /// [`get_connection`](Self::get_connection) calls will trigger a reconnect.
     pub fn mark_unhealthy(&self, addr: SocketAddr) {
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(entry) = self.brokers.get(&node_id) {
@@ -259,36 +263,26 @@ impl BrokerManager {
 
     /// Force-close a corrupted connection by atomically replacing it.
     ///
-    /// Removes the old entry from the address map, spawns a best-effort
-    /// close of the old connection, and replaces the entry with a fresh
-    /// connection so concurrent tasks always see a valid connection.
+    /// Creates a fresh connection and swaps it in. The old handle drops,
+    /// which closes the channel to its reactor, causing the old reactor
+    /// task to exit cleanly.
     pub async fn force_close_connection(&self, addr: SocketAddr) {
         let node_id = match self.addr_to_node.get(&addr).map(|e| *e) {
             Some(id) => id,
             None => return,
         };
 
-        // Try to create a fresh connection
         match self.connect_to_broker(addr).await {
             Ok(new_conn) => {
-                // Atomically swap: any task that already loaded an old `Arc`
-                // still holds it, but new `load_conn()` calls see the new one.
                 if let Some(entry) = self.brokers.get(&node_id) {
-                    // Best-effort close the old connection in background
-                    let old = entry.conn.swap(Arc::new(Mutex::new(new_conn)));
-                    entry.mark_healthy();
-                    tokio::spawn(async move {
-                        if let Ok(conn) = Arc::try_unwrap(old) {
-                            let conn = conn.into_inner();
-                            let _ = conn.close().await;
-                        }
-                    });
-                    warn!("Force-closed (and replaced) connection to broker {} at {}", node_id, addr);
+                    entry.swap_conn(new_conn);
+                    warn!(
+                        "Force-closed (and replaced) connection to broker {} at {}",
+                        node_id, addr
+                    );
                 }
             }
             Err(e) => {
-                // Cannot reconnect — remove the entry entirely so callers
-                // fall through to `get_connection` which will retry.
                 warn!(
                     "Force-close for broker {} at {} failed to reconnect: {}",
                     node_id, addr, e
@@ -303,20 +297,11 @@ impl BrokerManager {
     pub async fn close(&self) -> Result<()> {
         let node_ids: Vec<i32> = self.brokers.iter().map(|e| *e.key()).collect();
         for node_id in node_ids {
-            if let Some((_, entry)) = self.brokers.remove(&node_id) {
-                let old = entry.conn.into_inner();
-                if let Ok(conn) = Arc::try_unwrap(old) {
-                    let conn = conn.into_inner();
-                    if let Err(e) = conn.close().await {
-                        warn!(
-                            "Error closing connection to broker {} at {}: {}",
-                            node_id, entry.addr, e
-                        );
-                    }
-                }
-            }
+            self.brokers.remove(&node_id);
+            self.addr_to_node.retain(|_, v| *v != node_id);
         }
-        self.addr_to_node.clear();
+        // ConnectionHandle's Drop will close the channel to the reactor,
+        // which causes the reactor to exit and clean up the TCP socket.
         Ok(())
     }
 
@@ -331,11 +316,8 @@ impl BrokerManager {
                 interval.tick().await;
                 debug!("Starting broker health check");
 
-                let entries: Vec<(i32, SocketAddr)> = this
-                    .brokers
-                    .iter()
-                    .map(|e| (*e.key(), e.addr))
-                    .collect();
+                let entries: Vec<(i32, SocketAddr)> =
+                    this.brokers.iter().map(|e| (*e.key(), e.addr)).collect();
 
                 for (node_id, addr) in &entries {
                     let healthy = this
@@ -346,13 +328,13 @@ impl BrokerManager {
 
                     if healthy {
                         let conn = this.brokers.get(node_id).map(|e| e.load_conn());
-                        if let Some(ref conn) = conn {
-                            let mut guard = conn.lock().await;
+                        if let Some(conn) = conn {
+                            let handle = conn.as_ref().clone();
                             let request = ApiVersionsRequest {
                                 client_software_name: String::new(),
                                 client_software_version: String::new(),
                             };
-                            match guard
+                            match handle
                                 .send_request::<_, crate::protocol::ApiVersionsResponse>(&request)
                                 .await
                             {
@@ -365,7 +347,6 @@ impl BrokerManager {
                                 }
                             }
                         }
-                        drop(conn);
                         this.mark_unhealthy(*addr);
                     }
 

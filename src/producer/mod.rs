@@ -115,16 +115,72 @@ pub struct ProducerConfig {
     pub linger_ms: u64,
 }
 
-impl Default for ProducerConfig {
-    fn default() -> Self {
+impl ProducerConfig {
+    /// Create a new producer config with sensible defaults.
+    ///
+    /// ```ignore
+    /// use kafka_client::ProducerConfig;
+    ///
+    /// // Builder pattern
+    /// let config = ProducerConfig::new()
+    ///     .with_acks(-1)
+    ///     .with_retries(5);
+    /// ```
+    pub fn new() -> Self {
         Self {
             acks: 1,
             timeout_ms: 5000,
-            routing: PartitionRouting::default(),
+            routing: PartitionRouting::HashKey,
             retries: 3,
             batch_size: 16384,
             linger_ms: 100,
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Builder methods
+    // ------------------------------------------------------------------
+
+    /// Set the required acks (-1 = all, 0 = none, 1 = leader).
+    pub fn with_acks(mut self, acks: i16) -> Self {
+        self.acks = acks;
+        self
+    }
+
+    /// Set the request timeout in milliseconds.
+    pub fn with_timeout(mut self, timeout_ms: i32) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+
+    /// Set the partition routing strategy.
+    pub fn with_routing(mut self, routing: PartitionRouting) -> Self {
+        self.routing = routing;
+        self
+    }
+
+    /// Set the number of retries on transient errors.
+    pub fn with_retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    /// Set the batch size in bytes for batching messages.
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Set the linger time in milliseconds before flushing a batch.
+    pub fn with_linger(mut self, linger_ms: u64) -> Self {
+        self.linger_ms = linger_ms;
+        self
+    }
+}
+
+impl Default for ProducerConfig {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -166,8 +222,7 @@ impl ProducerState {
             return Ok(());
         }
 
-        let records: HashMap<(String, i32), Vec<ProducerRecord>> =
-            std::mem::take(&mut self.buffer);
+        let records: HashMap<(String, i32), Vec<ProducerRecord>> = std::mem::take(&mut self.buffer);
         self.buffered_bytes = 0;
         self.last_send = Instant::now();
 

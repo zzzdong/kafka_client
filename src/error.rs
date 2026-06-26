@@ -76,6 +76,15 @@ pub enum KafkaError {
 
     #[error("Correlation ID mismatch: expected {expected}, actual {actual}")]
     CorrelationIdMismatch { expected: i32, actual: i32 },
+
+    #[error("Group rebalance required")]
+    RebalanceRequired,
+
+    #[error("Illegal group generation: {0}")]
+    IllegalGeneration(i32),
+
+    #[error("Unknown member id: {0}")]
+    UnknownMemberId(String),
 }
 
 impl From<std::io::Error> for KafkaError {

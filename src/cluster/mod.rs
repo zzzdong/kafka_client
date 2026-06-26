@@ -150,29 +150,35 @@ impl ClusterClient {
         Req: Request,
         Resp: Response,
     {
-        let conn = self.broker_manager.get_connection(broker_addr).await?;
-        let mut conn_guard = conn.lock().await;
-        let result = conn_guard.send_request(request).await;
-        drop(conn_guard);
+        let handle = self.broker_manager.get_connection(broker_addr).await?;
+        let result = handle.send_request(request).await;
 
         match result {
             Ok(resp) => Ok(resp),
             Err(e @ KafkaError::CorrelationIdMismatch { .. })
             | Err(e @ KafkaError::Protocol(_)) => {
-                // Connection is corrupted — force close and create a fresh one.
                 warn!(
                     "Broker {} returned protocol error ({}), force-closing connection",
                     broker_addr, e
                 );
-                self.broker_manager.force_close_connection(broker_addr).await;
+                self.broker_manager.mark_unhealthy(broker_addr);
+                self.broker_manager
+                    .force_close_connection(broker_addr)
+                    .await;
 
-                // Refresh metadata in case the leader changed
                 let _ = self.refresh_metadata().await;
 
-                // Retry once with a fresh connection
-                let fresh_conn = self.broker_manager.get_connection(broker_addr).await?;
-                let mut fresh_guard = fresh_conn.lock().await;
-                fresh_guard.send_request(request).await
+                let fresh_handle = self.broker_manager.get_connection(broker_addr).await?;
+                let retry_result = fresh_handle.send_request(request).await;
+                if let Err(ref e) = retry_result {
+                    warn!(
+                        "Retry to broker {} also failed: {}, api_key={}",
+                        broker_addr,
+                        e,
+                        request.api_key(),
+                    );
+                }
+                retry_result
             }
             Err(e) => {
                 self.broker_manager.mark_unhealthy(broker_addr);
@@ -191,19 +197,17 @@ impl ClusterClient {
         Resp: Response,
     {
         // Try healthy broker first
-        if let Some((addr, conn)) = self.broker_manager.get_any_healthy_broker() {
-            let mut conn_guard = conn.lock().await;
-            match conn_guard.send_request(request).await {
+        if let Some((addr, handle)) = self.broker_manager.get_any_healthy_broker() {
+            match handle.send_request(request).await {
                 Ok(resp) => return Ok(resp),
                 Err(e @ KafkaError::CorrelationIdMismatch { .. })
                 | Err(e @ KafkaError::Protocol(_)) => {
                     warn!("Broker {} protocol error ({}), force-closing", addr, e);
-                    drop(conn_guard);
+                    self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
                 }
                 Err(e) => {
                     warn!("Request to healthy broker {} failed: {}", addr, e);
-                    drop(conn_guard);
                     self.broker_manager.mark_unhealthy(addr);
                 }
             }
@@ -213,9 +217,8 @@ impl ClusterClient {
         let addresses: Vec<SocketAddr> = self.broker_manager.all_broker_addresses();
 
         for addr in addresses {
-            let conn = self.broker_manager.get_connection(addr).await?;
-            let mut conn_guard = conn.lock().await;
-            match conn_guard.send_request(request).await {
+            let handle = self.broker_manager.get_connection(addr).await?;
+            match handle.send_request(request).await {
                 Ok(resp) => return Ok(resp),
                 Err(e @ KafkaError::CorrelationIdMismatch { .. })
                 | Err(e @ KafkaError::Protocol(_)) => {
@@ -225,7 +228,7 @@ impl ClusterClient {
                         request.api_key(),
                         e
                     );
-                    drop(conn_guard);
+                    self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
                 }
                 Err(e) => {
@@ -235,7 +238,6 @@ impl ClusterClient {
                         addr,
                         e
                     );
-                    drop(conn_guard);
                     self.broker_manager.mark_unhealthy(addr);
                 }
             }

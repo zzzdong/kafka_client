@@ -5,33 +5,29 @@
 //! - 它们会创建/删除主题，耗时较长，不适合作为普通 `cargo test` 的一部分。
 //!
 //! 运行方式：
-//!   KAFKA_BOOTSTRAP=127.0.0.1:29092,127.0.0.1:29093,127.0.0.1:29094 \
-//!   KAFKA_CLUSTER_SIZE=3 \
-//!   KAFKA_RUNTIME=external \
 //!   cargo test --test cluster --features integration_tests -- --nocapture
+//! （需要先通过 `cd tests && docker compose up -d` 启动 3-broker 集群）
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::{
-    KafkaInstance, assert_cluster_size, consume_all, create_topic, partition_leader_distribution,
-    produce_messages,
+    assert_cluster_size, build_test_client, cluster_size, consume_all, create_topic,
+    partition_leader_distribution, produce_messages,
 };
 
 #[tokio::test]
 async fn test_cluster_metadata_reports_multiple_brokers() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
-    let expected = server.config().cluster_size;
+    let expected = cluster_size();
     assert_cluster_size(&client, expected).await;
 }
 
 #[tokio::test]
 async fn test_cluster_produce_consume_with_replication() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-basic", 3).await;
     produce_messages(&client, "tc-cluster-basic", 9).await;
@@ -46,8 +42,7 @@ async fn test_cluster_produce_consume_with_replication() {
 
 #[tokio::test]
 async fn test_cluster_partition_leaders_are_distributed() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-leaders", 6).await;
 
@@ -57,7 +52,7 @@ async fn test_cluster_partition_leaders_are_distributed() {
     println!("  Leader distribution: {:?}", dist);
     let distinct_leaders = dist.len();
 
-    if server.config().cluster_size >= 3 {
+    if cluster_size() >= 3 {
         assert!(
             distinct_leaders >= 2,
             "Expected leaders distributed across at least 2 brokers, got {}",
@@ -72,8 +67,7 @@ async fn test_cluster_partition_leaders_are_distributed() {
 
 #[tokio::test]
 async fn test_cluster_consumer_group_with_multiple_brokers() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-group", 3).await;
     produce_messages(&client, "tc-cluster-group", 6).await;

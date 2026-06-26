@@ -17,16 +17,14 @@
 use bytes::Bytes;
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{
-    AutoOffsetReset, ConsumerConfig, KafkaClient, PartitionAssignmentStrategy, ProducerConfig,
-    ProducerRecord,
-};
+use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
+    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
+        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     bootstrap
         .split(',')
         .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
@@ -55,8 +53,7 @@ fn get_batch_size() -> usize {
 async fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .try_init();
 
@@ -139,14 +136,10 @@ async fn main() {
     // =====================================================================
     println!("\n[3/5] 开始生产 {} 条消息...", msg_count);
 
-    let producer_config = ProducerConfig {
-        acks: 1,
-        timeout_ms: 15000,
-        retries: 3,
-        batch_size: 65536,
-        linger_ms: 10,
-        routing: Default::default(),
-    };
+    let producer_config = ProducerConfig::new()
+        .with_timeout(15000)
+        .with_batch_size(65536)
+        .with_linger(10);
 
     let producer = match client.producer(producer_config).await {
         Ok(p) => p,
@@ -190,7 +183,10 @@ async fn main() {
 
         batch_num += 1;
         if batch_num % 20 == 0 {
-            print!("\r  已发送: {}/{} (batch #{})", total_produced, msg_count, batch_num);
+            print!(
+                "\r  已发送: {}/{} (batch #{})",
+                total_produced, msg_count, batch_num
+            );
             std::io::Write::flush(&mut std::io::stdout()).ok();
         }
     }
@@ -214,20 +210,13 @@ async fn main() {
     // =====================================================================
     println!("\n[4/5] 开始消费所有消息...");
 
-    let consumer_config = ConsumerConfig {
-        group_id: "stress-test-group".to_string(),
-        auto_commit: true,
-        auto_commit_interval: Duration::from_secs(2),
-        auto_offset_reset: AutoOffsetReset::Earliest,
-        min_bytes: 1,
-        max_bytes: 50 * 1024 * 1024,
-        partition_max_bytes: 10 * 1024 * 1024,
-        max_wait: Duration::from_secs(3),
-        session_timeout: Duration::from_secs(15),
-        rebalance_timeout: Duration::from_secs(30),
-        heartbeat_interval: Duration::from_secs(3),
-        partition_assignment_strategy: PartitionAssignmentStrategy::Range,
-    };
+    let consumer_config = ConsumerConfig::new("stress-test-group")
+        .with_auto_commit_interval(Duration::from_secs(2))
+        .with_earliest()
+        .with_max_bytes(50 * 1024 * 1024)
+        .with_partition_max_bytes(10 * 1024 * 1024)
+        .with_max_wait(Duration::from_secs(3))
+        .with_session_timeout(Duration::from_secs(15));
 
     let mut consumer = client.consumer(consumer_config);
     consumer.subscribe(vec![topic.clone()]).await.unwrap();
@@ -255,7 +244,7 @@ async fn main() {
     let deadline = Instant::now() + Duration::from_secs(120);
 
     while empty_polls < MAX_EMPTY_POLLS && Instant::now() < deadline {
-        match consumer.poll(3000).await {
+        match consumer.poll_timeout(Duration::from_millis(3000)).await {
             Ok(records) => {
                 if records.is_empty() {
                     empty_polls += 1;
@@ -273,7 +262,11 @@ async fn main() {
 
                     // Progress bar
                     if total_consumed % 1000 == 0 {
-                        print!("\r  已消费: {} 条消息 (去重后: {})", total_consumed, consumed_ids.len());
+                        print!(
+                            "\r  已消费: {} 条消息 (去重后: {})",
+                            total_consumed,
+                            consumed_ids.len()
+                        );
                         std::io::Write::flush(&mut std::io::stdout()).ok();
                     }
                 }
@@ -292,7 +285,11 @@ async fn main() {
         0.0
     };
 
-    print!("\r  已消费: {} 条消息 (去重后: {}) ✓\n", total_consumed, consumed_ids.len());
+    print!(
+        "\r  已消费: {} 条消息 (去重后: {}) ✓\n",
+        total_consumed,
+        consumed_ids.len()
+    );
     println!("  消费耗时:  {:.2?}", consume_elapsed);
     println!("  消费吞吐:  {:.0} msgs/sec", consume_throughput);
 
@@ -340,7 +337,10 @@ async fn main() {
         .collect();
     unexpected.sort();
     if !unexpected.is_empty() {
-        errors.push(format!("非预期消息 (前10): {:?}", &unexpected[..unexpected.len().min(10)]));
+        errors.push(format!(
+            "非预期消息 (前10): {:?}",
+            &unexpected[..unexpected.len().min(10)]
+        ));
     }
 
     // =====================================================================
@@ -351,12 +351,14 @@ async fn main() {
     println!("============================================");
     println!("  消息总数:    {}", msg_count);
     println!("  生产耗时:    {:.2?}", produce_elapsed);
-    println!("  生产吞吐:    {:.0} msgs/sec ({:.1} MB/s)",
+    println!(
+        "  生产吞吐:    {:.0} msgs/sec ({:.1} MB/s)",
         produce_throughput,
         produce_throughput * 64.0 / 1024.0 / 1024.0
     );
     println!("  消费耗时:    {:.2?}", consume_elapsed);
-    println!("  消费吞吐:    {:.0} msgs/sec ({:.1} MB/s)",
+    println!(
+        "  消费吞吐:    {:.0} msgs/sec ({:.1} MB/s)",
         consume_throughput,
         consume_throughput * 64.0 / 1024.0 / 1024.0
     );

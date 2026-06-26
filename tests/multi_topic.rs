@@ -2,18 +2,18 @@
 //!
 //! 验证生产者可以同时向多个主题发送消息。
 //!
-//! 运行: KAFKA_RUNTIME=direct cargo test --test multi_topic --features integration_tests -- --nocapture
+//! 运行: cargo test --test multi_topic --features integration_tests -- --nocapture
+//! （需要先启动 docker compose 集群）
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
-use common::KafkaInstance;
+use common::build_test_client;
 
 #[tokio::test]
 async fn test_produce_to_multiple_topics() {
-    let server = KafkaInstance::start().await;
-    let client = server.build_client().await;
+    let client = build_test_client().await;
 
     common::create_topic(&client, "tc-multi-a", 2).await;
     common::create_topic(&client, "tc-multi-b", 2).await;
