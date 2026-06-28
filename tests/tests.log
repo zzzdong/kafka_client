@@ -1,0 +1,118 @@
+  Container CLI: podman
+=== Stopping any leftover Kafka test containers ===
+=== Starting 3-broker cluster (docker-compose.yml) ===
+    CLI: podman, Image: apache/kafka:4.3.0
+ebe58770941fad8ae444fcfc5c0a777735b9cd8afd844a682c3654f27e77ce93
+8d4b3f25795c664373c66b9f5ae070b8966e61981a28aebc864c3435169ea72e
+d529c58009ac26e31554f4501d4edb663d4bfadc0b94c4e310ec6116b2fef4a4
+41cbb761c3e9588d622c1a623788f7bd71aba6db2cdf49c0b0484582fd5ca165
+9c19bf1019876864539778643dc3b1b0dfe024814370d89d2854a47b0231796a
+kafka-1
+kafka-2
+kafka-3
+=== Starting SASL broker (docker-compose.sasl.yml) ===
+ebe58770941fad8ae444fcfc5c0a777735b9cd8afd844a682c3654f27e77ce93
+c0822be5ac815dcb62398eaaf2234bdbd5d05517c9a8c174105b635157320934
+kafka-sasl-broker
+=== Starting TLS broker (docker-compose.tls.yml) ===
+ebe58770941fad8ae444fcfc5c0a777735b9cd8afd844a682c3654f27e77ce93
+2233c2f3c09da320c44793611da5e4ccf60dbd0f4ae41951f4811ff370311b39
+kafka-tls-broker
+=== Waiting for 3-broker cluster to be ready ===
+  kafka-1 (port 29093)... ready (~5s, port)
+  kafka-2 (port 29095)... ready (~1s, port)
+  kafka-3 (port 29097)... ready (~1s, port)
+=== Waiting for SASL broker to be ready ===
+  kafka-sasl-broker (port 9094)... ready (~1s, port)
+=== Waiting for TLS broker to be ready ===
+  kafka-tls-broker (port 9093)... ready (~1s, port)
+=== Running integration tests ===
+
+--- 3-broker cluster tests ---
+  [RUN] produce_consume
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running tests/produce_consume.rs (target/debug/deps/produce_consume-b33dfc1c08c9d100)
+
+running 4 tests
+  Creating topic 'tc-explicit-part' (3 partitions, rf=3)...
+  Creating topic 'tc-basic' (3 partitions, rf=3)...
+  Creating topic 'tc-acks-all' (3 partitions, rf=3)...
+  Creating topic 'tc-headers' (1 partitions, rf=3)...
+  Topic 'tc-explicit-part' created
+  Topic 'tc-acks-all' created
+  Topic 'tc-explicit-part' ready after ~1s (3 leaders)
+  Topic 'tc-acks-all' ready after ~1s (3 leaders)
+  Topic 'tc-basic' created
+  Topic 'tc-headers' created
+  Sent with acks=-1: partition=0 offset=0
+  Sent to partition 1 (expected 1), offset=0
+  Topic 'tc-basic' ready after ~2s (3 leaders)
+  Produced 3 messages to 'tc-basic'
+  Topic 'tc-headers' ready after ~2s (1 leaders)
+  Consumed 1 messages from 'tc-headers' (expected 1)
+  Received message with 2 header(s)
+    content-type = text/plain
+    trace-id = abc-123
+test test_produce_with_headers ... ok
+  Consumed 3 messages from 'tc-basic' (expected 3)
+    topic=tc-basic partition=1 offset=0 val=msg-1
+    topic=tc-basic partition=2 offset=0 val=msg-2
+    topic=tc-basic partition=0 offset=0 val=msg-0
+    Partitions used: [0, 1, 2]
+test test_produce_and_consume ... ok
+  Consumed 1 messages from 'tc-acks-all' (expected 1)
+  Consumed message at offset 0
+test test_produce_with_acks_all ... ok
+  Consumed 1 messages from 'tc-explicit-part' (expected 1)
+test test_produce_to_explicit_partition ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.94s
+
+  [RUN] produce_with_keys
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running tests/produce_with_keys.rs (target/debug/deps/produce_with_keys-dc5058c779a6c369)
+
+running 1 test
+  Creating topic 'tc-keys' (3 partitions, rf=3)...
+  Topic 'tc-keys' created
+  Topic 'tc-keys' ready after ~1s (3 leaders)
+  Produced 9 keyed messages to 'tc-keys'
+  Consumed 9 messages from 'tc-keys' (expected 9)
+    Key->partition mapping: {"key-1": 0, "key-0": 1, "key-2": 2}
+test test_produce_with_keys ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+  [RUN] producer_acks
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running tests/producer_acks.rs (target/debug/deps/producer_acks-21790fad0e889282)
+
+running 4 tests
+  Creating topic 'tc-acks-all-2' (3 partitions, rf=3)...
+  Creating topic 'tc-acks1' (2 partitions, rf=3)...
+  Creating topic 'tc-batch-acks-all' (3 partitions, rf=3)...
+  Creating topic 'tc-acks0' (1 partitions, rf=3)...
+  Topic 'tc-acks-all-2' created
+  Topic 'tc-acks1' created
+  Topic 'tc-acks-all-2' ready after ~1s (3 leaders)
+  Topic 'tc-acks1' ready after ~1s (2 leaders)
+
+thread 'test_producer_acks_one' (272210) panicked at tests/producer_acks.rs:90:14:
+Failed to send with acks=1: ProduceError(6)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test test_producer_acks_one ... FAILED
+  Topic 'tc-batch-acks-all' created
+  Topic 'tc-acks0' created
+  Topic 'tc-batch-acks-all' ready after ~1s (3 leaders)
+  Topic 'tc-acks0' ready after ~1s (1 leaders)
+  acks=-1 sent: partition=0 offset=0
+  acks=-1 sent: partition=1 offset=0
+  acks=-1 sent: partition=2 offset=0
+  acks=-1 sent: partition=0 offset=1
+  acks=-1 sent: partition=1 offset=1
+  Consumed 5 messages from 'tc-acks-all-2' (expected 5)
+  Consumed 5 messages (expected 5) with acks=-1
+test test_producer_acks_all ... ok
+  Consumed 20 messages from 'tc-batch-acks-all' (expected 20)
+  Batch acks=-1: sent 20, consumed 20
+test test_producer_batch_with_acks_all ... ok

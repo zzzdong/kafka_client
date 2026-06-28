@@ -1,18 +1,17 @@
-//! 批量消息测试
-//!
-//! 验证 100 条消息的批量生产和消费。
-//!
-//! 运行: cargo test --test large_batch --features integration_tests -- --nocapture
-//! （需要先启动 docker compose 集群）
-
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::build_test_client;
+use common::compose;
+
+async fn setup() {
+    compose::ensure(&compose::clusters::THREE_BROKER).await;
+}
 
 #[tokio::test]
 async fn test_large_batch() {
+    setup().await;
     let client = build_test_client().await;
 
     common::create_topic(&client, "tc-large", 3).await;

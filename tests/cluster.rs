@@ -1,24 +1,28 @@
 //! 分布式 Kafka 集群集成测试
 //!
-//! 这些测试默认被 Cargo 忽略（需要 `integration_tests` feature），因为：
-//! - 它们要求一个多 broker 集群（通常由 Docker Compose 提供）。
-//! - 它们会创建/删除主题，耗时较长，不适合作为普通 `cargo test` 的一部分。
+//! 需要 3-broker 集群（验证副本分布、多 broker 元数据等）。
 //!
-//! 运行方式：
+//! 单独运行:
 //!   cargo test --test cluster --features integration_tests -- --nocapture
-//! （需要先通过 `cd tests && docker compose up -d` 启动 3-broker 集群）
+//! （会自动启动 docker-compose.yml 3-broker 集群）
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
+use common::compose;
 use common::{
     assert_cluster_size, build_test_client, cluster_size, consume_all, create_topic,
     partition_leader_distribution, produce_messages,
 };
 
+async fn setup() {
+    compose::ensure(&compose::clusters::THREE_BROKER).await;
+}
+
 #[tokio::test]
 async fn test_cluster_metadata_reports_multiple_brokers() {
+    setup().await;
     let client = build_test_client().await;
 
     let expected = cluster_size();
@@ -27,6 +31,7 @@ async fn test_cluster_metadata_reports_multiple_brokers() {
 
 #[tokio::test]
 async fn test_cluster_produce_consume_with_replication() {
+    setup().await;
     let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-basic", 3).await;
@@ -42,11 +47,11 @@ async fn test_cluster_produce_consume_with_replication() {
 
 #[tokio::test]
 async fn test_cluster_partition_leaders_are_distributed() {
+    setup().await;
     let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-leaders", 6).await;
 
-    // 集群模式下，6 个分区的 leader 应当分布到多个 broker 上
     let dist = partition_leader_distribution(&client, "tc-cluster-leaders").await;
 
     println!("  Leader distribution: {:?}", dist);
@@ -67,6 +72,7 @@ async fn test_cluster_partition_leaders_are_distributed() {
 
 #[tokio::test]
 async fn test_cluster_consumer_group_with_multiple_brokers() {
+    setup().await;
     let client = build_test_client().await;
 
     create_topic(&client, "tc-cluster-group", 3).await;

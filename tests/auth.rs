@@ -1,30 +1,47 @@
 //! SASL 认证集成测试
 //!
 //! 验证 SASL PLAIN / SCRAM 认证机制可以正常连接并进行基本生产消费。
+//! 需要 SASL 单节点集群（docker-compose.sasl.yml）。
 //!
-//! # 前置条件
-//!
+//! 单独运行:
 //! ```bash
 //! cd tests
 //! docker compose -f docker-compose.sasl.yml up -d
-//!
 //! SASL_MECHANISM=PLAIN SASL_USERNAME=admin SASL_PASSWORD=admin-secret \
 //!   KAFKA_BOOTSTRAP_SASL=127.0.0.1:9094 \
 //!   cargo test --test auth --features integration_tests -- --nocapture
 //! ```
 //!
-//! 或者通过 run-all-tests.sh 自动运行（脚本会设置 KAFKA_BOOTSTRAP_SASL）。
+//! 自动运行（会尝试自动启动集群）:
+//!   cargo test --test auth --features integration_tests -- --nocapture
 
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
+use common::compose;
 use kafka_client::protocol::create_topics_request::CreatableTopic;
 use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::{
     ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord, SaslMechanismType,
 };
 use std::time::Duration;
+
+/// 确保 SASL 集群已就绪（如果环境变量未设置则自动启动）
+async fn setup() {
+    compose::ensure(&compose::clusters::SASL).await;
+}
+
+/// SASL broker bootstrap address
+fn sasl_bootstrap_addrs() -> Vec<std::net::SocketAddr> {
+    let bootstrap = std::env::var("KAFKA_BOOTSTRAP_SASL")
+        .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
+        .unwrap_or_else(|_| "127.0.0.1:9094".to_string());
+    bootstrap
+        .split(',')
+        .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
+        .collect()
+}
 
 /// 从环境变量读取 SASL 配置
 fn sasl_config_from_env() -> Option<(SaslMechanismType, String, String)> {
@@ -41,18 +58,13 @@ fn sasl_config_from_env() -> Option<(SaslMechanismType, String, String)> {
 
 #[tokio::test]
 async fn test_sasl_authentication() {
+    setup().await;
     let Some((mechanism, username, password)) = sasl_config_from_env() else {
         eprintln!("SKIP: SASL_MECHANISM not set, skipping SASL auth test");
         return;
     };
 
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP_SASL")
-        .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
-        .unwrap_or_else(|_| "127.0.0.1:9094".to_string());
-    let addrs: Vec<std::net::SocketAddr> = bootstrap
-        .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
-        .collect();
+    let addrs = sasl_bootstrap_addrs();
 
     println!(
         "=== SASL Auth Test: mechanism={}, user={}, bootstrap={:?} ===",
@@ -170,4 +182,54 @@ async fn test_sasl_authentication() {
         eprintln!("  Close warning: {}", e);
     }
     println!("=== SASL Auth Test PASSED ===");
+}
+
+#[tokio::test]
+async fn test_sasl_invalid_credentials_rejected() {
+    setup().await;
+    // This test verifies that connecting with wrong SASL credentials
+    // is gracefully rejected (not a panic or hang).
+    let Some((mechanism, _username, _password)) = sasl_config_from_env() else {
+        eprintln!("SKIP: SASL_MECHANISM not set, skipping invalid credential test");
+        return;
+    };
+
+    let addrs = sasl_bootstrap_addrs();
+
+    println!(
+        "=== SASL Invalid Credentials Test: mechanism={}, bootstrap={:?} ===",
+        mechanism.as_str(),
+        addrs
+    );
+
+    let result = KafkaClient::builder(addrs.clone())
+        .with_client_id("sasl-invalid-test")
+        .with_sasl(mechanism, "wrong_user", "wrong_password")
+        .with_metadata_ttl(Duration::from_secs(5))
+        .build()
+        .await;
+
+    match result {
+        Ok(_) => {
+            // Some brokers might not reject at connect time (e.g., SASL/PLAIN
+            // only rejects on first request). Verify metadata refresh fails.
+            eprintln!("  NOTE: Build succeeded with invalid credentials, testing metadata...");
+            let client = result.unwrap();
+            let meta_result = client.cluster().refresh_metadata().await;
+            assert!(
+                meta_result.is_err(),
+                "Expected metadata refresh to fail with invalid SASL credentials"
+            );
+            eprintln!(
+                "  Metadata refresh correctly rejected: {:?}",
+                meta_result.err().unwrap()
+            );
+            let _ = client.close().await;
+        }
+        Err(e) => {
+            println!("  Build correctly rejected: {}", e);
+        }
+    }
+
+    println!("=== SASL Invalid Credentials Test PASSED ===");
 }

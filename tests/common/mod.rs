@@ -1,11 +1,24 @@
 #![allow(dead_code)]
 //! Kafka 集成测试公共基础设施
 //!
-//! 集群由外部管理（run-all-tests 脚本或 CI），测试只做连接。
+//! # 集群管理
 //!
-//! 环境变量：
-//!   KAFKA_BOOTSTRAP    逗号分隔 bootstrap 地址（默认: 127.0.0.1:29093,29095,29097）
-//!   KAFKA_CLUSTER_SIZE 集群 broker 数量（默认: 3）
+//! 每个测试函数通过调用 `compose::ensure()` 声明需要的集群类型：
+//!
+//! ```ignore
+//! use common::compose;
+//!
+//! #[tokio::test]
+//! async fn test_foo() {
+//!     compose::ensure(&compose::clusters::SINGLE_NODE).await;
+//!     // ...
+//! }
+//! ```
+//!
+//! 如果环境变量 `KAFKA_BOOTSTRAP` 已设置（由 `run-all-tests.sh` 管理），
+//! 则跳过 compose 操作，直接使用已运行的集群。
+
+pub mod compose;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -18,11 +31,10 @@ use kafka_client::{
     RecordMetadata,
 };
 
-const DEFAULT_BOOTSTRAP: &str = "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097";
-
+/// 获取 bootstrap 地址。从环境变量读取，回退到默认值。
 fn bootstrap_addrs() -> Vec<SocketAddr> {
-    let servers =
-        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| DEFAULT_BOOTSTRAP.to_string());
+    let servers = std::env::var("KAFKA_BOOTSTRAP")
+        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
     servers
         .split(',')
         .map(|s| s.trim().parse().expect("Invalid KAFKA_BOOTSTRAP address"))
@@ -85,7 +97,7 @@ pub async fn create_topic(client: &KafkaClient, topic: &str, partitions: i32) {
 }
 
 pub async fn wait_for_topic_ready(client: &KafkaClient, topic: &str, partitions: i32) {
-    for i in 0..30 {
+    for attempt in 0..30 {
         client.cluster().refresh_metadata().await.unwrap();
         if let Some(tm) = client.metadata().get_topic(topic).await {
             let online = tm.partitions.iter().filter(|p| p.leader_id >= 0).count();
@@ -93,7 +105,7 @@ pub async fn wait_for_topic_ready(client: &KafkaClient, topic: &str, partitions:
                 println!(
                     "  Topic '{}' ready after ~{}s ({} leaders)",
                     topic,
-                    i + 1,
+                    attempt + 1,
                     online
                 );
                 return;
@@ -130,24 +142,27 @@ pub async fn produce_messages(
     topic: &str,
     count: i32,
 ) -> Vec<RecordMetadata> {
-    let producer = client.producer(default_producer_config()).await.unwrap();
+    let config = ProducerConfig::new()
+        .with_timeout(15000)
+        .with_retries(10)
+        .with_linger(1); // minimum positive linger (interval requires > 0)
 
-    // Batch all messages to avoid per-message network round-trips.
-    // Individual send() for 100 messages can take 60s+ with linger delays.
-    let records: Vec<ProducerRecord> = (0..count)
-        .map(|i| ProducerRecord::new(topic, bytes::Bytes::from(format!("msg-{}", i))))
-        .collect();
-    let sent = producer
-        .send_batch(records)
-        .await
-        .expect("Failed to buffer batch");
-    assert_eq!(
-        sent as usize, count as usize,
-        "send_batch returned wrong count"
-    );
+    let producer = client.producer(config).await.unwrap();
+
+    let mut metadatas = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let record = ProducerRecord::new(topic, bytes::Bytes::from(format!("msg-{}", i)));
+        // Library handles retries internally via send_single
+        let meta = producer
+            .send(record)
+            .await
+            .expect(&format!("Failed to produce msg-{}", i));
+        metadatas.push(meta);
+    }
     producer.flush().await.unwrap();
+    drop(producer);
     println!("  Produced {} messages to '{}'", count, topic);
-    Vec::new()
+    metadatas
 }
 
 pub async fn produce_messages_with_keys(
@@ -156,18 +171,27 @@ pub async fn produce_messages_with_keys(
     count: i32,
     key_count: i32,
 ) -> Vec<RecordMetadata> {
-    let producer = client.producer(default_producer_config()).await.unwrap();
-    let records: Vec<ProducerRecord> = (0..count)
-        .map(|i| {
-            let key = bytes::Bytes::from(format!("key-{}", i % key_count));
-            ProducerRecord::new(topic, bytes::Bytes::from(format!("val-{}", i))).with_key(key)
-        })
-        .collect();
-    let sent = producer.send_batch(records).await.unwrap();
-    assert_eq!(sent as usize, count as usize);
+    let config = ProducerConfig::new()
+        .with_timeout(15000)
+        .with_retries(10)
+        .with_linger(1);
+    let producer = client.producer(config).await.unwrap();
+    let mut metadatas = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let key = bytes::Bytes::from(format!("key-{}", i % key_count));
+        let record =
+            ProducerRecord::new(topic, bytes::Bytes::from(format!("val-{}", i))).with_key(key);
+        // Library handles retries internally via send_single
+        let meta = producer
+            .send(record)
+            .await
+            .expect(&format!("Failed to produce keyed msg-{}", i));
+        metadatas.push(meta);
+    }
     producer.flush().await.unwrap();
+    drop(producer);
     println!("  Produced {} keyed messages to '{}'", count, topic);
-    Vec::new()
+    metadatas
 }
 
 pub async fn consume_all(
@@ -193,7 +217,16 @@ pub async fn consume_all_timeout(
     expected_count: i32,
     timeout: Duration,
 ) -> Vec<ConsumerRecord> {
-    let mut consumer = client.consumer(consumer_config(group_id, AutoOffsetReset::Earliest));
+    // 使用唯一组 ID，避免已提交偏移量干扰后续运行
+    let unique_group = format!(
+        "{}-{}",
+        group_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let mut consumer = client.consumer(consumer_config(&unique_group, AutoOffsetReset::Earliest));
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
 
     // No assignment wait loop — consumer auto-joins on first poll().
@@ -215,7 +248,7 @@ pub async fn consume_all_timeout(
     assert!(
         all.len() as i32 >= expected_count,
         "Consumer '{}' got only {} messages, expected at least {}",
-        group_id,
+        unique_group,
         all.len(),
         expected_count
     );

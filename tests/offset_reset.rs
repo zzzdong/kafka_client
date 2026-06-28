@@ -1,28 +1,25 @@
-//! Earliest vs Latest 偏移量策略测试
-//!
-//! 验证 Earliest 消费者能从最早偏移量消费，Latest 消费者不阻塞。
-//!
-//! 运行: cargo test --test offset_reset --features integration_tests -- --nocapture
-//! （需要先启动 docker compose 集群）
-
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
+use common::compose;
 use common::{build_test_client, consumer_config};
 use kafka_client::AutoOffsetReset;
 use std::time::Duration;
 use tokio::time::sleep;
 
+async fn setup() {
+    compose::ensure(&compose::clusters::THREE_BROKER).await;
+}
+
 #[tokio::test]
 async fn test_offset_reset_policies() {
+    setup().await;
     let client = build_test_client().await;
 
-    // Earliest 测试：先生产再消费
     common::create_topic(&client, "tc-reset", 2).await;
     common::produce_messages(&client, "tc-reset", 5).await;
 
-    // Earliest 消费者应消费全部 5 条
     {
         let records = common::consume_all(&client, "cg-earliest", "tc-reset", 5).await;
         println!(
@@ -35,7 +32,6 @@ async fn test_offset_reset_policies() {
         );
     }
 
-    // Latest 测试
     common::create_topic(&client, "tc-latest", 2).await;
     common::produce_messages(&client, "tc-latest", 3).await;
 
@@ -47,7 +43,6 @@ async fn test_offset_reset_policies() {
         .await
         .unwrap();
 
-    // 等待组加入
     loop {
         let a = consumer.group().assignment().await;
         let total: usize = a.values().map(|v| v.len()).sum();
@@ -57,7 +52,6 @@ async fn test_offset_reset_policies() {
         sleep(Duration::from_secs(1)).await;
     }
 
-    // Latest 消费者可能 0 条，但不应阻塞
     let mut records = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     while std::time::Instant::now() < deadline {

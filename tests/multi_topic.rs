@@ -1,18 +1,17 @@
-//! 多主题生产消费测试
-//!
-//! 验证生产者可以同时向多个主题发送消息。
-//!
-//! 运行: cargo test --test multi_topic --features integration_tests -- --nocapture
-//! （需要先启动 docker compose 集群）
-
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
 use common::build_test_client;
+use common::compose;
+
+async fn setup() {
+    compose::ensure(&compose::clusters::THREE_BROKER).await;
+}
 
 #[tokio::test]
 async fn test_produce_to_multiple_topics() {
+    setup().await;
     let client = build_test_client().await;
 
     common::create_topic(&client, "tc-multi-a", 2).await;

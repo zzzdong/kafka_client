@@ -11,53 +11,52 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   KAFKA_IMAGE: apache/kafka:4.3.0
-  KAFKA_CLI: docker
 
 jobs:
+  # ────────────────────────────────────────────────────────────
+  # Static checks: lint, format, unit tests, MSRV
+  # ────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --all-targets
-
-      - name: Run unit tests
-        run: cargo test --lib
-
-      - name: Check formatting
-        run: cargo fmt -- --check
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib
 
   msrv-check:
     name: MSRV Check (Rust 1.85)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-targets
 
-      - name: Install Rust 1.85
-        uses: dtolnay/rust-toolchain@1.85
-
-      - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build with MSRV
-        run: cargo build --all-targets
-
-  integration-tests-single-node:
-    name: Integration Tests (single-node)
+  # ────────────────────────────────────────────────────────────
+  # Integration tests – single-node KRaft (PLAINTEXT)
+  # Uses GitHub Actions service container for Kafka.
+  # Tests that don't require consumer groups or >1 broker.
+  # ────────────────────────────────────────────────────────────
+  integration-single:
+    name: Integration (single-node)
     runs-on: ubuntu-latest
     services:
       kafka:
-        image: ${{ env.KAFKA_IMAGE }}
+        image: apache/kafka:4.3.0
         ports:
           - 29092:9092
         env:
@@ -79,73 +78,160 @@ jobs:
           --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092"
           --health-interval 5s
           --health-timeout 10s
-          --health-retries 12
-
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build integration tests
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests
         run: cargo test --no-run --features integration_tests
-
-      - name: Run single-node integration tests
-        run: cargo test --features integration_tests -- --nocapture
+      - name: Run single-node tests
+        run: cargo test --test produce_consume --test produce_with_keys --test producer_acks --test large_batch --test multi_topic --features integration_tests -- --nocapture
         env:
           KAFKA_BOOTSTRAP: 127.0.0.1:29092
           KAFKA_CLUSTER_SIZE: 1
           RUST_TEST_THREADS: 1
 
-  integration-tests-cluster:
-    name: Integration Tests (cluster)
+  # ────────────────────────────────────────────────────────────
+  # Integration tests – 3-broker cluster
+  # Uses docker compose from tests/ directory.
+  # Tests that need consumer groups, offset commits, rebalance.
+  # ────────────────────────────────────────────────────────────
+  integration-cluster:
+    name: Integration (3-broker)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build integration tests
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests
+        working-directory: .
         run: cargo test --no-run --features integration_tests
-
-      - name: Start Kafka cluster
-        working-directory: tests
+      - name: Start 3-broker cluster
         run: |
-          docker compose down -v
-          docker compose up -d
-          for container in kafka-1 kafka-2 kafka-3; do
-            echo -n "  ${container}... "
+          docker compose -f docker-compose.yml up -d
+          for c in kafka-1 kafka-2 kafka-3; do
+            echo -n "  ${c}... "
             for i in $(seq 1 60); do
-              if docker exec "${container}" \
+              if docker exec "${c}" \
                 /opt/kafka/bin/kafka-broker-api-versions.sh \
-                --bootstrap-server "127.0.0.1:9092" &>/dev/null; then
+                --bootstrap-server 127.0.0.1:9092 &>/dev/null; then
                 echo "ready (~${i}s)"
                 break
               fi
               sleep 1
             done
           done
-
-      - name: Run all integration tests against cluster
-        run: cargo test --features integration_tests -- --nocapture
+      - name: Run cluster-dependent tests
+        working-directory: .
+        run: cargo test --test offset_commit --test offset_reset --test consumer_group --test consumer_seek --test cluster --features integration_tests -- --nocapture
         env:
           KAFKA_BOOTSTRAP: 127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097
           KAFKA_CLUSTER_SIZE: 3
           RUST_TEST_THREADS: 1
-
-      - name: Dump Kafka logs on failure
+      - name: Dump logs on failure
         if: failure()
         working-directory: tests
-        run: docker compose logs
-
-      - name: Stop Kafka cluster
+        run: docker compose -f docker-compose.yml logs
+      - name: Stop cluster
         if: always()
         working-directory: tests
-        run: docker compose down -v
+        run: docker compose -f docker-compose.yml down -v
+
+  # ────────────────────────────────────────────────────────────
+  # Integration tests – SASL (PLAIN)
+  # Uses docker compose from tests/ directory.
+  # ────────────────────────────────────────────────────────────
+  integration-sasl:
+    name: Integration (SASL)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests
+        working-directory: .
+        run: cargo test --no-run --features integration_tests
+      - name: Start SASL broker
+        run: |
+          docker compose -f docker-compose.sasl.yml up -d
+          echo -n "  kafka-sasl-broker... "
+          for i in $(seq 1 60); do
+            if docker exec kafka-sasl-broker \
+              bash -c "echo > /dev/tcp/127.0.0.1/9094" 2>/dev/null; then
+              sleep 5
+              echo "ready (~${i}s)"
+              break
+            fi
+            sleep 1
+          done
+      - name: Run SASL auth tests
+        working-directory: .
+        run: cargo test --test auth --features integration_tests -- --nocapture
+        env:
+          KAFKA_BOOTSTRAP_SASL: 127.0.0.1:9094
+          SASL_MECHANISM: PLAIN
+          SASL_USERNAME: admin
+          SASL_PASSWORD: admin-secret
+          RUST_TEST_THREADS: 1
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: tests
+        run: docker compose -f docker-compose.sasl.yml logs
+      - name: Stop SASL broker
+        if: always()
+        working-directory: tests
+        run: docker compose -f docker-compose.sasl.yml down -v
+
+  # ────────────────────────────────────────────────────────────
+  # Integration tests – TLS (mTLS required)
+  # Uses docker compose from tests/ directory.
+  # ────────────────────────────────────────────────────────────
+  integration-tls:
+    name: Integration (TLS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests
+        working-directory: .
+        run: cargo test --no-run --features integration_tests
+      - name: Generate TLS certificates
+        run: ./gen-certs.sh
+      - name: Start TLS broker
+        run: |
+          docker compose -f docker-compose.tls.yml up -d
+          echo -n "  kafka-tls-broker... "
+          for i in $(seq 1 60); do
+            if docker exec kafka-tls-broker \
+              bash -c "echo > /dev/tcp/127.0.0.1/9093" 2>/dev/null; then
+              sleep 8
+              echo "ready (~${i}s)"
+              break
+            fi
+            sleep 1
+          done
+      - name: Run TLS tests
+        working-directory: .
+        run: cargo test --test tls --features integration_tests -- --nocapture
+        env:
+          KAFKA_BOOTSTRAP_TLS: 127.0.0.1:9093
+          RUST_TEST_THREADS: 1
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: tests
+        run: docker compose -f docker-compose.tls.yml logs
+      - name: Stop TLS broker
+        if: always()
+        working-directory: tests
+        run: docker compose -f docker-compose.tls.yml down -v

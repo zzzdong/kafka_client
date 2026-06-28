@@ -131,7 +131,7 @@ impl ProducerConfig {
             acks: 1,
             timeout_ms: 5000,
             routing: PartitionRouting::HashKey,
-            retries: 3,
+            retries: 5,
             batch_size: 16384,
             linger_ms: 100,
         }
@@ -236,13 +236,44 @@ impl ProducerState {
     }
 
     async fn send_single(&mut self, record: ProducerRecord) -> Result<RecordMetadata> {
-        let partition = self.select_partition(&record).await?;
-        let topic = record.topic.clone();
-        let metadatas = self.send_to_broker(&topic, partition, vec![record]).await?;
-        metadatas
-            .into_iter()
-            .next()
-            .ok_or(KafkaError::ProduceError(-1))
+        let mut last_error = None;
+        for attempt in 0..self.config.retries {
+            // select_partition can fail with TopicNotFound on brand-new topics
+            match self.select_partition(&record).await {
+                Ok(partition) => {
+                    let topic = record.topic.clone();
+                    match self
+                        .send_to_broker(&topic, partition, vec![record.clone()])
+                        .await
+                    {
+                        Ok(mut v) => return v.pop().ok_or(KafkaError::ProduceError(-1)),
+                        Err(e) => {
+                            let is_retryable = matches!(
+                                &e,
+                                KafkaError::ProduceError(6)
+                                    | KafkaError::TopicNotFound(_)
+                                    | KafkaError::PartitionNotFound(_, _)
+                            );
+                            last_error = Some(e);
+                            if is_retryable {
+                                let _ = self.cluster.refresh_metadata().await;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let is_retryable = matches!(&e, KafkaError::TopicNotFound(_));
+                    last_error = Some(e);
+                    if is_retryable {
+                        let _ = self.cluster.refresh_metadata().await;
+                    }
+                }
+            }
+            if attempt + 1 < self.config.retries {
+                tokio::time::sleep(Duration::from_millis(100 * (attempt as u64 + 1))).await;
+            }
+        }
+        Err(last_error.unwrap_or(KafkaError::ProduceError(-1)))
     }
 
     async fn send_to_broker(
@@ -256,7 +287,10 @@ impl ProducerState {
         }
 
         let request = self.build_request(topic, partition, records).await?;
-        let response = self.send_with_retry(topic, partition, &request).await?;
+        let response = self
+            .cluster
+            .send_to_partition(topic, partition, &request)
+            .await?;
         let metadata = self.parse_response(topic, partition, response).await?;
 
         Ok(vec![metadata])
@@ -347,38 +381,6 @@ impl ProducerState {
 
         let key = record.key.as_deref();
         Ok(self.router.select_partition(key, partition_count))
-    }
-
-    async fn send_with_retry(
-        &self,
-        topic: &str,
-        partition: i32,
-        request: &ProduceRequest,
-    ) -> Result<ProduceResponse> {
-        let mut attempts = 0u64;
-        let mut last_error = None;
-
-        while attempts < self.config.retries as u64 {
-            match self
-                .cluster
-                .send_to_partition(topic, partition, request)
-                .await
-            {
-                Ok(resp) => return Ok(resp),
-                Err(e) => {
-                    let is_not_leader = matches!(e, KafkaError::ProduceError(6));
-                    last_error = Some(e);
-                    attempts += 1;
-                    if attempts < self.config.retries as u64 {
-                        let delay_ms = if is_not_leader { 500 } else { 100 * attempts };
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        let _ = self.cluster.refresh_metadata().await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(KafkaError::ProduceError(-1)))
     }
 
     async fn parse_response(

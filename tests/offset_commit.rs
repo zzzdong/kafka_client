@@ -1,28 +1,25 @@
-//! 偏移量提交测试
-//!
-//! 验证消费者在消费后提交偏移量，auto_commit 任务正常工作。
-//!
-//! 运行: cargo test --test offset_commit --features integration_tests -- --nocapture
-//! （需要先启动 docker compose 集群）
-
 #![cfg(feature = "integration_tests")]
 
 mod common;
 
+use common::compose;
 use common::{build_test_client, consumer_config};
 use kafka_client::AutoOffsetReset;
 use std::time::Duration;
 use tokio::time::sleep;
 
+async fn setup() {
+    compose::ensure(&compose::clusters::THREE_BROKER).await;
+}
+
 #[tokio::test]
 async fn test_offset_commit() {
+    setup().await;
     let client = build_test_client().await;
 
-    // 先生产一些消息
     common::create_topic(&client, "tc-offset", 2).await;
     common::produce_messages(&client, "tc-offset", 5).await;
 
-    // 消费者消费并提交偏移量
     let c1_client = build_test_client().await;
     let mut consumer =
         c1_client.consumer(consumer_config("cg-offset-test", AutoOffsetReset::Earliest));
@@ -31,7 +28,6 @@ async fn test_offset_commit() {
         .await
         .unwrap();
 
-    // 等待组加入（最多 30s，避免无限挂起）
     let assignment_deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let a = consumer.group().assignment().await;
@@ -46,7 +42,6 @@ async fn test_offset_commit() {
         sleep(Duration::from_secs(1)).await;
     }
 
-    // 消费消息
     let mut records = Vec::new();
     let consume_deadline = std::time::Instant::now() + Duration::from_secs(30);
     while records.len() < 5 && std::time::Instant::now() < consume_deadline {
@@ -58,7 +53,6 @@ async fn test_offset_commit() {
     }
     println!("  Consumed {} messages", records.len());
 
-    // 等待 auto_commit 或手动提交
     sleep(Duration::from_secs(2)).await;
     consumer.offsets().commit().await.unwrap();
     println!("  Offset committed");

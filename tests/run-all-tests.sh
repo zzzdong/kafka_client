@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # 一站式集成测试启动脚本。
 #
-# 启动 docker-compose.yml（3-broker 集群）和 docker-compose.sasl.yml（SASL 单节点），
+# 启动 3-broker 集群 (docker-compose.yml)、
+# SASL 单节点 (docker-compose.sasl.yml) 和
+# TLS 单节点 (docker-compose.tls.yml)，
 # 等待所有服务就绪后运行全部集成测试。
 #
 # 环境变量：
-#   KAFKA_CLI          容器 CLI：podman | docker（默认：auto-detect）
-#   KAFKA_IMAGE        容器镜像（默认 apache/kafka:4.3.0）
-#   RUST_TEST_THREADS  测试并发数（默认 1）
-#   SASL_MECHANISM     SASL 认证机制（默认 PLAIN）
-#   SASL_USERNAME      SASL 用户名（默认 admin）
-#   SASL_PASSWORD      SASL 密码（默认 admin-secret）
-#   SKIP_CLEANUP       设为非空值可跳过集群关闭
+#   KAFKA_CLI           容器 CLI：podman | docker（默认：auto-detect）
+#   KAFKA_IMAGE         容器镜像（默认 apache/kafka:4.3.0）
+#   RUST_TEST_THREADS   测试并发数（默认 1）
+#   SASL_MECHANISM      SASL 认证机制（默认 PLAIN）
+#   SASL_USERNAME       SASL 用户名（默认 admin）
+#   SASL_PASSWORD       SASL 密码（默认 admin-secret）
+#   SKIP_CLEANUP        设为非空值可跳过集群关闭
+#   TEST_FILTER         只运行特定测试文件（如 "produce_consume"）
 
 set -euo pipefail
 
@@ -21,15 +24,32 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 KAFKA_IMAGE="${KAFKA_IMAGE:-apache/kafka:4.3.0}"
 RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
 
-# Compose ports: kafka-1 → 29093, kafka-2 → 29095, kafka-3 → 29097
+# 所有测试列表，按依赖的集群分组
+THREE_BROKER_TESTS=(
+    "produce_consume"
+    "produce_with_keys"
+    "producer_acks"
+    "large_batch"
+    "multi_topic"
+    "offset_commit"
+    "offset_reset"
+    "consumer_group"
+    "consumer_seek"
+    "cluster"
+)
+
+SASL_TESTS=("auth")
+TLS_TESTS=("tls")
+
+# 如果未设置 KAFKA_BOOTSTRAP，设为默认的 3-broker 地址
 DEFAULT_BOOTSTRAP="127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097"
 KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-${DEFAULT_BOOTSTRAP}}"
 
 # Auto-detect container CLI
 detect_cli() {
-    if command -v podman &>/dev/null && podman ps &>/dev/null 2>&1; then
+    if command -v podman &>/dev/null; then
         echo "podman"
-    elif command -v docker &>/dev/null && docker ps &>/dev/null 2>&1; then
+    elif command -v docker &>/dev/null; then
         echo "docker"
     else
         echo "docker"
@@ -40,12 +60,15 @@ COMPOSE_CMD="${CLI} compose"
 
 cd "${SCRIPT_DIR}"
 
+echo "  Container CLI: ${CLI}"
+
 # ---------------------------------------------------------------------------
 # 1. Start compose stacks
 # ---------------------------------------------------------------------------
 echo "=== Stopping any leftover Kafka test containers ==="
-${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || true
-${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || true
+${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
+${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
+${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
 
 echo "=== Starting 3-broker cluster (docker-compose.yml) ==="
 echo "    CLI: ${CLI}, Image: ${KAFKA_IMAGE}"
@@ -54,28 +77,24 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.yml up -d
 echo "=== Starting SASL broker (docker-compose.sasl.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.sasl.yml up -d
 
+echo "=== Starting TLS broker (docker-compose.tls.yml) ==="
+KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.tls.yml up -d
+
 # ---------------------------------------------------------------------------
 # 2. Wait for brokers to be ready
 # ---------------------------------------------------------------------------
-# Use the same healthcheck command defined in docker-compose.yml.
-# Run inside a container to verify real API readiness (KRaft election done).
-# Falls back to a port+sleep if exec unavailable.
-
 wait_broker() {
     local container="$1" internal_port="$2" host_port="$3"
     echo -n "  ${container} (port ${host_port})... "
     for i in $(seq 1 60); do
-        # Try the API versions probe (full path for podman compatibility)
         if ${CLI} exec "${container}" \
-            /opt/kafka/bin/kafka-broker-api-versions.sh \
+            kafka-broker-api-versions.sh \
             --bootstrap-server "127.0.0.1:${internal_port}" 2>/dev/null; then
             echo "ready (~${i}s)"
             return 0
         fi
-        # Fallback: check if port is reachable from inside the container
         if ${CLI} exec "${container}" \
             bash -c "echo > /dev/tcp/127.0.0.1/${internal_port}" 2>/dev/null; then
-            # Port is up — give it a moment for KRaft to settle
             sleep 3
             echo "ready (~${i}s, port)"
             return 0
@@ -110,8 +129,13 @@ wait_broker "kafka-3" 9092 29097 || {
 }
 
 echo "=== Waiting for SASL broker to be ready ==="
-wait_broker "kafka-sasl-broker" 19094 9094 || {
+wait_broker "kafka-sasl-broker" 9094 9094 || {
     echo "WARNING: SASL broker not ready — SASL tests may be skipped"
+}
+
+echo "=== Waiting for TLS broker to be ready ==="
+wait_broker "kafka-tls-broker" 9093 9093 || {
+    echo "WARNING: TLS broker not ready — TLS tests may be skipped"
 }
 
 # ---------------------------------------------------------------------------
@@ -120,25 +144,62 @@ wait_broker "kafka-sasl-broker" 19094 9094 || {
 cd "${PROJECT_ROOT}"
 
 echo "=== Running integration tests ==="
-KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \
-KAFKA_BOOTSTRAP_SASL="127.0.0.1:9094" \
-KAFKA_CLUSTER_SIZE="3" \
-SASL_MECHANISM="${SASL_MECHANISM:-PLAIN}" \
-SASL_USERNAME="${SASL_USERNAME:-admin}" \
-SASL_PASSWORD="${SASL_PASSWORD:-admin-secret}" \
-RUST_TEST_THREADS="${RUST_TEST_THREADS}" \
-cargo test --features integration_tests -- --nocapture
+
+run_tests() {
+    local test_name="$1"
+    if [ -n "${TEST_FILTER:-}" ] && [[ "${test_name}" != *"${TEST_FILTER}"* ]]; then
+        echo "  [SKIP] ${test_name} (filter: ${TEST_FILTER})"
+        return 0
+    fi
+    echo "  [RUN] ${test_name}"
+    KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \
+    KAFKA_BOOTSTRAP_SASL="127.0.0.1:9094" \
+    KAFKA_BOOTSTRAP_TLS="127.0.0.1:9093" \
+    KAFKA_CLUSTER_SIZE="3" \
+    SASL_MECHANISM="${SASL_MECHANISM:-PLAIN}" \
+    SASL_USERNAME="${SASL_USERNAME:-admin}" \
+    SASL_PASSWORD="${SASL_PASSWORD:-admin-secret}" \
+    cargo test --test "${test_name}" --features integration_tests -- --nocapture 2>&1
+}
+
+TEST_EXIT_CODE=0
+
+echo ""
+echo "--- 3-broker cluster tests ---"
+for test in "${THREE_BROKER_TESTS[@]}"; do
+    run_tests "${test}" || TEST_EXIT_CODE=$?
+done
+
+echo ""
+echo "--- SASL auth tests ---"
+for test in "${SASL_TESTS[@]}"; do
+    run_tests "${test}" || TEST_EXIT_CODE=$?
+done
+
+echo ""
+echo "--- TLS tests ---"
+for test in "${TLS_TESTS[@]}"; do
+    run_tests "${test}" || TEST_EXIT_CODE=$?
+done
 
 # ---------------------------------------------------------------------------
 # 4. Cleanup
 # ---------------------------------------------------------------------------
+echo ""
 echo "=== Cleaning up ==="
 if [ -z "${SKIP_CLEANUP:-}" ]; then
     cd "${SCRIPT_DIR}"
-    ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || true
-    ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || true
+    ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
+    ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
+    ${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
 else
     echo "  SKIP_CLEANUP set — leaving clusters running"
 fi
 
-echo "=== Done ==="
+echo ""
+if [ "${TEST_EXIT_CODE}" -eq 0 ]; then
+    echo "=== All tests PASSED ==="
+else
+    echo "=== Some tests FAILED (exit code: ${TEST_EXIT_CODE}) ==="
+fi
+exit "${TEST_EXIT_CODE}"
