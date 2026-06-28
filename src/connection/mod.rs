@@ -34,7 +34,7 @@ use tokio_util::codec::Framed;
 use tracing::debug;
 
 use crate::error::{KafkaError, Result};
-use crate::transport::NetworkStream;
+use crate::transport::{NetworkStream, TcpNetworkStream, TlsNetworkStream};
 use crate::wire::{KafkaCodec, KafkaFrame};
 use kafka_client_protocol::{Request, Response};
 
@@ -394,27 +394,64 @@ impl Builder {
         self
     }
 
-    /// Build the connection: TCP/TLS → handshake → SASL → reactor handle.
+    /// Build the connection: TCP → TLS → handshake → SASL → reactor handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns distinct error types for each stage:
+    /// - [`KafkaError::Io`] — TCP connection failure (address unreachable, port not listening, etc.)
+    /// - [`KafkaError::TlsError`] — TLS handshake failure (certificate error, domain mismatch, etc.)
+    /// - [`KafkaError::Protocol`] — Kafka protocol handshake failure (ApiVersions negotiation)
+    /// - [`KafkaError::AuthenticationFailed`] — SASL authentication failure (wrong credentials, etc.)
     pub async fn build(self) -> Result<ConnectionHandle> {
-        use crate::transport::TransportConnector;
+        // 1. Establish TCP connection
+        let tcp = tokio::net::TcpStream::connect(self.addr)
+            .await
+            .map_err(|e| KafkaError::Io(format!("Failed to connect to {}: {}", self.addr, e)))?;
 
-        // 1. Establish underlying connection
-        let stream = TransportConnector::connect(self.addr, &self.security_protocol).await?;
+        // 2. Wrap in TLS if configured
+        let stream: Box<dyn NetworkStream> = if self.security_protocol.uses_tls() {
+            let tls_config = match &self.security_protocol {
+                crate::transport::SecurityProtocol::Ssl(cfg)
+                | crate::transport::SecurityProtocol::SaslSsl(cfg) => cfg.clone(),
+                _ => unreachable!(),
+            };
+            let tls_stream = TlsNetworkStream::from_stream(tcp, tls_config)
+                .await
+                .map_err(|e| {
+                    KafkaError::TlsError(format!("TLS handshake failed for {}: {}", self.addr, e))
+                })?;
+            Box::new(tls_stream) as Box<dyn NetworkStream>
+        } else {
+            Box::new(TcpNetworkStream::from_stream(tcp)) as Box<dyn NetworkStream>
+        };
+
         let framed = Framed::new(stream, KafkaCodec::new());
 
-        // 2. Sequential handshake
+        // 3. Sequential handshake (ApiVersions negotiation)
         let mut seq_conn = SequentialConnection::new(framed, self.client_id);
 
         let negotiated =
             Handshake::perform(&mut seq_conn, self.client_name, self.client_version).await?;
         seq_conn.set_negotiated(negotiated);
 
-        // 3. SASL authentication
+        // 4. SASL authentication
         if let Some((mechanism, credentials)) = self.sasl_config {
-            Handshake::sasl_authenticate(&mut seq_conn, mechanism, credentials).await?;
+            Handshake::sasl_authenticate(&mut seq_conn, mechanism, credentials)
+                .await
+                .map_err(|e| {
+                    // Ensure SASL errors are reported as AuthenticationFailed
+                    match &e {
+                        KafkaError::Protocol(msg) => KafkaError::AuthenticationFailed(msg.clone()),
+                        KafkaError::SaslError(sasl_err) => {
+                            KafkaError::AuthenticationFailed(sasl_err.to_string())
+                        }
+                        _ => e,
+                    }
+                })?;
         }
 
-        // 4. Convert to pipelining handle
+        // 5. Convert to pipelining handle
         Ok(seq_conn.into_pipeline())
     }
 }

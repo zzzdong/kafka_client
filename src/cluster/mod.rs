@@ -196,6 +196,8 @@ impl ClusterClient {
         Req: Request,
         Resp: Response,
     {
+        let mut errors: Vec<String> = Vec::new();
+
         // Try healthy broker first
         if let Some((addr, handle)) = self.broker_manager.get_any_healthy_broker() {
             match handle.send_request(request).await {
@@ -205,10 +207,12 @@ impl ClusterClient {
                     warn!("Broker {} protocol error ({}), force-closing", addr, e);
                     self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
+                    errors.push(format!("{}: {}", addr, e));
                 }
                 Err(e) => {
                     warn!("Request to healthy broker {} failed: {}", addr, e);
                     self.broker_manager.mark_unhealthy(addr);
+                    errors.push(format!("{}: {}", addr, e));
                 }
             }
         }
@@ -230,6 +234,7 @@ impl ClusterClient {
                     );
                     self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
+                    errors.push(format!("{}: {}", addr, e));
                 }
                 Err(e) => {
                     warn!(
@@ -239,11 +244,12 @@ impl ClusterClient {
                         e
                     );
                     self.broker_manager.mark_unhealthy(addr);
+                    errors.push(format!("{}: {}", addr, e));
                 }
             }
         }
 
-        Err(KafkaError::NoBrokerAvailable)
+        Err(KafkaError::NoBrokerAvailable(errors.join("; ")))
     }
 
     // ================================================================

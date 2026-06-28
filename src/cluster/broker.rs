@@ -120,6 +120,7 @@ impl BrokerManager {
     /// Try to connect to a bootstrap broker.
     pub async fn bootstrap(&self) -> Result<SocketAddr> {
         let addrs: Vec<SocketAddr> = self.bootstrap_servers.clone();
+        let mut errors: Vec<String> = Vec::new();
         for addr in addrs {
             match self.connect_to_broker(addr).await {
                 Ok(conn) => {
@@ -130,11 +131,12 @@ impl BrokerManager {
                 }
                 Err(e) => {
                     warn!("Failed to connect to bootstrap broker {}: {}", addr, e);
+                    errors.push(format!("{}: {}", addr, e));
                     continue;
                 }
             }
         }
-        Err(KafkaError::NoBootstrapBrokerAvailable)
+        Err(KafkaError::NoBootstrapBrokerAvailable(errors.join("; ")))
     }
 
     /// Register a broker connection.

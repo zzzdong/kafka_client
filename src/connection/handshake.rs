@@ -68,7 +68,7 @@ impl Handshake {
             conn.send_request(&handshake_req).await?;
 
         if handshake_resp.error_code != 0 {
-            return Err(KafkaError::Protocol(format!(
+            return Err(KafkaError::AuthenticationFailed(format!(
                 "SASL handshake failed: error {}",
                 handshake_resp.error_code
             )));
@@ -100,7 +100,7 @@ impl Handshake {
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
 
         if auth_resp.error_code != 0 {
-            return Err(KafkaError::Protocol(format!(
+            return Err(KafkaError::AuthenticationFailed(format!(
                 "PLAIN authentication failed: error {}, message: {:?}",
                 auth_resp.error_code, auth_resp.error_message
             )));
@@ -132,7 +132,7 @@ impl Handshake {
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
 
         if auth_resp.error_code != 0 {
-            return Err(KafkaError::Protocol(format!(
+            return Err(KafkaError::AuthenticationFailed(format!(
                 "SCRAM round 1 failed: error {}",
                 auth_resp.error_code
             )));
@@ -146,7 +146,7 @@ impl Handshake {
         let auth_resp: protocol::SaslAuthenticateResponse = conn.send_request(&auth_req).await?;
 
         if auth_resp.error_code != 0 {
-            return Err(KafkaError::Protocol(format!(
+            return Err(KafkaError::AuthenticationFailed(format!(
                 "SCRAM round 2 failed: error {}",
                 auth_resp.error_code
             )));

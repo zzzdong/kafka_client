@@ -43,16 +43,21 @@ pub struct TlsNetworkStream {
 }
 
 impl TlsNetworkStream {
-    /// 建立 TLS 连接
+    /// 建立 TLS 连接（包含 TCP 连接 + TLS 握手）
     pub async fn connect(addr: SocketAddr, config: TlsConfig) -> io::Result<Self> {
-        // 1. 建立 TCP 连接
         let tcp = TcpStream::connect(addr).await?;
+        Self::from_stream(tcp, config).await
+    }
 
-        // 2. 构建 TLS 配置
+    /// 在已有 TCP 流上执行 TLS 握手
+    ///
+    /// 将 TCP 连接和 TLS 握手分离为两个步骤，方便上层分别处理两类错误：
+    /// - TCP 连接失败（地址不可达、端口未监听等）
+    /// - TLS 握手失败（证书错误、域名不匹配等）
+    pub async fn from_stream(tcp: TcpStream, config: TlsConfig) -> io::Result<Self> {
         let domain = config.domain.clone();
         let tls_config = Self::build_config(&config)?;
 
-        // 3. 建立 TLS 连接
         let connector = TlsConnector::from(tls_config);
         let server_name = ServerName::try_from(domain)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;

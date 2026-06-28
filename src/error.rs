@@ -26,11 +26,11 @@ pub enum KafkaError {
     #[error("Mechanism not supported: {0}")]
     MechanismNotSupported(String),
 
-    #[error("No bootstrap broker available")]
-    NoBootstrapBrokerAvailable,
+    #[error("No bootstrap broker available: {0}")]
+    NoBootstrapBrokerAvailable(String),
 
-    #[error("No broker available")]
-    NoBrokerAvailable,
+    #[error("No broker available: {0}")]
+    NoBrokerAvailable(String),
 
     #[error("Topic not found: {0}")]
     TopicNotFound(String),

@@ -594,7 +594,7 @@ impl Message for RecordBatch {
         let batch_length = buf.get_i32();
 
         if batch_length < 0 {
-            return Err(ProtocolError::invalid_data(&format!(
+            return Err(ProtocolError::invalid_data(format!(
                 "RecordBatch header: total_buf={}, base_offset={}, batch_length={} (negative!)",
                 total_bytes, base_offset, batch_length,
             )));
