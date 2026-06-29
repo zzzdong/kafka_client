@@ -15,9 +15,7 @@
 //! ```
 
 use bytes::Bytes;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord};
+use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -77,7 +75,7 @@ async fn main() {
     // =====================================================================
     print!("[1/5] 连接 Kafka...");
     std::io::Write::flush(&mut std::io::stdout()).ok();
-    let client = match KafkaClient::builder(addrs)
+    let client = match Client::builder(addrs)
         .with_client_id("stress-test")
         .with_metadata_ttl(Duration::from_secs(5))
         .build()
@@ -96,40 +94,20 @@ async fn main() {
     // =====================================================================
     print!("[2/5] 创建 Topic '{}' (3 partitions)...", topic);
     std::io::Write::flush(&mut std::io::stdout()).ok();
-    let create_req = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.clone(),
-            num_partitions: 3,
-            replication_factor: 3,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-
-    let resp: CreateTopicsResponse = match client.cluster().send_to_any_broker(&create_req).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!(" 失败: {}", e);
-            std::process::exit(1);
-        }
-    };
-    for t in &resp.topics {
-        if t.error_code != 0 && t.error_code != 36 {
-            eprintln!(" 失败: error_code={}", t.error_code);
-            std::process::exit(1);
-        }
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .await
+        .unwrap();
+    if result.error_code != 0 && result.error_code != 36 {
+        eprintln!(" 失败: error_code={}", result.error_code);
+        std::process::exit(1);
     }
     println!(" ✓");
 
     // 等待 metadata 传播
     tokio::time::sleep(Duration::from_secs(2)).await;
-    client
-        .cluster()
-        .refresh_metadata()
-        .await
-        .expect("刷新 metadata 失败");
+    client.refresh_metadata().await.expect("刷新 metadata 失败");
 
     // =====================================================================
     // 3. 批量生产消息
@@ -141,13 +119,7 @@ async fn main() {
         .with_batch_size(65536)
         .with_linger(10);
 
-    let producer = match client.producer(producer_config).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("创建 Producer 失败: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let producer = client.producer(producer_config).await;
 
     // Warm-up: 先发送少量消息让连接建立
     let warmup: Vec<ProducerRecord> = (0..100)

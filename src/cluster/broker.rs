@@ -67,7 +67,7 @@ impl BrokerEntry {
 /// - Callers can hold a clone of the handle without a lock.
 /// - A corrupted handle can be atomically replaced.
 /// - Multiple requests can be in-flight concurrently (handles are lock-free).
-pub struct BrokerManager {
+pub(crate) struct BrokerManager {
     bootstrap_servers: Vec<SocketAddr>,
     security_protocol: SecurityProtocol,
     client_id: String,
@@ -80,7 +80,7 @@ pub struct BrokerManager {
 }
 
 impl BrokerManager {
-    pub fn new(
+    pub(crate) fn new(
         bootstrap_servers: Vec<SocketAddr>,
         security_protocol: SecurityProtocol,
         client_id: String,
@@ -118,7 +118,7 @@ impl BrokerManager {
     }
 
     /// Try to connect to a bootstrap broker.
-    pub async fn bootstrap(&self) -> Result<SocketAddr> {
+    pub(crate) async fn bootstrap(&self) -> Result<SocketAddr> {
         let addrs: Vec<SocketAddr> = self.bootstrap_servers.clone();
         let mut errors: Vec<String> = Vec::new();
         for addr in addrs {
@@ -154,7 +154,7 @@ impl BrokerManager {
     ///
     /// Returns a handle to a healthy connection. Unhealthy entries trigger an
     /// automatic reconnect.
-    pub async fn get_connection(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
+    pub(crate) async fn get_connection(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
         // Fast path: find existing entry and return healthy connection
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(entry) = self.brokers.get(&node_id) {
@@ -210,7 +210,7 @@ impl BrokerManager {
     }
 
     /// Get any healthy broker connection handle.
-    pub fn get_any_healthy_broker(&self) -> Option<(SocketAddr, ConnectionHandle)> {
+    pub(crate) fn get_any_healthy_broker(&self) -> Option<(SocketAddr, ConnectionHandle)> {
         self.brokers
             .iter()
             .find(|e| e.is_healthy())
@@ -218,12 +218,15 @@ impl BrokerManager {
     }
 
     /// Get all known broker addresses.
-    pub fn all_broker_addresses(&self) -> Vec<SocketAddr> {
+    pub(crate) fn all_broker_addresses(&self) -> Vec<SocketAddr> {
         self.brokers.iter().map(|e| e.addr).collect()
     }
 
     /// Refresh broker list from metadata response.
-    pub async fn refresh_from_metadata(&self, brokers: Vec<MetadataResponseBroker>) -> Result<()> {
+    pub(crate) async fn refresh_from_metadata(
+        &self,
+        brokers: Vec<MetadataResponseBroker>,
+    ) -> Result<()> {
         for broker in brokers {
             let addr = resolve_broker_address(&broker.host, broker.port)?;
             let node_id = broker.node_id;
@@ -254,7 +257,7 @@ impl BrokerManager {
     /// Does *not* remove the entry — callers that already hold a
     /// `ConnectionHandle` clone can still use it, but future
     /// [`get_connection`](Self::get_connection) calls will trigger a reconnect.
-    pub fn mark_unhealthy(&self, addr: SocketAddr) {
+    pub(crate) fn mark_unhealthy(&self, addr: SocketAddr) {
         if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
             if let Some(entry) = self.brokers.get(&node_id) {
                 entry.mark_unhealthy();
@@ -268,7 +271,7 @@ impl BrokerManager {
     /// Creates a fresh connection and swaps it in. The old handle drops,
     /// which closes the channel to its reactor, causing the old reactor
     /// task to exit cleanly.
-    pub async fn force_close_connection(&self, addr: SocketAddr) {
+    pub(crate) async fn force_close_connection(&self, addr: SocketAddr) {
         let node_id = match self.addr_to_node.get(&addr).map(|e| *e) {
             Some(id) => id,
             None => return,
@@ -296,7 +299,7 @@ impl BrokerManager {
     }
 
     /// Close all connections.
-    pub async fn close(&self) -> Result<()> {
+    pub(crate) async fn close(&self) -> Result<()> {
         let node_ids: Vec<i32> = self.brokers.iter().map(|e| *e.key()).collect();
         for node_id in node_ids {
             self.brokers.remove(&node_id);

@@ -250,14 +250,14 @@ async fn wait_for_cluster(cluster: &Cluster) {
     } else {
         // 明文集群：实际发送 Metadata 请求验证
         for attempt in 1..=30 {
-            let client = kafka_client::KafkaClient::builder(addrs.clone())
+            let client = kafka_client::Client::builder(addrs.clone())
                 .with_client_id("compose-wait")
                 .with_metadata_ttl(Duration::from_secs(5))
                 .build()
                 .await;
             match client {
                 Ok(c) => {
-                    let meta_result = c.cluster().refresh_metadata().await;
+                    let meta_result = c.refresh_metadata().await;
                     let _ = c.close().await;
                     if meta_result.is_ok() {
                         eprintln!("  Kafka API ready after ~{}s", attempt);

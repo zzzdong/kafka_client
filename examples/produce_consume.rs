@@ -17,9 +17,7 @@
 //! ```
 
 use bytes::Bytes;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord};
+use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -56,7 +54,7 @@ async fn main() {
 
     // Connect to Kafka
     println!("\n[1] Connecting to Kafka...");
-    let client = match KafkaClient::builder(addrs)
+    let client = match Client::builder(addrs)
         .with_client_id("produce-consume-example")
         .with_metadata_ttl(Duration::from_secs(10))
         .build()
@@ -72,43 +70,24 @@ async fn main() {
 
     // Create topic (if not exists)
     println!("\n[2] Creating topic '{}'...", topic);
-    let create_req = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.clone(),
-            num_partitions: 3,
-            replication_factor: 3,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 5000,
-        validate_only: false,
-    };
-
-    let resp: CreateTopicsResponse = match client.cluster().send_to_any_broker(&create_req).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ERROR: Failed to create topic: {}", e);
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .await
+        .unwrap();
+    match result.error_code {
+        0 => println!("Topic '{}' created", &topic),
+        36 => println!("Topic '{}' already exists", &topic),
+        code => {
+            eprintln!("ERROR: Topic creation failed with error code {}", code);
             std::process::exit(1);
         }
-    };
-
-    for t in &resp.topics {
-        // error_code 36 = TOPIC_ALREADY_EXISTS (acceptable)
-        if t.error_code != 0 && t.error_code != 36 {
-            eprintln!(
-                "ERROR: Topic creation failed with error code {}",
-                t.error_code
-            );
-            std::process::exit(1);
-        }
-        println!("Topic '{}' created (error_code={})", t.name, t.error_code);
     }
 
     // Wait for metadata to propagate
     println!("\n[3] Waiting for topic metadata...");
     tokio::time::sleep(Duration::from_secs(2)).await;
     client
-        .cluster()
         .refresh_metadata()
         .await
         .expect("Failed to refresh metadata");
@@ -125,13 +104,7 @@ async fn main() {
     // Create producer config (will be used later)
     let producer_config = ProducerConfig::new();
 
-    let producer = match client.producer(producer_config).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("ERROR: Failed to create producer: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let producer = client.producer(producer_config).await;
 
     // Consume messages — start before producing
     println!("\n[4] Consuming messages...");

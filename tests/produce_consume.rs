@@ -60,12 +60,9 @@ async fn test_produce_with_headers() {
     common::create_topic(&client, "tc-headers", 1).await;
 
     // Refresh metadata before producing to avoid NOT_LEADER_OR_FOLLOWER
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
 
-    let producer = client
-        .producer(ProducerConfig::new())
-        .await
-        .expect("Failed to create producer");
+    let producer = client.producer(ProducerConfig::new()).await;
 
     let record =
         kafka_client::ProducerRecord::new("tc-headers", bytes::Bytes::from("msg-with-headers"))
@@ -108,11 +105,10 @@ async fn test_produce_to_explicit_partition() {
 
     let producer = client
         .producer(ProducerConfig::new().with_retries(10))
-        .await
-        .expect("Failed to create producer");
+        .await;
 
     // Wait for topic metadata to be fully propagated
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let record = kafka_client::ProducerRecord::new(
@@ -152,13 +148,10 @@ async fn test_produce_with_acks_all() {
         .with_timeout(15000)
         .with_retries(10);
 
-    let producer = client
-        .producer(config)
-        .await
-        .expect("Failed to create producer with acks=-1");
+    let producer = client.producer(config).await;
 
     // Refresh metadata to ensure partition leader is known
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
 
     let record =
         kafka_client::ProducerRecord::new("tc-acks-all", bytes::Bytes::from("msg-with-acks-all"));

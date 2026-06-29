@@ -3,7 +3,7 @@
 mod broker;
 mod metadata;
 
-pub use broker::BrokerManager;
+pub(crate) use broker::BrokerManager;
 pub use metadata::MetadataCache;
 
 use std::net::SocketAddr;
@@ -16,9 +16,9 @@ use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{self as protocol, Request, Response};
 
-/// Cluster connection configuration
+/// Cluster connection configuration (crate-internal)
 #[derive(Debug, Clone)]
-pub struct ClusterConfig {
+pub(crate) struct ClusterConfig {
     pub bootstrap_servers: Vec<SocketAddr>,
     pub security_protocol: SecurityProtocol,
     pub client_id: String,
@@ -39,22 +39,22 @@ impl Default for ClusterConfig {
     }
 }
 
-/// Cluster client - shared core for Producer and Consumer
+/// Cluster client — shared core for Producer and Consumer.
+///
+/// **Crate-internal only.** External users interact via [`Client`](crate::Client).
 ///
 /// Responsibilities:
 /// - Manage connection pool to all brokers
 /// - Cache and refresh cluster metadata
 /// - Provide request routing to partition leaders (with retry + metadata refresh)
-///
-/// This is exposed as `pub` for advanced users who need low-level access.
-pub struct ClusterClient {
+pub(crate) struct ClusterClient {
     broker_manager: Arc<BrokerManager>,
     metadata: Arc<MetadataCache>,
 }
 
 impl ClusterClient {
     /// Connect to cluster: bootstrap → ApiVersions negotiation → refresh metadata
-    pub async fn connect(config: ClusterConfig) -> Result<Self> {
+    pub(crate) async fn connect(config: ClusterConfig) -> Result<Self> {
         let broker_manager = Arc::new(BrokerManager::new(
             config.bootstrap_servers.clone(),
             config.security_protocol.clone(),
@@ -83,7 +83,7 @@ impl ClusterClient {
     }
 
     /// Close all broker connections
-    pub async fn close(&self) -> Result<()> {
+    pub(crate) async fn close(&self) -> Result<()> {
         self.broker_manager.close().await
     }
 
@@ -91,11 +91,12 @@ impl ClusterClient {
     // Request routing
     // ================================================================
 
-    /// Send request to partition leader
+    /// Send request to partition leader — pure routing, no retry.
     ///
-    /// Automatically handles:
-    /// - Metadata refresh when expired
-    /// - Retry with metadata refresh on failure (leader change)
+    /// Refreshes expired metadata, then sends the request to the current
+    /// partition leader. Does **not** retry on failure — retry logic
+    /// belongs to the caller (Producer/Consumer), which can classify
+    /// errors and apply appropriate backoff.
     pub(crate) async fn send_to_partition<Req, Resp>(
         &self,
         topic: &str,
@@ -106,9 +107,10 @@ impl ClusterClient {
         Req: Request,
         Resp: Response,
     {
-        // Refresh metadata if expired
+        // Opportunistic cache maintenance — refresh stale metadata,
+        // but don't fail the request if refresh itself fails.
         if self.metadata.is_expired().await {
-            debug!("Metadata expired, refreshing before sending to partition");
+            debug!("Metadata expired, refreshing before routing");
             if let Err(e) = self.refresh_metadata().await {
                 warn!("Failed to refresh expired metadata: {}", e);
             }
@@ -120,20 +122,7 @@ impl ClusterClient {
             .await
             .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
 
-        match self.send_to_broker(leader_addr, request).await {
-            Ok(resp) => Ok(resp),
-            Err(e) => {
-                // Refresh metadata on failure (leader may have changed)
-                warn!("Send to partition failed, refreshing metadata: {}", e);
-                self.refresh_metadata().await?;
-                let leader_addr = self
-                    .metadata
-                    .get_partition_leader(topic, partition)
-                    .await
-                    .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
-                self.send_to_broker(leader_addr, request).await
-            }
-        }
+        self.send_to_broker(leader_addr, request).await
     }
 
     /// Send request to specific broker
@@ -191,7 +180,7 @@ impl ClusterClient {
     ///
     /// Used for Metadata, FindCoordinator, CreateTopics, etc.
     /// Prefers healthy connected brokers, falls back to all known addresses.
-    pub async fn send_to_any_broker<Req, Resp>(&self, request: &Req) -> Result<Resp>
+    pub(crate) async fn send_to_any_broker<Req, Resp>(&self, request: &Req) -> Result<Resp>
     where
         Req: Request,
         Resp: Response,
@@ -257,17 +246,18 @@ impl ClusterClient {
     // ================================================================
 
     /// Get metadata cache reference
-    pub fn metadata(&self) -> &Arc<MetadataCache> {
+    pub(crate) fn metadata(&self) -> &Arc<MetadataCache> {
         &self.metadata
     }
 
     /// Get any broker address (for admin operations)
-    pub fn any_broker_address(&self) -> Option<SocketAddr> {
+    #[allow(dead_code)]
+    pub(crate) fn any_broker_address(&self) -> Option<SocketAddr> {
         self.broker_manager.all_broker_addresses().first().copied()
     }
 
     /// Force refresh cluster metadata
-    pub async fn refresh_metadata(&self) -> Result<()> {
+    pub(crate) async fn refresh_metadata(&self) -> Result<()> {
         let _guard = self.metadata.acquire_refresh_lock().await;
 
         let request = protocol::MetadataRequest {

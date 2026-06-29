@@ -1,14 +1,14 @@
 //! Raw connection example - demonstrates low-level Connection API
 //!
 //! This example shows how to use the Connection layer directly,
-//! bypassing the higher-level KafkaClient/ClusterClient abstractions.
+//! bypassing the higher-level Client abstraction.
 //!
 //! **Use this only when you need:**
 //! - Direct protocol-level access
 //! - Custom request/response handling
 //! - Debugging protocol issues
 //!
-//! For normal usage, prefer `KafkaClient` instead.
+//! For normal usage, prefer `Client` instead.
 //!
 //! # Usage
 //!

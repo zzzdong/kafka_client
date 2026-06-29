@@ -21,7 +21,7 @@
 //! cargo run --example sasl_auth
 //! ```
 
-use kafka_client::{KafkaClient, SaslMechanismType};
+use kafka_client::{Client, SaslMechanismType};
 use std::net::SocketAddr;
 
 fn get_bootstrap_addr() -> SocketAddr {
@@ -72,7 +72,7 @@ async fn main() {
 
     // Build client with SASL authentication
     println!("[1] Connecting with SASL authentication...");
-    let client = match KafkaClient::builder(vec![addr])
+    let client = match Client::builder(vec![addr])
         .with_client_id("sasl-auth-example")
         .with_sasl(mechanism, username, password)
         .build()

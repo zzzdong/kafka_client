@@ -13,7 +13,7 @@
 //! KAFKA_BOOTSTRAP=192.168.1.100:9092 cargo run --example basic_connect
 //! ```
 
-use kafka_client::KafkaClient;
+use kafka_client::Client;
 use std::net::SocketAddr;
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
@@ -40,7 +40,7 @@ async fn main() {
     println!("=== Connecting to Kafka at {:?} ===", addrs);
 
     // Build and connect the client
-    let client = match KafkaClient::builder(addrs)
+    let client = match Client::builder(addrs)
         .with_client_id("basic-connect-example")
         .build()
         .await

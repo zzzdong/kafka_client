@@ -20,7 +20,7 @@
 //! cargo run --example tls_connect
 //! ```
 
-use kafka_client::{KafkaClient, SaslMechanismType, TlsConfig};
+use kafka_client::{Client, SaslMechanismType, TlsConfig};
 use std::net::SocketAddr;
 
 fn get_bootstrap_addr() -> SocketAddr {
@@ -81,13 +81,13 @@ async fn main() {
     let builder = match sasl_config {
         Some((mechanism, username, password)) => {
             println!("SASL: {:?} (user: {})", mechanism, username);
-            KafkaClient::builder(vec![addr])
+            Client::builder(vec![addr])
                 .with_client_id("tls-connect-example")
                 .with_sasl_tls(tls_config.clone(), mechanism, username, password)
         }
         None => {
             println!("SASL: None");
-            KafkaClient::builder(vec![addr])
+            Client::builder(vec![addr])
                 .with_client_id("tls-connect-example")
                 .with_tls_config(tls_config)
         }

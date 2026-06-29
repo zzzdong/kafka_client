@@ -53,7 +53,7 @@ impl VersionRange {
     pub fn contains(&self, version: i16) -> bool {
         match self {
             VersionRange::Exact(v) => version == *v,
-            VersionRange::Range(start, end) => version >= *start && version <= *end,
+            VersionRange::Range(start, end) => (*start..=*end).contains(&version),
             VersionRange::From(start) => version >= *start,
             VersionRange::All => true,
         }
@@ -83,7 +83,7 @@ impl VersionRange {
     pub fn as_check_expr(&self) -> TokenStream {
         match self {
             VersionRange::Exact(v) => quote! { version == #v },
-            VersionRange::Range(start, end) => quote! { version >= #start && version <= #end },
+            VersionRange::Range(start, end) => quote! { (#start..=#end).contains(&version) },
             VersionRange::From(start) => quote! { version >= #start },
             VersionRange::All => quote! { true },
         }

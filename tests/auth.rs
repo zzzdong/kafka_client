@@ -20,10 +20,8 @@
 mod common;
 
 use common::compose;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::{
-    ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord, SaslMechanismType,
+    Client, ConsumerConfig, ProducerConfig, ProducerRecord, SaslMechanismType, admin::NewTopic,
 };
 use std::time::Duration;
 
@@ -73,17 +71,16 @@ async fn test_sasl_authentication() {
         addrs
     );
 
-    let client = KafkaClient::builder(addrs.clone())
+    let client = Client::builder(addrs.clone())
         .with_client_id("sasl-auth-test")
         .with_sasl(mechanism, &username, &password)
         .with_metadata_ttl(Duration::from_secs(10))
         .build()
         .await
-        .expect("Failed to build KafkaClient with SASL auth");
+        .expect("Failed to build Client with SASL auth");
 
     // 1. 验证 metadata 可以正常获取
     client
-        .cluster()
         .refresh_metadata()
         .await
         .expect("Failed to refresh metadata after SASL auth");
@@ -96,39 +93,21 @@ async fn test_sasl_authentication() {
     let topic = "sasl-auth-test-topic";
 
     // 创建主题（SASL 是单节点集群，rf=1）
-    let request = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.to_string(),
-            num_partitions: 1,
-            replication_factor: 1,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-    let response: CreateTopicsResponse = client
-        .cluster()
-        .send_to_any_broker(&request)
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(topic, 1, 1))
         .await
-        .expect("Failed to send CreateTopicsRequest");
-    for t in &response.topics {
-        assert!(
-            t.error_code == 0 || t.error_code == 36,
-            "Create topic '{}' failed: error_code {} ({:?})",
-            topic,
-            t.error_code,
-            t.error_message
-        );
-    }
+        .unwrap();
+    assert!(
+        result.is_success() || result.already_exists(),
+        "Create topic failed: {:?}",
+        result.error_message
+    );
     println!("  Topic '{}' created (rf=1)", topic);
     common::wait_for_topic_ready(&client, topic, 1).await;
 
     // 生产消息
-    let producer = client
-        .producer(ProducerConfig::new())
-        .await
-        .expect("Failed to create producer");
+    let producer = client.producer(ProducerConfig::new()).await;
 
     for i in 0..5 {
         let record = ProducerRecord::new(topic, bytes::Bytes::from(format!("sasl-msg-{}", i)));
@@ -202,7 +181,7 @@ async fn test_sasl_invalid_credentials_rejected() {
         addrs
     );
 
-    let result = KafkaClient::builder(addrs.clone())
+    let result = Client::builder(addrs.clone())
         .with_client_id("sasl-invalid-test")
         .with_sasl(mechanism, "wrong_user", "wrong_password")
         .with_metadata_ttl(Duration::from_secs(5))
@@ -215,7 +194,7 @@ async fn test_sasl_invalid_credentials_rejected() {
             // only rejects on first request). Verify metadata refresh fails.
             eprintln!("  NOTE: Build succeeded with invalid credentials, testing metadata...");
             let client = result.unwrap();
-            let meta_result = client.cluster().refresh_metadata().await;
+            let meta_result = client.refresh_metadata().await;
             assert!(
                 meta_result.is_err(),
                 "Expected metadata refresh to fail with invalid SASL credentials"

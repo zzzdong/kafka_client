@@ -31,12 +31,9 @@ async fn test_producer_acks_zero() {
     // so wrap the entire test in a timeout.
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let config = ProducerConfig::new().with_acks(0).with_retries(5);
-        let producer = client
-            .producer(config)
-            .await
-            .expect("Failed to create producer with acks=0");
+        let producer = client.producer(config).await;
 
-        client.cluster().refresh_metadata().await.unwrap();
+        client.refresh_metadata().await.unwrap();
 
         for i in 0..5 {
             let record =
@@ -78,12 +75,9 @@ async fn test_producer_acks_one() {
         .with_acks(1)
         .with_timeout(10000)
         .with_retries(10);
-    let producer = client
-        .producer(config)
-        .await
-        .expect("Failed to create producer with acks=1");
+    let producer = client.producer(config).await;
 
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
 
     for i in 0..5 {
         let record = ProducerRecord::new("tc-acks1", bytes::Bytes::from(format!("acks1-{}", i)));
@@ -122,12 +116,9 @@ async fn test_producer_acks_all() {
         .with_acks(-1)
         .with_timeout(15000)
         .with_retries(10);
-    let producer = client
-        .producer(config)
-        .await
-        .expect("Failed to create producer with acks=-1");
+    let producer = client.producer(config).await;
 
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
 
     for i in 0..5 {
         let record = ProducerRecord::new(
@@ -170,12 +161,9 @@ async fn test_producer_batch_with_acks_all() {
         .with_acks(-1)
         .with_timeout(15000)
         .with_retries(10);
-    let producer = client
-        .producer(config)
-        .await
-        .expect("Failed to create producer");
+    let producer = client.producer(config).await;
 
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
 
     // Use individual send for each message to ensure reliable delivery
     for i in 0..20 {

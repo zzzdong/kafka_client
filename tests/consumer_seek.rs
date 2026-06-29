@@ -38,7 +38,7 @@ async fn test_consumer_seek_to_earliest() {
     common::produce_messages(&client, "tc-seek", 10).await;
 
     // Give metadata time to settle before consumer starts
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
     sleep(Duration::from_millis(500)).await;
 
     let group_id = unique_group_id("cg-seek-test");

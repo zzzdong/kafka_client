@@ -2,20 +2,19 @@
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::debug;
 
 use kafka_client_protocol::{MetadataResponse, MetadataResponseBroker, MetadataResponseTopic};
 
-/// Metadata cache
+/// Metadata cache with TTL-based expiry and O(1) partition leader lookup.
 ///
-/// Internally uses `Arc<RwLock<CachedMetadata>>`.
-/// Clone shares the same underlying data (intentional design).
-/// Includes a refresh lock to prevent concurrent refresh operations.
+/// Uses `RwLock` for concurrent reads and a separate `Mutex` to serialise
+/// refresh operations so that multiple callers don't trigger redundant
+/// Metadata RPCs.
 pub struct MetadataCache {
-    inner: Arc<RwLock<CachedMetadata>>,
+    inner: RwLock<CachedMetadata>,
     ttl: Duration,
     /// Lock to prevent concurrent refresh operations
     refresh_lock: Mutex<()>,
@@ -31,6 +30,15 @@ struct CachedMetadata {
     topic_ids: HashMap<uuid::Uuid, String>, // topic_id → topic_name
     broker_addresses: HashMap<String, i32>,
     broker_sockets: HashMap<i32, SocketAddr>,
+    /// (topic_name, partition_index) → leader SocketAddr — O(1) lookup
+    partition_leader_sockets: HashMap<(String, i32), SocketAddr>,
+}
+
+/// Pre-resolved broker address info (DNS resolved outside the write lock).
+struct ResolvedBroker {
+    node_id: i32,
+    broker: MetadataResponseBroker,
+    socket: Option<SocketAddr>,
 }
 
 impl CachedMetadata {
@@ -44,43 +52,74 @@ impl CachedMetadata {
             topic_ids: HashMap::new(),
             broker_addresses: HashMap::new(),
             broker_sockets: HashMap::new(),
+            partition_leader_sockets: HashMap::new(),
         }
     }
 
-    fn update(&mut self, response: MetadataResponse) {
+    /// Pre-resolve broker addresses (DNS outside any lock).
+    /// Takes a reference so the caller can still use `response` afterwards.
+    fn resolve_brokers(brokers: &[MetadataResponseBroker]) -> Vec<ResolvedBroker> {
+        let mut resolved = Vec::with_capacity(brokers.len());
+        for broker in brokers {
+            let addr_str = format!("{}:{}", broker.host, broker.port);
+            let socket = addr_str.to_socket_addrs().ok().and_then(|mut a| a.next());
+            resolved.push(ResolvedBroker {
+                node_id: broker.node_id,
+                broker: broker.clone(),
+                socket,
+            });
+        }
+        resolved
+    }
+
+    fn update(&mut self, response: &MetadataResponse, resolved: &[ResolvedBroker]) {
         self.fetched_at = Some(Instant::now());
-        self.cluster_id = response.cluster_id;
+        self.cluster_id = response.cluster_id.clone();
         self.controller_id = Some(response.controller_id);
 
-        // Update brokers
-        self.brokers.clear();
-        self.broker_addresses.clear();
-        self.broker_sockets.clear();
-        for broker in response.brokers {
-            let addr = format!("{}:{}", broker.host, broker.port);
-            self.broker_addresses.insert(addr.clone(), broker.node_id);
-            if let Ok(mut addrs) = addr.to_socket_addrs() {
-                if let Some(socket_addr) = addrs.next() {
-                    self.broker_sockets.insert(broker.node_id, socket_addr);
-                }
-            }
-            self.brokers.insert(broker.node_id, broker);
-        }
+        // --- Brokers (DNS already resolved) ---
+        let new_brokers: HashMap<i32, MetadataResponseBroker> = resolved
+            .iter()
+            .map(|r| (r.node_id, r.broker.clone()))
+            .collect();
+        let new_broker_sockets: HashMap<i32, SocketAddr> = resolved
+            .iter()
+            .filter_map(|r| r.socket.map(|s| (r.node_id, s)))
+            .collect();
+        let new_broker_addresses: HashMap<String, i32> = resolved
+            .iter()
+            .map(|r| (format!("{}:{}", r.broker.host, r.broker.port), r.node_id))
+            .collect();
 
-        // Update topics
-        self.topics.clear();
-        self.topic_ids.clear();
-        for topic in response.topics {
+        self.brokers = new_brokers;
+        self.broker_sockets = new_broker_sockets;
+        self.broker_addresses = new_broker_addresses;
+
+        // --- Topics & partition leader index ---
+        let mut new_topics = HashMap::with_capacity(response.topics.len());
+        let mut new_topic_ids = HashMap::new();
+        let mut new_partition_leader_sockets = HashMap::new();
+
+        for topic in &response.topics {
             let topic_id = topic.topic_id;
-            let topic_name = topic.name.clone();
-            if let Some(name) = topic_name {
-                self.topics.insert(name, topic.clone());
+            if let Some(ref name) = topic.name {
+                // Build O(1) partition → leader index
+                for p in &topic.partitions {
+                    if let Some(&socket) = self.broker_sockets.get(&p.leader_id) {
+                        new_partition_leader_sockets
+                            .insert((name.clone(), p.partition_index), socket);
+                    }
+                }
+                new_topics.insert(name.clone(), topic.clone());
             }
             if !topic_id.is_nil() {
-                self.topic_ids
-                    .insert(topic_id, topic.name.unwrap_or_default());
+                new_topic_ids.insert(topic_id, topic.name.clone().unwrap_or_default());
             }
         }
+
+        self.topics = new_topics;
+        self.topic_ids = new_topic_ids;
+        self.partition_leader_sockets = new_partition_leader_sockets;
 
         debug!(
             "Metadata cache updated: {} brokers, {} topics",
@@ -96,13 +135,14 @@ impl CachedMetadata {
         }
     }
 
+    // ------------------------------------------------------------------
+    // O(1) partition leader lookup via pre-built index
+    // ------------------------------------------------------------------
+
     fn get_partition_leader(&self, topic: &str, partition: i32) -> Option<SocketAddr> {
-        let topic = self.topics.get(topic)?;
-        let partition = topic
-            .partitions
-            .iter()
-            .find(|p| p.partition_index == partition)?;
-        self.broker_sockets.get(&partition.leader_id).copied()
+        self.partition_leader_sockets
+            .get(&(topic.to_string(), partition))
+            .copied()
     }
 
     fn get_broker_address(&self, node_id: i32) -> Option<SocketAddr> {
@@ -123,22 +163,26 @@ impl CachedMetadata {
 impl MetadataCache {
     pub(crate) fn new(ttl: Duration) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(CachedMetadata::new())),
+            inner: RwLock::new(CachedMetadata::new()),
             ttl,
             refresh_lock: Mutex::new(()),
         }
     }
 
     /// Create default metadata cache
-    /// 预留功能，用于默认配置
     #[allow(dead_code)]
     pub(crate) fn default() -> Self {
         Self::new(Duration::from_secs(300))
     }
 
+    /// Replace the cached metadata atomically.
+    ///
+    /// DNS resolution for broker addresses is performed **before** acquiring
+    /// the write lock, so readers are never blocked by network I/O.
     pub(crate) async fn update(&self, response: MetadataResponse) {
+        let resolved = CachedMetadata::resolve_brokers(&response.brokers);
         let mut inner = self.inner.write().await;
-        inner.update(response);
+        inner.update(&response, &resolved);
     }
 
     pub(crate) async fn is_expired(&self) -> bool {

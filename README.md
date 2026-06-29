@@ -13,7 +13,7 @@ A pure Rust Kafka client library built on Tokio async runtime. Supports SASL aut
 - **SASL Authentication** - Supports PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
 - **TLS Encryption** - Secure connections with configurable TLS
 - **Layered Architecture** - Clean separation between transport, protocol, and API layers
-- **High-Level API** - Easy-to-use Producer and Consumer interfaces
+- **High-Level API** - Easy-to-use Producer, Consumer, and Admin interfaces
 - **Low-Level Access** - Direct protocol access for advanced use cases
 - **Connection Pooling** - Efficient broker connection management
 - **Metadata Caching** - Automatic cluster metadata refresh
@@ -32,9 +32,9 @@ kafka_client = "0.1"
 ### Basic Connection
 
 ```rust
-use kafka_client::KafkaClient;
+use kafka_client::Client;
 
-let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .with_client_id("my-app")
     .build()
     .await?;
@@ -47,14 +47,20 @@ println!("Discovered {} brokers", brokers.len());
 ### Producer
 
 ```rust
-use kafka_client::{KafkaClient, ProducerConfig, ProducerRecord};
+use kafka_client::{Client, ProducerConfig, ProducerRecord};
 use bytes::Bytes;
 
-let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .build()
     .await?;
 
-let producer = client.producer(ProducerConfig::new()).await?;
+// Default config
+let producer = client.producer_default().await;
+
+// Or with custom config
+let producer = client.producer(
+    ProducerConfig::new().with_acks(-1).with_retries(3)
+).await;
 
 // Send messages
 let record = ProducerRecord::new("my-topic", Bytes::from("hello world"));
@@ -68,12 +74,16 @@ producer.flush().await?;
 ### Consumer
 
 ```rust
-use kafka_client::{KafkaClient, ConsumerConfig};
+use kafka_client::{Client, ConsumerConfig};
 
-let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .build()
     .await?;
 
+// Default group consumer
+let mut consumer = client.consumer_default();
+
+// Or with custom config
 let mut consumer = client.consumer(
     ConsumerConfig::new("my-consumer-group")
         .with_earliest()
@@ -88,19 +98,41 @@ for record in records {
 }
 ```
 
+### Admin
+
+```rust
+use kafka_client::{Client, admin::NewTopic};
+
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
+    .build()
+    .await?;
+let admin = client.admin();
+
+// Create a topic
+admin.create_topic(&NewTopic::new("orders", 3, 3)).await?;
+
+// List all topics
+let topics = admin.list_topics().await?;
+for t in &topics { println!("{}", t.name); }
+
+// Describe cluster
+let info = admin.describe_cluster().await?;
+println!("{} brokers, controller: {:?}", info.brokers.len(), info.controller_id);
+```
+
 ### SASL Authentication
 
 ```rust
-use kafka_client::{KafkaClient, SaslMechanismType};
+use kafka_client::{Client, SaslMechanismType};
 
 // PLAIN authentication
-let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .with_sasl(SaslMechanismType::Plain, "username", "password")
     .build()
     .await?;
 
 // SCRAM-SHA-256 authentication
-let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .with_sasl(SaslMechanismType::ScramSha256, "username", "password")
     .build()
     .await?;
@@ -109,7 +141,7 @@ let client = KafkaClient::builder(vec!["127.0.0.1:9092".parse()?])
 ### TLS Encryption
 
 ```rust
-use kafka_client::{KafkaClient, TlsConfig};
+use kafka_client::{Client, TlsConfig};
 
 let tls = TlsConfig {
     domain: "kafka.example.com".to_string(),
@@ -118,13 +150,13 @@ let tls = TlsConfig {
 };
 
 // TLS only
-let client = KafkaClient::builder(vec!["127.0.0.1:9093".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9093".parse()?])
     .with_tls_config(tls)
     .build()
     .await?;
 
 // TLS + SASL
-let client = KafkaClient::builder(vec!["127.0.0.1:9093".parse()?])
+let client = Client::builder(vec!["127.0.0.1:9093".parse()?])
     .with_sasl_tls(tls, SaslMechanismType::ScramSha256, "username", "password")
     .build()
     .await?;
@@ -137,11 +169,11 @@ The library uses a layered architecture for clean separation of concerns:
 ```
 ┌─────────────────────────────────────────┐
 │         High-Level API Layer            │
-│  (Producer, Consumer, KafkaClient)      │
+│  (Client, Producer, Consumer, Admin)    │
 ├─────────────────────────────────────────┤
 │         Cluster Layer                   │
 │  (ClusterClient, BrokerManager,         │
-│   MetadataCache)                        │
+│   MetadataCache)  [crate-internal]      │
 ├─────────────────────────────────────────┤
 │         Connection Layer                │
 │  (Connection, ConnectionPool)           │

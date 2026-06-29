@@ -141,7 +141,7 @@ cargo run --example admin_operations
 ### Connection
 
 ```rust
-let client = KafkaClient::builder(vec!["localhost:9092".parse().unwrap()])
+let client = Client::builder(vec!["localhost:9092".parse().unwrap()])
     .with_client_id("my-app")
     .build()
     .await?;
@@ -151,19 +151,19 @@ let client = KafkaClient::builder(vec!["localhost:9092".parse().unwrap()])
 
 ```rust
 // PLAIN
-let client = KafkaClient::builder(vec![addr])
+let client = Client::builder(vec![addr])
     .with_sasl(SaslMechanismType::Plain, "user", "pass")
     .build()
     .await?;
 
 // SCRAM-SHA-256
-let client = KafkaClient::builder(vec![addr])
+let client = Client::builder(vec![addr])
     .with_sasl(SaslMechanismType::ScramSha256, "user", "pass")
     .build()
     .await?;
 
 // Convenience method (PLAIN only)
-let client = KafkaClient::builder(vec![addr])
+let client = Client::builder(vec![addr])
     .with_sasl_plaintext("user", "pass")
     .build()
     .await?;
@@ -179,13 +179,13 @@ let tls = TlsConfig {
 };
 
 // TLS + SASL with custom mechanism
-let client = KafkaClient::builder(vec![addr])
+let client = Client::builder(vec![addr])
     .with_sasl_tls(tls, SaslMechanismType::ScramSha256, "user", "pass")
     .build()
     .await?;
 
 // Convenience method (TLS + PLAIN)
-let client = KafkaClient::builder(vec![addr])
+let client = Client::builder(vec![addr])
     .with_sasl_ssl("kafka.example.com", "user", "pass")
     .build()
     .await?;
@@ -194,7 +194,7 @@ let client = KafkaClient::builder(vec![addr])
 ### Producer
 
 ```rust
-let producer = client.producer(ProducerConfig::new()).await?;
+let producer = client.producer(ProducerConfig::new()).await;
 let record = ProducerRecord::new("topic", Bytes::from("message"));
 producer.send(record).await?;
 producer.flush().await?;
@@ -214,8 +214,18 @@ let records = consumer.poll_timeout(Duration::from_millis(5000)).await?;
 ### Admin Operations
 
 ```rust
-let request = CreateTopicsRequest { ... };
-let response: CreateTopicsResponse = client.cluster()
-    .send_to_any_broker(&request)
-    .await?;
+use kafka_client::admin::NewTopic;
+
+let admin = client.admin();
+
+// Create a topic
+admin.create_topic(&NewTopic::new("orders", 3, 3)).await?;
+
+// List all topics; describe the cluster
+let topics = admin.list_topics().await?;
+let info = admin.describe_cluster().await?;
+
+// Describe & delete
+admin.describe_topics(&["orders"]).await?;
+admin.delete_topic("orders").await?;
 ```

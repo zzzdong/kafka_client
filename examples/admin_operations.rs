@@ -1,10 +1,10 @@
 //! Admin API example
 //!
-//! Demonstrates administrative operations on Kafka cluster:
-//! - Create topics
+//! Demonstrates administrative operations using the high-level Admin client:
+//! - List topics and describe clusters
+//! - Create topics with custom partition counts
+//! - Describe topic details (partitions, leaders)
 //! - Delete topics
-//! - List topics
-//! - Describe topic configurations
 //!
 //! # Usage
 //!
@@ -16,12 +16,8 @@
 //! KAFKA_BOOTSTRAP=192.168.1.100:9092 cargo run --example admin_operations
 //! ```
 
-use kafka_client::KafkaClient;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::delete_topics_request::{DeleteTopicState, DeleteTopicsRequest};
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
+use kafka_client::{Client, admin::NewTopic};
 use std::net::SocketAddr;
-use std::time::Duration;
 
 fn get_bootstrap_addrs() -> Vec<SocketAddr> {
     let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
@@ -48,9 +44,9 @@ async fn main() {
     println!("Bootstrap: {:?}", addrs);
     println!();
 
-    // Connect to Kafka
+    // ── Connect ──
     println!("[1] Connecting to Kafka...");
-    let client = match KafkaClient::builder(addrs)
+    let client = match Client::builder(addrs)
         .with_client_id("admin-example")
         .build()
         .await
@@ -63,108 +59,78 @@ async fn main() {
     };
     println!("Connected!");
 
-    // List existing topics
-    println!("\n[2] Listing existing topics...");
-    client
-        .cluster()
-        .refresh_metadata()
+    let admin = client.admin();
+
+    // ── Describe cluster ──
+    println!("\n[2] Cluster info...");
+    let info = admin
+        .describe_cluster()
         .await
-        .expect("Failed to refresh metadata");
-    let topics = client.metadata().get_all_topics().await;
-    println!("Found {} topics:", topics.len());
+        .expect("Failed to describe cluster");
+    println!("  Brokers: {}", info.brokers.len());
+    for b in &info.brokers {
+        println!("    Broker {}: {}:{}", b.id, b.host, b.port);
+    }
+
+    // ── List existing topics ──
+    println!("\n[3] Listing topics...");
+    let topics = admin.list_topics().await.expect("Failed to list topics");
+    println!("  {} user topics:", topics.len());
     for t in &topics {
-        if let Some(name) = &t.name {
-            println!("  '{}': {} partitions", name, t.partitions.len());
-        }
+        println!("    '{}': {} partitions", t.name, t.partitions);
     }
 
-    // Create a new topic
+    // ── Create a topic ──
     let topic_name = "admin-example-topic";
-    println!("\n[3] Creating topic '{}'...", topic_name);
+    println!(
+        "\n[4] Creating topic '{}' (3 partitions, rf=1)...",
+        topic_name
+    );
+    let result = admin
+        .create_topic(&NewTopic::new(topic_name, 3, 1))
+        .await
+        .expect("Failed to create topic");
 
-    let create_req = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic_name.to_string(),
-            num_partitions: 3,
-            replication_factor: 1,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-
-    let resp: CreateTopicsResponse = match client.cluster().send_to_any_broker(&create_req).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ERROR: Failed to create topic: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    for t in &resp.topics {
-        match t.error_code {
-            0 => println!("  Topic '{}' created successfully", t.name),
-            36 => println!("  Topic '{}' already exists", t.name),
-            code => eprintln!(
-                "  ERROR: Topic '{}' failed with error code {}",
-                t.name, code
-            ),
-        }
+    match result.error_code {
+        0 => println!("  Created successfully"),
+        36 => println!("  Already exists"),
+        code => eprintln!("  Failed with error code {}", code),
     }
 
-    // Wait for topic to be ready
-    println!("\n[4] Waiting for topic metadata...");
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    client
-        .cluster()
-        .refresh_metadata()
+    // ── Describe the topic ──
+    println!("\n[5] Describing topic '{}'...", topic_name);
+    let desc = admin
+        .describe_topics(&[topic_name])
         .await
-        .expect("Failed to refresh metadata");
+        .expect("Failed to describe topic");
 
-    if let Some(tm) = client.metadata().get_topic(topic_name).await {
-        println!("Topic '{}' is ready:", topic_name);
-        for p in &tm.partitions {
-            println!("  Partition {} → Leader {}", p.partition_index, p.leader_id);
+    if let Some(t) = desc.first() {
+        println!("  Partitions: {}", t.partitions.len());
+        for p in &t.partitions {
+            println!(
+                "    Partition {}: leader={}, replicas={:?}",
+                p.partition, p.leader_id, p.replicas
+            );
         }
     } else {
-        eprintln!("WARNING: Topic '{}' not found in metadata", topic_name);
+        println!("  Topic not found in metadata");
     }
 
-    // Delete the topic (cleanup)
-    println!("\n[5] Deleting topic '{}'...", topic_name);
-    let delete_req = DeleteTopicsRequest {
-        topics: vec![DeleteTopicState {
-            name: Some(topic_name.to_string()),
-            topic_id: uuid::Uuid::nil(),
-        }],
-        topic_names: vec![topic_name.to_string()], // For older versions
-        timeout_ms: 10000,
-    };
-
-    match client
-        .cluster()
-        .send_to_any_broker::<_, kafka_client::protocol::DeleteTopicsResponse>(&delete_req)
+    // ── Delete the topic (cleanup) ──
+    println!("\n[6] Deleting topic '{}'...", topic_name);
+    let result = admin
+        .delete_topic(topic_name)
         .await
-    {
-        Ok(resp) => {
-            for t in &resp.responses {
-                match t.error_code {
-                    0 => println!(
-                        "  Topic '{}' deleted successfully",
-                        t.name.as_deref().unwrap_or_default()
-                    ),
-                    code => eprintln!("  ERROR: Delete failed with error code {}", code),
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("ERROR: Failed to delete topic: {}", e);
-        }
+        .expect("Failed to delete topic");
+
+    if result.is_success() {
+        println!("  Deleted successfully");
+    } else {
+        eprintln!("  Delete failed: error_code={}", result.error_code);
     }
 
-    // Clean shutdown
-    println!("\n[6] Shutting down...");
+    // ── Clean shutdown ──
+    println!("\n[7] Shutting down...");
     if let Err(e) = client.close().await {
         eprintln!("WARNING: Shutdown error: {}", e);
     }

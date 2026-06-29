@@ -25,9 +25,9 @@
 mod common;
 
 use common::compose;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord, TlsConfig};
+use kafka_client::{
+    Client, ConsumerConfig, ProducerConfig, ProducerRecord, TlsConfig, admin::NewTopic,
+};
 use std::time::Duration;
 
 /// Ensure TLS cluster is ready (auto-starts if needed)
@@ -77,12 +77,12 @@ fn base_tls_config() -> TlsConfig {
 /// Build a TLS client with mTLS certs and CA verification.
 ///
 /// Retries internally since TLS broker startup may lag behind TCP ready.
-async fn build_tls_client() -> KafkaClient {
+async fn build_tls_client() -> Client {
     let addrs = tls_bootstrap_addrs();
     let tls_config = base_tls_config();
 
     for attempt in 1..=10 {
-        let result = KafkaClient::builder(addrs.clone())
+        let result = Client::builder(addrs.clone())
             .with_client_id("tls-integration-test")
             .with_tls_config(tls_config.clone())
             .with_metadata_ttl(Duration::from_secs(10))
@@ -99,7 +99,7 @@ async fn build_tls_client() -> KafkaClient {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 } else {
                     panic!(
-                        "Failed to build KafkaClient with TLS config after 10 attempts: {}",
+                        "Failed to build Client with TLS config after 10 attempts: {}",
                         e
                     );
                 }
@@ -115,7 +115,6 @@ async fn test_tls_connect_and_metadata() {
     let client = build_tls_client().await;
 
     client
-        .cluster()
         .refresh_metadata()
         .await
         .expect("Failed to refresh metadata over TLS connection");
@@ -136,39 +135,21 @@ async fn test_tls_produce_and_consume() {
     let client = build_tls_client().await;
 
     let topic = "tls-produce-consume-test";
-    let request = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.to_string(),
-            num_partitions: 1,
-            replication_factor: 1,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-
-    let response: CreateTopicsResponse = client
-        .cluster()
-        .send_to_any_broker(&request)
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(topic, 1, 1))
         .await
-        .expect("Failed to create topic via TLS");
-    for t in &response.topics {
-        assert!(
-            t.error_code == 0 || t.error_code == 36,
-            "Create topic '{}' failed: error_code {} ({:?})",
-            topic,
-            t.error_code,
-            t.error_message
-        );
-    }
+        .unwrap();
+    assert!(
+        result.is_success() || result.already_exists(),
+        "Create topic '{}' failed: {:?}",
+        topic,
+        result.error_message
+    );
     println!("  Topic '{}' created", topic);
     common::wait_for_topic_ready(&client, topic, 1).await;
 
-    let producer = client
-        .producer(ProducerConfig::new())
-        .await
-        .expect("Failed to create producer over TLS");
+    let producer = client.producer(ProducerConfig::new()).await;
 
     for i in 0..5 {
         let record = ProducerRecord::new(topic, bytes::Bytes::from(format!("tls-msg-{}", i)));
@@ -230,7 +211,6 @@ async fn test_tls_with_ca_cert_verification() {
     let client = build_tls_client().await;
 
     client
-        .cluster()
         .refresh_metadata()
         .await
         .expect("Failed to refresh metadata with CA cert verification");
@@ -246,39 +226,21 @@ async fn test_tls_with_ca_cert_verification() {
     );
 
     let topic = "tls-ca-verify-test";
-    let request = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.to_string(),
-            num_partitions: 1,
-            replication_factor: 1,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-
-    let response: CreateTopicsResponse = client
-        .cluster()
-        .send_to_any_broker(&request)
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(topic, 1, 1))
         .await
-        .expect("Failed to create topic via CA-verified TLS");
-    for t in &response.topics {
-        assert!(
-            t.error_code == 0 || t.error_code == 36,
-            "Create topic '{}' failed: error_code {} ({:?})",
-            topic,
-            t.error_code,
-            t.error_message
-        );
-    }
+        .unwrap();
+    assert!(
+        result.is_success() || result.already_exists(),
+        "Create topic '{}' failed: {:?}",
+        topic,
+        result.error_message
+    );
     println!("  Topic '{}' created via CA-verified TLS", topic);
     common::wait_for_topic_ready(&client, topic, 1).await;
 
-    let producer = client
-        .producer(ProducerConfig::new())
-        .await
-        .expect("Failed to create producer over CA-verified TLS");
+    let producer = client.producer(ProducerConfig::new()).await;
 
     let record = ProducerRecord::new(topic, bytes::Bytes::from("ca-verified-msg"));
     producer

@@ -13,9 +13,7 @@
 //! ```
 
 use bytes::Bytes;
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
-use kafka_client::{ConsumerConfig, KafkaClient, ProducerConfig, ProducerRecord};
+use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -55,7 +53,7 @@ async fn main() {
 
     // 1. Connect
     println!("\n[1] Connecting to Kafka...");
-    let client = match KafkaClient::builder(addrs)
+    let client = match Client::builder(addrs)
         .with_client_id("large-batch-example")
         .with_metadata_ttl(Duration::from_secs(10))
         .build()
@@ -71,41 +69,26 @@ async fn main() {
 
     // 2. Create topic
     println!("\n[2] Creating topic '{}' (3 partitions)...", topic);
-    let create_req = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.clone(),
-            num_partitions: 3,
-            replication_factor: 3,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
-
-    let resp: CreateTopicsResponse = match client.cluster().send_to_any_broker(&create_req).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ERROR: Failed to create topic: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    for t in &resp.topics {
-        if t.error_code != 0 && t.error_code != 36 {
-            eprintln!(
-                "ERROR: Topic creation failed: error_code={}, message={:?}",
-                t.error_code, t.error_message
-            );
-            std::process::exit(1);
-        }
-        println!("  Topic '{}' ready (error_code={})", t.name, t.error_code);
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .await
+        .unwrap();
+    if result.error_code != 0 && result.error_code != 36 {
+        eprintln!(
+            "ERROR: Topic creation failed: error_code={}",
+            result.error_code
+        );
+        std::process::exit(1);
     }
+    println!(
+        "  Topic '{}' ready (error_code={})",
+        &topic, result.error_code
+    );
 
     // Wait for metadata
     tokio::time::sleep(Duration::from_secs(2)).await;
     client
-        .cluster()
         .refresh_metadata()
         .await
         .expect("Failed to refresh metadata");
@@ -114,13 +97,7 @@ async fn main() {
     println!("\n[3] Producing {} messages to '{}'...", msg_count, topic);
     let producer_config = ProducerConfig::new().with_retries(5); // more retries for large batch resilience
 
-    let producer = match client.producer(producer_config).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("ERROR: Failed to create producer: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let producer = client.producer(producer_config).await;
 
     // Batch all messages to avoid per-message network round-trips
     let records: Vec<ProducerRecord> = (0..msg_count)

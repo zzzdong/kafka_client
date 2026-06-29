@@ -24,11 +24,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use kafka_client::protocol::create_topics_request::CreatableTopic;
-use kafka_client::protocol::{CreateTopicsRequest, CreateTopicsResponse};
 use kafka_client::{
-    AutoOffsetReset, ConsumerConfig, ConsumerRecord, KafkaClient, ProducerConfig, ProducerRecord,
-    RecordMetadata,
+    AutoOffsetReset, Client, ConsumerConfig, ConsumerRecord, ProducerConfig, ProducerRecord,
+    RecordMetadata, admin::NewTopic,
 };
 
 /// 获取 bootstrap 地址。从环境变量读取，回退到默认值。
@@ -48,57 +46,47 @@ pub fn cluster_size() -> usize {
         .unwrap_or(3)
 }
 
-pub async fn build_test_client() -> KafkaClient {
-    KafkaClient::builder(bootstrap_addrs())
+pub async fn build_test_client() -> Client {
+    Client::builder(bootstrap_addrs())
         .with_client_id("integration-test")
         .with_metadata_ttl(Duration::from_secs(10))
         .build()
         .await
-        .expect("failed to build KafkaClient")
+        .expect("failed to build Client")
 }
 
 // ============================================================================
 // Topic helpers
 // ============================================================================
 
-pub async fn create_topic(client: &KafkaClient, topic: &str, partitions: i32) {
-    let sz = cluster_size();
-    let replication_factor = if sz >= 3 { 3 } else { 1 };
+pub async fn create_topic(client: &Client, topic: &str, partitions: i32) {
+    let replication_factor = if cluster_size() >= 3 { 3 } else { 1 };
 
     println!(
         "  Creating topic '{}' ({} partitions, rf={})...",
         topic, partitions, replication_factor
     );
-    let request = CreateTopicsRequest {
-        topics: vec![CreatableTopic {
-            name: topic.to_string(),
-            num_partitions: partitions,
-            replication_factor,
-            assignments: vec![],
-            configs: vec![],
-        }],
-        timeout_ms: 10000,
-        validate_only: false,
-    };
 
-    let response: CreateTopicsResponse =
-        client.cluster().send_to_any_broker(&request).await.unwrap();
-    for t in &response.topics {
-        if t.error_code != 0 && t.error_code != 36 {
-            panic!(
-                "Create topic '{}' failed: error_code {} (message: {:?})",
-                topic, t.error_code, t.error_message
-            );
-        }
+    let result = client
+        .admin()
+        .create_topic(&NewTopic::new(topic, partitions, replication_factor as i16))
+        .await
+        .unwrap();
+
+    if !result.is_success() && !result.already_exists() {
+        panic!(
+            "Create topic '{}' failed: error_code {} (message: {:?})",
+            topic, result.error_code, result.error_message
+        );
     }
     println!("  Topic '{}' created", topic);
 
     wait_for_topic_ready(client, topic, partitions).await;
 }
 
-pub async fn wait_for_topic_ready(client: &KafkaClient, topic: &str, partitions: i32) {
+pub async fn wait_for_topic_ready(client: &Client, topic: &str, partitions: i32) {
     for attempt in 0..30 {
-        client.cluster().refresh_metadata().await.unwrap();
+        client.refresh_metadata().await.unwrap();
         if let Some(tm) = client.metadata().get_topic(topic).await {
             let online = tm.partitions.iter().filter(|p| p.leader_id >= 0).count();
             if online == partitions as usize {
@@ -137,17 +125,13 @@ pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig
         .with_max_wait(Duration::from_secs(5))
 }
 
-pub async fn produce_messages(
-    client: &KafkaClient,
-    topic: &str,
-    count: i32,
-) -> Vec<RecordMetadata> {
+pub async fn produce_messages(client: &Client, topic: &str, count: i32) -> Vec<RecordMetadata> {
     let config = ProducerConfig::new()
         .with_timeout(15000)
         .with_retries(10)
         .with_linger(1); // minimum positive linger (interval requires > 0)
 
-    let producer = client.producer(config).await.unwrap();
+    let producer = client.producer(config).await;
 
     let mut metadatas = Vec::with_capacity(count as usize);
     for i in 0..count {
@@ -166,7 +150,7 @@ pub async fn produce_messages(
 }
 
 pub async fn produce_messages_with_keys(
-    client: &KafkaClient,
+    client: &Client,
     topic: &str,
     count: i32,
     key_count: i32,
@@ -175,7 +159,7 @@ pub async fn produce_messages_with_keys(
         .with_timeout(15000)
         .with_retries(10)
         .with_linger(1);
-    let producer = client.producer(config).await.unwrap();
+    let producer = client.producer(config).await;
     let mut metadatas = Vec::with_capacity(count as usize);
     for i in 0..count {
         let key = bytes::Bytes::from(format!("key-{}", i % key_count));
@@ -195,7 +179,7 @@ pub async fn produce_messages_with_keys(
 }
 
 pub async fn consume_all(
-    client: &KafkaClient,
+    client: &Client,
     group_id: &str,
     topic: &str,
     expected_count: i32,
@@ -211,7 +195,7 @@ pub async fn consume_all(
 }
 
 pub async fn consume_all_timeout(
-    client: &KafkaClient,
+    client: &Client,
     group_id: &str,
     topic: &str,
     expected_count: i32,
@@ -260,8 +244,8 @@ pub async fn consume_all_timeout(
 // Cluster helpers
 // ============================================================================
 
-pub async fn assert_cluster_size(client: &KafkaClient, expected: usize) {
-    client.cluster().refresh_metadata().await.unwrap();
+pub async fn assert_cluster_size(client: &Client, expected: usize) {
+    client.refresh_metadata().await.unwrap();
     let brokers = client.metadata().get_all_brokers().await;
     let actual = brokers.len();
     println!(
@@ -277,10 +261,10 @@ pub async fn assert_cluster_size(client: &KafkaClient, expected: usize) {
 }
 
 pub async fn partition_leader_distribution(
-    client: &KafkaClient,
+    client: &Client,
     topic: &str,
 ) -> std::collections::HashMap<i32, Vec<i32>> {
-    client.cluster().refresh_metadata().await.unwrap();
+    client.refresh_metadata().await.unwrap();
     let mut dist: std::collections::HashMap<i32, Vec<i32>> = std::collections::HashMap::new();
     if let Some(tm) = client.metadata().get_topic(topic).await {
         for p in &tm.partitions {
@@ -291,14 +275,14 @@ pub async fn partition_leader_distribution(
 }
 
 pub async fn wait_for_new_leader(
-    client: &KafkaClient,
+    client: &Client,
     topic: &str,
     partition: i32,
     old_leader: i32,
     max_secs: u64,
 ) -> Option<i32> {
     for _ in 0..max_secs {
-        client.cluster().refresh_metadata().await.unwrap();
+        client.refresh_metadata().await.unwrap();
         if let Some(tm) = client.metadata().get_topic(topic).await {
             if let Some(p) = tm
                 .partitions
