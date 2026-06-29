@@ -379,24 +379,30 @@ mod tests {
     fn test_hash_sha256() {
         let m = ScramMechanism::new_sha256();
         let h = m.hash(b"hello");
-        assert_eq!(hex::encode(&h),
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            hex::encode(&h),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[test]
     fn test_hmac_sha256() {
         let m = ScramMechanism::new_sha256();
         let mac = m.hmac(b"key", b"The quick brown fox jumps over the lazy dog");
-        assert_eq!(hex::encode(&mac),
-            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+        assert_eq!(
+            hex::encode(&mac),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
     }
 
     #[test]
     fn test_hi_sha256() {
         let m = ScramMechanism::new_sha256();
         let dk = m.hi("password", b"salt", 1);
-        assert_eq!(hex::encode(&dk),
-            "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+        assert_eq!(
+            hex::encode(&dk),
+            "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+        );
     }
 
     #[test]
@@ -467,7 +473,10 @@ mod tests {
 
         // Both sides should compute the same salted_password → same ServerKey → same signature
         let server_key = server.hmac(server.salted_password.as_ref().unwrap(), b"Server Key");
-        let server_sig = server.hmac(&server_key, server.auth_message.as_ref().unwrap().as_bytes());
+        let server_sig = server.hmac(
+            &server_key,
+            server.auth_message.as_ref().unwrap().as_bytes(),
+        );
         let srv_final = format!("v={}", general_purpose::STANDARD.encode(&server_sig));
 
         // 4. Client verifies
@@ -484,7 +493,9 @@ mod tests {
         let sf = "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096";
         m.client_final(sf.as_bytes()).unwrap();
 
-        let err = m.verify_server_final(b"v=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap_err();
+        let err = m
+            .verify_server_final(b"v=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .unwrap_err();
         assert!(matches!(err, SaslError::AuthenticationFailed(_)));
     }
 
@@ -494,13 +505,23 @@ mod tests {
     fn test_missing_nonce_rejected() {
         let mut m = new_sha256("test");
         m.client_first(&sha256_creds()).unwrap();
-        assert!(m.client_final(b"s=c2FsdA==,i=4096").unwrap_err().to_string().contains("Missing nonce"));
+        assert!(
+            m.client_final(b"s=c2FsdA==,i=4096")
+                .unwrap_err()
+                .to_string()
+                .contains("Missing nonce")
+        );
     }
 
     #[test]
     fn test_bad_nonce_prefix_rejected() {
         let mut m = new_sha256("my-nonce");
         m.client_first(&sha256_creds()).unwrap();
-        assert!(m.client_final(b"r=wrong,s=c2FsdA==,i=4096").unwrap_err().to_string().contains("nonce"));
+        assert!(
+            m.client_final(b"r=wrong,s=c2FsdA==,i=4096")
+                .unwrap_err()
+                .to_string()
+                .contains("nonce")
+        );
     }
 }

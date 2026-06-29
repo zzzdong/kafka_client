@@ -1,6 +1,6 @@
 [package]
 name = "kafka_client"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["zzzdong <kuwater@163.com>"]
@@ -50,7 +50,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # 协议
-kafka-client-protocol = { version = "0.1.1", path = "kafka-client-protocol" }
+kafka-client-protocol = { version = "0.1.2", path = "kafka-client-protocol" }
 
 # UUID
 uuid = { version = "1.0", features = ["v4"] }

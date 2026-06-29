@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "kafka-client-protocol-core",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-codegen"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "crc32c",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-derive"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "kafka_client"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "arc-swap",
  "base64",

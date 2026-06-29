@@ -389,13 +389,3 @@ impl ClientBuilder {
 pub fn builder(bootstrap_servers: Vec<SocketAddr>) -> ClientBuilder {
     ClientBuilder::new(bootstrap_servers)
 }
-
-// ===========================================================================
-// Backward-compatibility aliases (deprecated)
-// ===========================================================================
-
-#[deprecated(since = "0.2.0", note = "Use `Client` instead")]
-pub type KafkaClient = Client;
-
-#[deprecated(since = "0.2.0", note = "Use `ClientBuilder` instead")]
-pub type KafkaClientBuilder = ClientBuilder;
