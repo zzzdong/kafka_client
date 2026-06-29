@@ -89,9 +89,9 @@ impl Handshake {
     ) -> Result<()> {
         let mut auth_bytes = Vec::new();
         auth_bytes.push(0x00);
-        auth_bytes.extend_from_slice(credentials.username.as_bytes());
+        auth_bytes.extend_from_slice(credentials.username().as_bytes());
         auth_bytes.push(0x00);
-        auth_bytes.extend_from_slice(credentials.password.as_bytes());
+        auth_bytes.extend_from_slice(credentials.password().as_bytes());
 
         let auth_req = protocol::SaslAuthenticateRequest {
             auth_bytes: Bytes::from(auth_bytes),

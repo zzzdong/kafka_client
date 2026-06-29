@@ -111,7 +111,7 @@ impl BrokerManager {
         .with_client_id(self.client_id.clone());
 
         if let Some(ref sasl) = self.sasl {
-            builder = builder.with_sasl(sasl.mechanism, sasl.clone());
+            builder = builder.with_sasl(sasl.mechanism(), sasl.clone());
         }
 
         builder.build().await

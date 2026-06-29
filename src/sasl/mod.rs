@@ -1,23 +1,86 @@
-use crate::error::SaslError;
-use async_trait::async_trait;
-use bytes::Bytes;
+//! SASL authentication types — credentials and mechanism identifiers.
+//!
+//! Actual authentication logic is in [`scram::ScramMechanism`] (SCRAM)
+//! and inline in the connection handshake (PLAIN).
 
-pub mod plain;
 pub mod scram;
 
-pub use plain::PlainMechanism;
-pub use scram::AsyncScramMechanism;
+// ===========================================================================
+// SaslCredentials
+// ===========================================================================
 
-/// SASL 凭证
+/// SASL credentials.
+///
+/// Construct via the named constructors:
+/// - [`SaslCredentials::plain`] — PLAIN (SASL/PLAIN)
+/// - [`SaslCredentials::scram_sha256`] — SCRAM-SHA-256
+/// - [`SaslCredentials::scram_sha512`] — SCRAM-SHA-512
+/// - [`SaslCredentials::new`] — custom mechanism
 #[derive(Debug, Clone)]
 pub struct SaslCredentials {
-    pub mechanism: SaslMechanismType,
-    pub username: String,
-    pub password: String,
-    pub authzid: Option<String>, // 授权身份（PLAIN 使用）
+    mechanism: SaslMechanismType,
+    username: String,
+    password: String,
+    /// Authorisation identity (used by PLAIN).
+    authzid: Option<String>,
 }
 
-/// SASL 机制类型
+impl SaslCredentials {
+    /// Create credentials with an arbitrary mechanism.
+    pub fn new(
+        mechanism: SaslMechanismType,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            mechanism,
+            username: username.into(),
+            password: password.into(),
+            authzid: None,
+        }
+    }
+
+    /// PLAIN authentication.
+    pub fn plain(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self::new(SaslMechanismType::Plain, username, password)
+    }
+
+    /// SCRAM-SHA-256 authentication.
+    pub fn scram_sha256(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self::new(SaslMechanismType::ScramSha256, username, password)
+    }
+
+    /// SCRAM-SHA-512 authentication.
+    pub fn scram_sha512(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self::new(SaslMechanismType::ScramSha512, username, password)
+    }
+
+    /// The SASL mechanism (PLAIN, SCRAM-SHA-256, etc.).
+    pub fn mechanism(&self) -> SaslMechanismType {
+        self.mechanism
+    }
+
+    /// The username.
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    /// The password.
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+
+    /// Authorisation identity (None = same as username).
+    pub fn authzid(&self) -> Option<&str> {
+        self.authzid.as_deref()
+    }
+}
+
+// ===========================================================================
+// SaslMechanismType
+// ===========================================================================
+
+/// SASL mechanism type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaslMechanismType {
     Plain,
@@ -26,52 +89,12 @@ pub enum SaslMechanismType {
 }
 
 impl SaslMechanismType {
+    /// Protocol name sent on the wire (e.g. "PLAIN", "SCRAM-SHA-256").
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Plain => "PLAIN",
             Self::ScramSha256 => "SCRAM-SHA-256",
             Self::ScramSha512 => "SCRAM-SHA-512",
         }
-    }
-}
-
-/// SASL 机制 trait（异步版本）
-/// 预留的抽象设计，用于未来扩展
-#[async_trait]
-#[allow(dead_code)]
-pub trait SaslMechanism: Send + Sync {
-    /// 机制名称
-    fn name(&self) -> &'static str;
-
-    /// 是否为 client-first 机制
-    fn is_client_first(&self) -> bool;
-
-    /// 生成初始响应（client-first 机制使用）
-    async fn initial_response(
-        &mut self,
-        credentials: &SaslCredentials,
-    ) -> Result<Option<Bytes>, SaslError>;
-
-    /// 处理服务器挑战
-    async fn challenge(&mut self, challenge: &[u8]) -> Result<Option<Bytes>, SaslError>;
-
-    /// 认证是否完成
-    fn is_complete(&self) -> bool;
-
-    /// 认证是否成功
-    fn is_success(&self) -> bool;
-
-    /// 重置状态（用于重试）
-    fn reset(&mut self);
-}
-
-/// 创建 SASL 机制实例（异步版本）
-/// 预留的工厂函数，用于未来扩展
-#[allow(dead_code)]
-pub fn create_mechanism(mechanism_type: SaslMechanismType) -> Box<dyn SaslMechanism> {
-    match mechanism_type {
-        SaslMechanismType::Plain => Box::new(PlainMechanism::new()),
-        SaslMechanismType::ScramSha256 => Box::new(AsyncScramMechanism::new_sha256()),
-        SaslMechanismType::ScramSha512 => Box::new(AsyncScramMechanism::new_sha512()),
     }
 }

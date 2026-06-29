@@ -301,12 +301,9 @@ impl ClientBuilder {
         password: impl Into<String>,
     ) -> Self {
         self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
-        self.sasl_credentials = Some(crate::sasl::SaslCredentials {
-            mechanism,
-            username: username.into(),
-            password: password.into(),
-            authzid: None,
-        });
+        self.sasl_credentials = Some(crate::sasl::SaslCredentials::new(
+            mechanism, username, password,
+        ));
         self
     }
 
@@ -319,12 +316,9 @@ impl ClientBuilder {
         password: impl Into<String>,
     ) -> Self {
         self.security_protocol = crate::transport::SecurityProtocol::SaslSsl(tls_config);
-        self.sasl_credentials = Some(crate::sasl::SaslCredentials {
-            mechanism,
-            username: username.into(),
-            password: password.into(),
-            authzid: None,
-        });
+        self.sasl_credentials = Some(crate::sasl::SaslCredentials::new(
+            mechanism, username, password,
+        ));
         self
     }
 
