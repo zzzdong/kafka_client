@@ -38,11 +38,11 @@ jobs:
       - run: cargo test --lib
 
   msrv-check:
-    name: MSRV Check (Rust 1.85)
+    name: MSRV Check (Rust 1.92)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.92
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-targets
 
