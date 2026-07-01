@@ -332,20 +332,20 @@ fn generate_encode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
 
 /// 检查类型是否是 String
 fn is_string_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.first() {
-            return segment.ident == "String";
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.first()
+    {
+        return segment.ident == "String";
     }
     false
 }
 
 /// 检查类型是否是 Bytes
 fn is_bytes_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.first() {
-            return segment.ident == "Bytes";
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.first()
+    {
+        return segment.ident == "Bytes";
     }
     false
 }

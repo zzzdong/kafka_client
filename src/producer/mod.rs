@@ -475,10 +475,8 @@ impl Producer {
                                     state.buffered_bytes >= state.config.batch_size
                                     || state.last_send.elapsed() >= linger
                                 );
-                                if should_flush {
-                                    if let Err(e) = state.flush_buffer().await {
-                                        warn!("Auto-flush failed: {}", e);
-                                    }
+                                if should_flush && let Err(e) = state.flush_buffer().await {
+                                    warn!("Auto-flush failed: {}", e);
                                 }
                                 let _ = result_tx.send(result);
                             }
@@ -492,10 +490,8 @@ impl Producer {
 
                     // Linger timer: periodic flush
                     _ = interval.tick() => {
-                        if !state.buffer.is_empty() {
-                            if let Err(e) = state.flush_buffer().await {
-                                warn!("Linger flush failed: {}", e);
-                            }
+                        if !state.buffer.is_empty() && let Err(e) = state.flush_buffer().await {
+                            warn!("Linger flush failed: {}", e);
                         }
                     }
                 }

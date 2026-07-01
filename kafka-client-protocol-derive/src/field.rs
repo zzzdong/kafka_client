@@ -241,52 +241,46 @@ impl FieldInfo {
 
     /// 检查类型是否是 Option<T>
     pub fn is_option_type(ty: &Type) -> bool {
-        if let Type::Path(type_path) = ty {
-            if let Some(segment) = type_path.path.segments.first() {
-                return segment.ident == "Option";
-            }
+        if let Type::Path(type_path) = ty
+            && let Some(segment) = type_path.path.segments.first()
+        {
+            return segment.ident == "Option";
         }
         false
     }
 
     /// 检查类型是否是 Vec<T>
     pub fn is_vec_type(ty: &Type) -> bool {
-        if let Type::Path(type_path) = ty {
-            if let Some(segment) = type_path.path.segments.first() {
-                return segment.ident == "Vec";
-            }
+        if let Type::Path(type_path) = ty
+            && let Some(segment) = type_path.path.segments.first()
+        {
+            return segment.ident == "Vec";
         }
         false
     }
 
     /// 从 Option<T> 中提取内部类型
     pub fn extract_option_inner(ty: &Type) -> Option<Type> {
-        if let Type::Path(type_path) = ty {
-            if let Some(segment) = type_path.path.segments.first() {
-                if segment.ident == "Option" {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                            return Some(inner.clone());
-                        }
-                    }
-                }
-            }
+        if let Type::Path(type_path) = ty
+            && let Some(segment) = type_path.path.segments.first()
+            && segment.ident == "Option"
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(GenericArgument::Type(inner)) = args.args.first()
+        {
+            return Some(inner.clone());
         }
         None
     }
 
     /// 从 Vec<T> 中提取内部类型
     pub fn extract_vec_inner(ty: &Type) -> Option<Type> {
-        if let Type::Path(type_path) = ty {
-            if let Some(segment) = type_path.path.segments.first() {
-                if segment.ident == "Vec" {
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                            return Some(inner.clone());
-                        }
-                    }
-                }
-            }
+        if let Type::Path(type_path) = ty
+            && let Some(segment) = type_path.path.segments.first()
+            && segment.ident == "Vec"
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(GenericArgument::Type(inner)) = args.args.first()
+        {
+            return Some(inner.clone());
         }
         None
     }

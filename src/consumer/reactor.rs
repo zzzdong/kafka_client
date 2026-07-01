@@ -293,10 +293,8 @@ impl ConsumerReactor {
                     }
                 }
                 _ = commit_interval.tick() => {
-                    if self.config.auto_commit {
-                        if let Err(e) = self.do_commit().await {
-                            warn!("Auto commit failed: {}", e);
-                        }
+                    if self.config.auto_commit && let Err(e) = self.do_commit().await {
+                        warn!("Auto commit failed: {}", e);
                     }
                 }
                 cmd = self.cmd_rx.recv() => {
@@ -398,11 +396,11 @@ impl ConsumerReactor {
     }
 
     async fn try_send_fetches(&mut self) -> bool {
-        if self.cluster.metadata().is_expired().await {
-            if let Err(e) = self.cluster.refresh_metadata().await {
-                debug!("Metadata refresh failed: {}", e);
-                return false;
-            }
+        if self.cluster.metadata().is_expired().await
+            && let Err(e) = self.cluster.refresh_metadata().await
+        {
+            debug!("Metadata refresh failed: {}", e);
+            return false;
         }
 
         let fetchable = self.fetchable_partitions();
@@ -455,15 +453,15 @@ impl ConsumerReactor {
     async fn handle_fetch_result(&mut self, mut result: CompletedFetch) {
         // Resolve topic name — in protocol v13+ the response may have
         // an empty topic string; fall back to topic_id lookup.
-        if result.topic.is_empty() && !result.topic_id.is_nil() {
-            if let Some(name) = self
+        if result.topic.is_empty()
+            && !result.topic_id.is_nil()
+            && let Some(name) = self
                 .cluster
                 .metadata()
                 .get_topic_name_by_id(result.topic_id)
                 .await
-            {
-                result.topic = name;
-            }
+        {
+            result.topic = name;
         }
         if result.topic.is_empty() {
             debug!(
@@ -478,17 +476,17 @@ impl ConsumerReactor {
 
         match KafkaErrorCode::from_i16(result.error_code) {
             KafkaErrorCode::NONE => {
-                if let Some(batch) = result.records {
-                    if !batch.records.is_empty() {
-                        let next_offset = batch.base_offset + batch.last_offset_delta as i64 + 1;
-                        let cursor =
-                            RecordBatchCursor::new(result.topic.clone(), result.partition, batch);
-                        self.next_in_line_records.insert(tp, cursor);
-                        self.offsets
-                            .entry(result.topic.clone())
-                            .or_default()
-                            .insert(result.partition, next_offset);
-                    }
+                if let Some(batch) = result.records
+                    && !batch.records.is_empty()
+                {
+                    let next_offset = batch.base_offset + batch.last_offset_delta as i64 + 1;
+                    let cursor =
+                        RecordBatchCursor::new(result.topic.clone(), result.partition, batch);
+                    self.next_in_line_records.insert(tp, cursor);
+                    self.offsets
+                        .entry(result.topic.clone())
+                        .or_default()
+                        .insert(result.partition, next_offset);
                 }
             }
             KafkaErrorCode::OFFSET_OUT_OF_RANGE => {

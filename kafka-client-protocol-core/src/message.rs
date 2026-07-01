@@ -80,7 +80,7 @@ pub trait Request: Message {
 
     /// 编码为请求数据（包含 header + body，不包含长度前缀）
     ///
-    /// 长度前缀由上层 Tokio Codec 负责添加
+    /// 长度前缀由上层负责添加
     fn encode_frame(
         &self,
         version: i16,

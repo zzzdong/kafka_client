@@ -49,11 +49,11 @@ fn parse_file(path: &Path) -> anyhow::Result<(Option<ParsedMessage>, Option<Pars
         .with_context(|| format!("Failed to parse JSON: {}", path.display()))?;
 
     // 检查是否是共享结构体（type = "struct"）
-    if let Some(type_val) = value.get("type") {
-        if type_val.as_str() == Some("struct") {
-            let def: StructDef = json5::from_str(&content)?;
-            return Ok((None, Some(parse_struct(def))));
-        }
+    if let Some(type_val) = value.get("type")
+        && type_val.as_str() == Some("struct")
+    {
+        let def: StructDef = json5::from_str(&content)?;
+        return Ok((None, Some(parse_struct(def))));
     }
 
     // 否则是普通消息

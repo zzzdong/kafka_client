@@ -2,8 +2,9 @@ use super::{SaslCredentials, SaslMechanismType};
 use crate::error::SaslError;
 use base64::{Engine as _, engine::general_purpose};
 use bytes::Bytes;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use pbkdf2::pbkdf2_hmac;
+use rand::Rng;
 use sha2::{Digest, Sha256, Sha512};
 
 /// SCRAM 状态
@@ -58,7 +59,6 @@ impl ScramMechanism {
     }
 
     fn generate_nonce() -> String {
-        use rand::RngCore;
         let mut bytes = [0u8; 24];
         rand::rng().fill_bytes(&mut bytes);
         general_purpose::STANDARD.encode(bytes)

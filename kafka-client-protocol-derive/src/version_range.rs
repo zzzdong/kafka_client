@@ -27,17 +27,17 @@ impl VersionRange {
         }
 
         // 版本范围 "0-12"
-        if let Some(idx) = s.find('-') {
-            if let (Ok(start), Ok(end)) = (s[..idx].parse::<i16>(), s[idx + 1..].parse::<i16>()) {
-                return VersionRange::Range(start, end);
-            }
+        if let Some(idx) = s.find('-')
+            && let (Ok(start), Ok(end)) = (s[..idx].parse::<i16>(), s[idx + 1..].parse::<i16>())
+        {
+            return VersionRange::Range(start, end);
         }
 
         // 开放版本 "3+"
-        if let Some(stripped) = s.strip_suffix('+') {
-            if let Ok(start) = stripped.parse::<i16>() {
-                return VersionRange::From(start);
-            }
+        if let Some(stripped) = s.strip_suffix('+')
+            && let Ok(start) = stripped.parse::<i16>()
+        {
+            return VersionRange::From(start);
         }
 
         // 单个版本

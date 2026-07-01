@@ -1,17 +1,17 @@
 [package]
 name = "kafka_client"
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.85"
-authors = ["zzzdong <kuwater@163.com>"]
+version = "0.3.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 description = "A pure Rust Kafka client library with SASL authentication support"
 documentation = "https://docs.rs/kafka_client"
 homepage = "https://github.com/zzzdong/kafka_client"
-repository = "https://github.com/zzzdong/kafka_client"
+repository.workspace = true
 readme = "README.md"
 keywords = ["kafka", "client", "async", "sasl", "tls"]
 categories = ["network-programming", "asynchronous", "api-bindings", "authentication"]
-license = "Apache-2.0 OR MIT"
+license.workspace = true
 
 [dependencies]
 # 异步运行时
@@ -19,7 +19,7 @@ tokio = { version = "1.44", features = ["full"] }
 futures = "0.3"
 
 # 网络编解码
-bytes = "1.11"
+bytes = { workspace = true }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # TLS 支持
@@ -29,31 +29,31 @@ rustls-native-certs = "0.8"
 rustls-pemfile = "2.2"
 
 # 加密与认证
-sha2 = "0.10"
-hmac = "0.12"
-pbkdf2 = "0.12"
+sha2 = "0.11"
+hmac = "0.13"
+pbkdf2 = "0.13"
 base64 = "0.22"
-rand = "0.9"
+rand = "0.10"
 
 # 并发集合
 dashmap = "6.1"
 arc-swap = "1.7"
 
 # 错误处理
-thiserror = "2.0"
+thiserror = { workspace = true }
 
 # 日志
 tracing = "0.1"
 
 # 序列化
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # 协议
-kafka-client-protocol = { version = "0.1.2", path = "kafka-client-protocol" }
+kafka-client-protocol = { version = "0.2.0", path = "kafka-client-protocol" }
 
 # UUID
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { workspace = true }
 
 [features]
 default = []
@@ -70,3 +70,18 @@ members = [
     "kafka-client-protocol-derive",
     "kafka-client-protocol"
 ]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.92"
+authors = ["zzzdong <kuwater@163.com>"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/zzzdong/kafka_client"
+
+[workspace.dependencies]
+bytes = "1.11"
+kafka-client-protocol-derive = { version = "0.2.0", path = "kafka-client-protocol-derive" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+uuid = { version = "1.0", features = ["v4"] }

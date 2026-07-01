@@ -146,10 +146,10 @@ impl BrokerManager {
 
     /// Register a broker connection.
     async fn register_broker(&self, node_id: i32, addr: SocketAddr, conn: ConnectionHandle) {
-        if let Some(old_node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
-            if old_node_id != node_id {
-                self.brokers.remove(&old_node_id);
-            }
+        if let Some(old_node_id) = self.addr_to_node.get(&addr).map(|e| *e)
+            && old_node_id != node_id
+        {
+            self.brokers.remove(&old_node_id);
         }
         self.addr_to_node.insert(addr, node_id);
         self.brokers.insert(node_id, BrokerEntry::new(addr, conn));
@@ -161,18 +161,18 @@ impl BrokerManager {
     /// automatic reconnect.
     pub(crate) async fn get_connection(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
         // Fast path: find existing entry and return healthy connection
-        if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
-            if let Some(entry) = self.brokers.get(&node_id) {
-                if entry.is_healthy() {
-                    return Ok(entry.load_conn().as_ref().clone());
-                }
-                // Unhealthy — try to reconnect inline
-                drop(entry);
-                match self.try_swap_connection(node_id, addr).await {
-                    Some(conn) => return Ok(conn),
-                    None => {
-                        // Entry was removed between checks — fall through
-                    }
+        if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e)
+            && let Some(entry) = self.brokers.get(&node_id)
+        {
+            if entry.is_healthy() {
+                return Ok(entry.load_conn().as_ref().clone());
+            }
+            // Unhealthy — try to reconnect inline
+            drop(entry);
+            match self.try_swap_connection(node_id, addr).await {
+                Some(conn) => return Ok(conn),
+                None => {
+                    // Entry was removed between checks — fall through
                 }
             }
         }
@@ -237,10 +237,11 @@ impl BrokerManager {
             let node_id = broker.node_id;
 
             // Reuse healthy connection if address unchanged
-            if let Some(entry) = self.brokers.get(&node_id) {
-                if entry.addr == addr && entry.is_healthy() {
-                    continue;
-                }
+            if let Some(entry) = self.brokers.get(&node_id)
+                && entry.addr == addr
+                && entry.is_healthy()
+            {
+                continue;
             }
 
             // Try new connection
@@ -263,11 +264,11 @@ impl BrokerManager {
     /// `ConnectionHandle` clone can still use it, but future
     /// [`get_connection`](Self::get_connection) calls will trigger a reconnect.
     pub(crate) fn mark_unhealthy(&self, addr: SocketAddr) {
-        if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e) {
-            if let Some(entry) = self.brokers.get(&node_id) {
-                entry.mark_unhealthy();
-                warn!("Marked broker {} at {} as unhealthy", node_id, addr);
-            }
+        if let Some(node_id) = self.addr_to_node.get(&addr).map(|e| *e)
+            && let Some(entry) = self.brokers.get(&node_id)
+        {
+            entry.mark_unhealthy();
+            warn!("Marked broker {} at {} as unhealthy", node_id, addr);
         }
     }
 

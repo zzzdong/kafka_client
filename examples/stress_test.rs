@@ -154,7 +154,7 @@ async fn main() {
         }
 
         batch_num += 1;
-        if batch_num % 20 == 0 {
+        if batch_num.is_multiple_of(20) {
             print!(
                 "\r  已发送: {}/{} (batch #{})",
                 total_produced, msg_count, batch_num
@@ -224,16 +224,16 @@ async fn main() {
                     empty_polls = 0; // 有数据则重置空闲计数
                     for r in &records {
                         let value_str = String::from_utf8_lossy(&r.value);
-                        if let Some(seq_str) = value_str.strip_prefix("msg-") {
-                            if let Ok(seq) = seq_str.parse::<usize>() {
-                                consumed_ids.insert(seq);
-                            }
+                        if let Some(seq_str) = value_str.strip_prefix("msg-")
+                            && let Ok(seq) = seq_str.parse::<usize>()
+                        {
+                            consumed_ids.insert(seq);
                         }
                         total_consumed += 1;
                     }
 
                     // Progress bar
-                    if total_consumed % 1000 == 0 {
+                    if total_consumed.is_multiple_of(1000) {
                         print!(
                             "\r  已消费: {} 条消息 (去重后: {})",
                             total_consumed,
