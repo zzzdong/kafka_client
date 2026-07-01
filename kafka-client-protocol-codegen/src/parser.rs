@@ -178,14 +178,13 @@ fn parse_field_recursive(
     let is_nullable = if can_be_nullable { is_nullable } else { false };
 
     // 检查是否有内联字段（嵌套结构体）
-    let rust_type = if field.fields.is_some() {
+    let rust_type = if let Some(inner_fields) = &field.fields {
         let struct_name = extract_struct_name(&field.field_type);
         let is_array_type = field.field_type.starts_with("[]");
 
         if !visited.contains(&struct_name) {
             visited.insert(struct_name.clone());
 
-            let inner_fields = field.fields.as_ref().unwrap();
             let parsed_inner_fields =
                 parse_fields_recursive(inner_fields, &struct_name, inline_structs, visited);
 
@@ -290,8 +289,8 @@ fn parse_field_simple(field: &FieldDef) -> ParsedField {
 
 /// 从类型字符串中提取结构体名称
 fn extract_struct_name(type_str: &str) -> String {
-    let name = if type_str.starts_with("[]") {
-        &type_str[2..]
+    let name = if let Some(stripped) = type_str.strip_prefix("[]") {
+        stripped
     } else {
         type_str
     };

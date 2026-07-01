@@ -72,9 +72,9 @@ pub fn to_snake_case(s: &str) -> String {
         }
     }
 
-    // 处理特殊情况：KRaft -> k_raft
+    // 处理特殊情况：KRaft -> k_raft（由上面的缩写逻辑自动处理）
 
-    result.replace("k_raft", "k_raft")
+    result
 }
 
 /// 转换为 PascalCase（用于结构体名）
@@ -93,11 +93,6 @@ pub fn to_pascal_case(s: &str) -> String {
         } else {
             result.push(c);
         }
-    }
-
-    // 特殊处理：KRaft 保持为 KRaft
-    if s.contains("KRaft") {
-        result = result.replace("KRaft", "KRaft");
     }
 
     result

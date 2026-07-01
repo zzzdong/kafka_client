@@ -36,7 +36,7 @@ use tracing::debug;
 use crate::error::{KafkaError, Result};
 use crate::transport::{NetworkStream, TcpNetworkStream, TlsNetworkStream};
 use crate::wire::{KafkaCodec, KafkaFrame};
-use kafka_client_protocol::{Request, Response};
+use kafka_client_protocol::{self as protocol, Request, Response};
 
 // ---------------------------------------------------------------------------
 // Commands sent from ConnectionHandle to ConnectionReactor
@@ -418,8 +418,9 @@ impl Builder {
             };
             let tls_stream = TlsNetworkStream::from_stream(tcp, tls_config)
                 .await
-                .map_err(|e| {
-                    KafkaError::TlsError(format!("TLS handshake failed for {}: {}", self.addr, e))
+                .map_err(|e| KafkaError::TlsError {
+                    addr: self.addr.to_string(),
+                    details: e.to_string(),
                 })?;
             Box::new(tls_stream) as Box<dyn NetworkStream>
         } else {
@@ -434,6 +435,34 @@ impl Builder {
         let negotiated =
             Handshake::perform(&mut seq_conn, self.client_name, self.client_version).await?;
         seq_conn.set_negotiated(negotiated);
+
+        // 3.5. Probe server for SASL requirement (client has no credentials configured)
+        if self.sasl_config.is_none() {
+            let probe_req = protocol::SaslHandshakeRequest {
+                mechanism: "PLAIN".to_string(),
+            };
+            match seq_conn
+                .send_request::<_, protocol::SaslHandshakeResponse>(&probe_req)
+                .await
+            {
+                Ok(resp) if !resp.mechanisms.is_empty() => {
+                    return Err(KafkaError::AuthenticationFailed(format!(
+                        "SASL authentication required, missing credentials. \
+                         Server SASL mechanisms: {}. Available client: plain, scram_sha256, scram_sha512.",
+                        resp.mechanisms.join(", ")
+                    )));
+                }
+                Ok(_) => {
+                    debug!("Server does not require SASL authentication");
+                }
+                Err(e) => {
+                    return Err(KafkaError::AuthenticationFailed(format!(
+                        "SASL authentication required, missing credentials. Probe error: {}.",
+                        e
+                    )));
+                }
+            }
+        }
 
         // 4. SASL authentication
         if let Some((mechanism, credentials)) = self.sasl_config {

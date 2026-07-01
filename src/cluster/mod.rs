@@ -185,7 +185,7 @@ impl ClusterClient {
         Req: Request,
         Resp: Response,
     {
-        let mut errors: Vec<String> = Vec::new();
+        let mut errors: Vec<crate::error::BrokerConnError> = Vec::new();
 
         // Try healthy broker first
         if let Some((addr, handle)) = self.broker_manager.get_any_healthy_broker() {
@@ -196,12 +196,18 @@ impl ClusterClient {
                     warn!("Broker {} protocol error ({}), force-closing", addr, e);
                     self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
-                    errors.push(format!("{}: {}", addr, e));
+                    errors.push(crate::error::BrokerConnError {
+                        addr: addr.to_string(),
+                        error: e,
+                    });
                 }
                 Err(e) => {
                     warn!("Request to healthy broker {} failed: {}", addr, e);
                     self.broker_manager.mark_unhealthy(addr);
-                    errors.push(format!("{}: {}", addr, e));
+                    errors.push(crate::error::BrokerConnError {
+                        addr: addr.to_string(),
+                        error: e,
+                    });
                 }
             }
         }
@@ -223,7 +229,10 @@ impl ClusterClient {
                     );
                     self.broker_manager.mark_unhealthy(addr);
                     self.broker_manager.force_close_connection(addr).await;
-                    errors.push(format!("{}: {}", addr, e));
+                    errors.push(crate::error::BrokerConnError {
+                        addr: addr.to_string(),
+                        error: e,
+                    });
                 }
                 Err(e) => {
                     warn!(
@@ -233,12 +242,17 @@ impl ClusterClient {
                         e
                     );
                     self.broker_manager.mark_unhealthy(addr);
-                    errors.push(format!("{}: {}", addr, e));
+                    errors.push(crate::error::BrokerConnError {
+                        addr: addr.to_string(),
+                        error: e,
+                    });
                 }
             }
         }
 
-        Err(KafkaError::NoBrokerAvailable(errors.join("; ")))
+        Err(KafkaError::NoBrokerAvailable(crate::error::BrokerErrors(
+            errors,
+        )))
     }
 
     // ================================================================

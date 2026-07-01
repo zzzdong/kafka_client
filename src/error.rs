@@ -1,7 +1,39 @@
+use std::fmt;
 use thiserror::Error;
 
 // 重新导出 protocol 模块的错误类型
 pub use kafka_client_protocol::ProtocolError;
+
+/// Error connecting to a specific broker.
+#[derive(Debug, Clone)]
+pub struct BrokerConnError {
+    /// Broker address (host:port).
+    pub addr: String,
+    /// The underlying error.
+    pub error: KafkaError,
+}
+
+impl fmt::Display for BrokerConnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.addr, self.error)
+    }
+}
+
+/// A list of broker connection errors, displayed as a semicolon-separated list.
+#[derive(Debug, Clone)]
+pub struct BrokerErrors(pub Vec<BrokerConnError>);
+
+impl fmt::Display for BrokerErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, e) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, "; ")?;
+            }
+            write!(f, "{}", e)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Error, Clone)]
 pub enum KafkaError {
@@ -20,17 +52,14 @@ pub enum KafkaError {
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
 
-    #[error("SASL handshake failed: {0}")]
-    SaslHandshakeFailed(String),
-
     #[error("Mechanism not supported: {0}")]
     MechanismNotSupported(String),
 
     #[error("No bootstrap broker available: {0}")]
-    NoBootstrapBrokerAvailable(String),
+    NoBootstrapBrokerAvailable(BrokerErrors),
 
     #[error("No broker available: {0}")]
-    NoBrokerAvailable(String),
+    NoBrokerAvailable(BrokerErrors),
 
     #[error("Topic not found: {0}")]
     TopicNotFound(String),
@@ -56,14 +85,26 @@ pub enum KafkaError {
     #[error("Offset not found: {0}, partition {1}")]
     OffsetNotFound(String, i32),
 
-    #[error("TLS error: {0}")]
-    TlsError(String),
+    #[error("TLS handshake failed for {addr}: {details}")]
+    TlsError { addr: String, details: String },
 
     #[error("SASL error: {0}")]
     SaslError(#[from] SaslError),
 
     #[error("Protocol decode error: {0}")]
     ProtocolError(String),
+
+    /// Insufficient data for protocol decode.
+    #[error("Insufficient protocol data: expected {expected} bytes, got {actual}")]
+    InsufficientData { expected: usize, actual: usize },
+
+    /// Protocol data exceeds allowed maximum.
+    #[error("Protocol data too large: max {max}, actual {actual}")]
+    DataTooLarge { max: usize, actual: usize },
+
+    /// CRC checksum mismatch.
+    #[error("CRC checksum mismatch: expected {expected:#x}, actual {actual:#x}")]
+    CrcMismatch { expected: u32, actual: u32 },
 
     #[error("Connection closed")]
     ConnectionClosed,
@@ -107,7 +148,16 @@ impl From<base64::DecodeError> for KafkaError {
 
 impl From<ProtocolError> for KafkaError {
     fn from(e: ProtocolError) -> Self {
-        KafkaError::ProtocolError(e.to_string())
+        match e {
+            ProtocolError::InsufficientData { expected, actual } => {
+                KafkaError::InsufficientData { expected, actual }
+            }
+            ProtocolError::DataTooLarge { max, actual } => KafkaError::DataTooLarge { max, actual },
+            ProtocolError::CrcMismatch { expected, actual } => {
+                KafkaError::CrcMismatch { expected, actual }
+            }
+            e => KafkaError::ProtocolError(e.to_string()),
+        }
     }
 }
 
