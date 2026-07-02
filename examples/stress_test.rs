@@ -17,16 +17,12 @@
 use bytes::Bytes;
 use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
 use std::collections::HashSet;
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
-        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
-        .collect()
+fn get_bootstrap_addrs() -> Vec<String> {
+    let bootstrap =
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 fn get_topic_name() -> String {
@@ -90,17 +86,20 @@ async fn main() {
     println!(" ✓");
 
     // =====================================================================
-    // 2. 创建 Topic (3 partitions)
+    // 2. 创建 Topic (3 partitions, 自适应 replication factor)
     // =====================================================================
-    print!("[2/5] 创建 Topic '{}' (3 partitions)...", topic);
+    let cluster_info = client.admin().describe_cluster().await.unwrap();
+    let rf = (3).min(cluster_info.brokers.len()).max(1) as i16;
+    print!("[2/5] 创建 Topic '{}' (3 partitions, rf={})...", topic, rf);
     std::io::Write::flush(&mut std::io::stdout()).ok();
     let result = client
         .admin()
-        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .create_topic(&NewTopic::new(&topic, 3, rf))
         .await
         .unwrap();
-    if result.error_code != 0 && result.error_code != 36 {
-        eprintln!(" 失败: error_code={}", result.error_code);
+    use kafka_client::KafkaErrorCode;
+    if !result.error_code.is_ok() && result.error_code != KafkaErrorCode::TOPIC_ALREADY_EXISTS {
+        eprintln!(" 失败: {}", result.error_code);
         std::process::exit(1);
     }
     println!(" ✓");
@@ -182,7 +181,8 @@ async fn main() {
     // =====================================================================
     println!("\n[4/5] 开始消费所有消息...");
 
-    let consumer_config = ConsumerConfig::new("stress-test-group")
+    let consumer_config = ConsumerConfig::new()
+        .with_group_id("stress-test-group")
         .with_auto_commit_interval(Duration::from_secs(2))
         .with_earliest()
         .with_max_bytes(50 * 1024 * 1024)
@@ -193,59 +193,49 @@ async fn main() {
     let mut consumer = client.consumer(consumer_config);
     consumer.subscribe(vec![topic.clone()]).await.unwrap();
 
-    // 等待分区分配
-    print!("  等待 consumer group 分配分区...");
-    std::io::Write::flush(&mut std::io::stdout()).ok();
-    for i in 0..30 {
-        let assignment = consumer.group().assignment().await;
-        let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
-        if has_partitions > 0 {
-            println!("  ✓ 已分配 {} 个分区 ({}s)", has_partitions, i + 1);
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+    // 使用 ConsumerStream 消费
+    let mut stream = consumer.into_stream();
 
-    // 消费循环
     let consume_start = Instant::now();
     let mut consumed_ids = HashSet::new();
     let mut total_consumed = 0usize;
     let mut empty_polls = 0u32;
-    const MAX_EMPTY_POLLS: u32 = 20; // 连续空闲 N 次后认为消费完毕
+    const MAX_EMPTY_POLLS: u32 = 20;
 
     let deadline = Instant::now() + Duration::from_secs(120);
+    let mut last_progress_time = Instant::now();
 
     while empty_polls < MAX_EMPTY_POLLS && Instant::now() < deadline {
-        match consumer.poll_timeout(Duration::from_millis(3000)).await {
-            Ok(records) => {
-                if records.is_empty() {
-                    empty_polls += 1;
-                } else {
-                    empty_polls = 0; // 有数据则重置空闲计数
-                    for r in &records {
-                        let value_str = String::from_utf8_lossy(&r.value);
-                        if let Some(seq_str) = value_str.strip_prefix("msg-")
-                            && let Ok(seq) = seq_str.parse::<usize>()
-                        {
-                            consumed_ids.insert(seq);
-                        }
-                        total_consumed += 1;
-                    }
+        match tokio::time::timeout(Duration::from_secs(3), stream.recv()).await {
+            Ok(Some(r)) => {
+                empty_polls = 0;
+                total_consumed += 1;
 
-                    // Progress bar
-                    if total_consumed.is_multiple_of(1000) {
-                        print!(
-                            "\r  已消费: {} 条消息 (去重后: {})",
-                            total_consumed,
-                            consumed_ids.len()
-                        );
-                        std::io::Write::flush(&mut std::io::stdout()).ok();
-                    }
+                let value_str = String::from_utf8_lossy(&r.value);
+                if let Some(seq_str) = value_str.strip_prefix("msg-")
+                    && let Ok(seq) = seq_str.parse::<usize>()
+                {
+                    consumed_ids.insert(seq);
+                }
+
+                // 每秒打印吞吐量
+                let now = Instant::now();
+                if now - last_progress_time >= Duration::from_secs(1) {
+                    let elapsed_secs = now - consume_start;
+                    let throughput = total_consumed as f64 / elapsed_secs.as_secs_f64();
+                    print!(
+                        "\r  已消费: {} 条 (去重: {}) | {:.0} msgs/sec",
+                        total_consumed,
+                        consumed_ids.len(),
+                        throughput,
+                    );
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                    last_progress_time = now;
                 }
             }
-            Err(e) => {
-                eprintln!("  Poll 错误: {}", e);
-                empty_polls += 1;
+            Ok(None) => break,
+            Err(_) => {
+                empty_polls += 1; // 超时无新数据
             }
         }
     }
@@ -350,12 +340,10 @@ async fn main() {
     }
     println!("============================================");
 
-    // Cleanup
+    // Cleanup — ConsumerStream drop sends Shutdown automatically
     print!("\n  关闭连接...");
     std::io::Write::flush(&mut std::io::stdout()).ok();
-    if let Err(e) = consumer.close().await {
-        eprintln!(" Consumer 关闭失败: {}", e);
-    }
+    drop(stream);
     if let Err(e) = client.close().await {
         eprintln!(" Client 关闭失败: {}", e);
     }

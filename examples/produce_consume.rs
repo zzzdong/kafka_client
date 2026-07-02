@@ -18,21 +18,12 @@
 
 use bytes::Bytes;
 use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
-use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
-fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
-        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| {
-            s.trim()
-                .parse()
-                .expect("Invalid bootstrap address format. Expected: host:port")
-        })
-        .collect()
+fn get_bootstrap_addrs() -> Vec<String> {
+    let bootstrap =
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 fn get_topic_name() -> String {
@@ -69,17 +60,20 @@ async fn main() {
     println!("Connected successfully!");
 
     // Create topic (if not exists)
-    println!("\n[2] Creating topic '{}'...", topic);
+    let cluster_info = client.admin().describe_cluster().await.unwrap();
+    let rf = (3).min(cluster_info.brokers.len()).max(1) as i16;
+    println!("\n[2] Creating topic '{}' (rf={})...", topic, rf);
     let result = client
         .admin()
-        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .create_topic(&NewTopic::new(&topic, 3, rf))
         .await
         .unwrap();
+    use kafka_client::KafkaErrorCode;
     match result.error_code {
-        0 => println!("Topic '{}' created", &topic),
-        36 => println!("Topic '{}' already exists", &topic),
+        KafkaErrorCode::NONE => println!("Topic '{}' created", topic),
+        KafkaErrorCode::TOPIC_ALREADY_EXISTS => println!("Topic '{}' already exists", topic),
         code => {
-            eprintln!("ERROR: Topic creation failed with error code {}", code);
+            eprintln!("ERROR: Topic creation failed: {}", code);
             std::process::exit(1);
         }
     }
@@ -108,7 +102,7 @@ async fn main() {
 
     // Consume messages — start before producing
     println!("\n[4] Consuming messages...");
-    let consumer_config = ConsumerConfig::new("example-consumer-group");
+    let consumer_config = ConsumerConfig::new().with_group_id("example-consumer-group");
 
     let mut consumer = client.consumer(consumer_config);
 
@@ -120,35 +114,8 @@ async fn main() {
         }
     }
 
-    // Start polling in background before producing
-    let (records_tx, mut records_rx) = mpsc::channel::<kafka_client::ConsumerRecord>(32);
-
-    let poll_handle = tokio::spawn(async move {
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        let mut count = 0usize;
-        while std::time::Instant::now() < deadline && count < 3 {
-            match consumer.poll_timeout(Duration::from_millis(2000)).await {
-                Ok(recs) => {
-                    for r in recs {
-                        println!(
-                            "  Received: partition={}, offset={}, key={:?}, value={}",
-                            r.partition,
-                            r.offset,
-                            r.key
-                                .as_ref()
-                                .map(|k| String::from_utf8_lossy(k).to_string()),
-                            String::from_utf8_lossy(&r.value)
-                        );
-                        if records_tx.send(r).await.is_err() {
-                            return;
-                        }
-                        count += 1;
-                    }
-                }
-                Err(e) => eprintln!("  WARNING: Poll error: {}", e),
-            }
-        }
-    });
+    // Start consumer stream — background polling automatically
+    let mut stream = consumer.into_stream();
 
     // Wait for consumer group assignment
     tokio::time::sleep(Duration::from_secs(8)).await;
@@ -171,14 +138,33 @@ async fn main() {
     producer.flush().await.expect("Failed to flush producer");
     println!("All messages flushed.");
 
-    // Wait for consumer to finish and drain remaining records from channel
-    poll_handle.await.ok();
-    // sender 已被 task 退出时 drop，channel 会在 buffer 排空后返回 None
-    let mut records = vec![];
-    while let Some(r) = records_rx.recv().await {
-        records.push(r);
+    // Drain remaining records from stream with a timeout
+    println!("\nConsuming remaining records...");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut count = 0usize;
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(2000), stream.recv()).await {
+            Ok(Some(r)) => {
+                println!(
+                    "  Received: partition={}, offset={}, key={:?}, value={}",
+                    r.partition,
+                    r.offset,
+                    r.key
+                        .as_ref()
+                        .map(|k| String::from_utf8_lossy(k).to_string()),
+                    String::from_utf8_lossy(&r.value)
+                );
+                count += 1;
+            }
+            Ok(None) => break,
+            Err(_) => {
+                if count >= 3 {
+                    break; // received enough
+                }
+            }
+        }
     }
-    println!("\nConsumed {} messages total", records.len());
+    println!("Consumed {} messages", count);
 
     // Clean shutdown
     println!("\n[6] Shutting down...");

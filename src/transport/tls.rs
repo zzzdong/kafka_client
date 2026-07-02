@@ -14,6 +14,16 @@ use tokio_rustls::rustls::{self, ClientConfig};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsConfig {
     /// 是否验证证书（生产环境应为 true）
+    ///
+    /// **此字段当前不生效。** Rustls 0.23 中 `NoCertificateVerification`
+    /// 路径与 Kafka TLS 栈不兼容（会导致 `AlertReceived`），因此实际
+    /// 始终使用标准证书验证路径。详见 `build_config` 注释。
+    #[deprecated(
+        since = "0.4.0",
+        note = "此字段当前不生效——rustls 0.23 的 NoCertificateVerification \
+                路径与 Kafka TLS 栈不兼容。证书验证始终启用。如果确实需要 \
+                跳过验证，请改用 `dangerous_config` 等替代方案。"
+    )]
     pub verify_certificate: bool,
     /// 服务器域名（用于 SNI 和证书验证）
     pub domain: String,
@@ -25,6 +35,7 @@ pub struct TlsConfig {
     pub client_key_path: Option<String>,
 }
 
+#[allow(deprecated)]
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {

@@ -2,17 +2,14 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use tracing::warn;
 
 use crate::cluster::ClusterClient;
-use crate::consumer::config::{AutoOffsetReset, PartitionAssignmentStrategy};
-use crate::consumer::types::{ConsumerRecord, FetchParams, Header};
+use crate::consumer::config::PartitionAssignmentStrategy;
 use crate::error::{KafkaError, Result};
 use crate::protocol::{
-    ConsumerProtocolAssignment, FetchPartition, FetchRequest, FetchTopic, FindCoordinatorRequest,
-    FindCoordinatorResponse, JoinGroupResponse, ListOffsetsPartition, ListOffsetsRequest,
-    ListOffsetsTopic, OffsetFetchRequest, OffsetFetchRequestGroup, OffsetFetchRequestTopic,
-    OffsetFetchRequestTopics, TopicPartition,
+    ConsumerProtocolAssignment, FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupResponse,
+    ListOffsetsPartition, ListOffsetsRequest, ListOffsetsTopic, OffsetFetchRequest,
+    OffsetFetchRequestGroup, OffsetFetchRequestTopic, OffsetFetchRequestTopics, TopicPartition,
 };
 use kafka_client_protocol::KafkaErrorCode;
 
@@ -88,7 +85,7 @@ pub(crate) async fn compute_all_assignments(
             .await
             .unwrap_or_default();
         match strategy {
-            PartitionAssignmentStrategy::Range | PartitionAssignmentStrategy::CooperativeSticky => {
+            PartitionAssignmentStrategy::Range => {
                 let n = all_members.len();
                 let per = partitions.len() / n;
                 let rem = partitions.len() % n;
@@ -111,6 +108,23 @@ pub(crate) async fn compute_all_assignments(
                 for (i, &p) in partitions.iter().enumerate() {
                     member_assignments
                         .get_mut(all_members[i % all_members.len()])
+                        .unwrap()
+                        .push(TopicPartition {
+                            topic: topic.to_string(),
+                            partitions: vec![p],
+                        });
+                }
+            }
+            PartitionAssignmentStrategy::CooperativeSticky => {
+                // Simplified CooperativeSticky: use sorted round-robin.
+                // A complete implementation would track previous assignments
+                // (per member) and minimize partition movement across
+                // rebalances.  TODO: implement true sticky assignment.
+                let mut sorted_members = all_members.to_vec();
+                sorted_members.sort();
+                for (i, &p) in partitions.iter().enumerate() {
+                    member_assignments
+                        .get_mut(sorted_members[i % sorted_members.len()])
                         .unwrap()
                         .push(TopicPartition {
                             topic: topic.to_string(),
@@ -215,103 +229,6 @@ pub(crate) async fn fetch_committed_offsets_raw(
     Ok(result)
 }
 
-pub(crate) async fn fetch_partition_simple(
-    cluster: &Arc<ClusterClient>,
-    topic: &str,
-    partition: i32,
-    offset: i64,
-    params: &FetchParams,
-    auto_offset_reset: AutoOffsetReset,
-) -> Result<Vec<ConsumerRecord>> {
-    if cluster.metadata().is_expired().await {
-        cluster.refresh_metadata().await?;
-    }
-    let leader_addr = cluster
-        .metadata()
-        .get_partition_leader(topic, partition)
-        .await
-        .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
-    let topic_id = cluster
-        .metadata()
-        .get_topic(topic)
-        .await
-        .map(|t| t.topic_id)
-        .unwrap_or_else(uuid::Uuid::nil);
-
-    let build_req = |fetch_offset: i64| FetchRequest {
-        cluster_id: None,
-        replica_id: -1,
-        replica_state: Default::default(),
-        max_wait_ms: params.timeout_ms,
-        min_bytes: params.min_bytes,
-        max_bytes: params.max_bytes,
-        isolation_level: 0,
-        session_id: 0,
-        session_epoch: -1,
-        topics: vec![FetchTopic {
-            topic: topic.to_string(),
-            topic_id,
-            partitions: vec![FetchPartition {
-                partition,
-                current_leader_epoch: -1,
-                fetch_offset,
-                last_fetched_epoch: -1,
-                log_start_offset: -1,
-                partition_max_bytes: params.partition_max_bytes,
-                replica_directory_id: uuid::Uuid::nil(),
-                high_watermark: 0,
-            }],
-        }],
-        forgotten_topics_data: vec![],
-        rack_id: String::new(),
-    };
-
-    let response: crate::protocol::FetchResponse = cluster
-        .send_to_broker(leader_addr, &build_req(offset))
-        .await?;
-
-    if has_offset_out_of_range(&response, topic, partition) {
-        warn!(
-            "OFFSET_OUT_OF_RANGE for {}/{} (offset={}), resetting",
-            topic, partition, offset
-        );
-        let ts = match auto_offset_reset {
-            AutoOffsetReset::Latest => -1i64,
-            AutoOffsetReset::Earliest => -2i64,
-            AutoOffsetReset::None => return Err(KafkaError::NoOffsetStored),
-        };
-        let new_offset = list_offset_for(cluster, topic, partition, ts)
-            .await
-            .unwrap_or(0);
-        let retry_response: crate::protocol::FetchResponse = cluster
-            .send_to_broker(leader_addr, &build_req(new_offset))
-            .await?;
-        return parse_fetch_response(retry_response, topic, topic_id, partition);
-    }
-
-    parse_fetch_response(response, topic, topic_id, partition)
-}
-
-fn has_offset_out_of_range(
-    response: &crate::protocol::FetchResponse,
-    topic_name: &str,
-    partition_index: i32,
-) -> bool {
-    for tr in &response.responses {
-        if tr.topic != topic_name && tr.topic_id.is_nil() {
-            continue;
-        }
-        for p in &tr.partitions {
-            if p.partition_index == partition_index
-                && p.error_code == KafkaErrorCode::OFFSET_OUT_OF_RANGE.code()
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 pub(crate) fn map_heartbeat_error(
     error_code: i16,
     generation_id: i32,
@@ -326,61 +243,6 @@ pub(crate) fn map_heartbeat_error(
         }
         code => Err(KafkaError::Protocol(format!("Heartbeat failed: {}", code))),
     }
-}
-
-fn parse_fetch_response(
-    response: crate::protocol::FetchResponse,
-    topic_name: &str,
-    topic_id: uuid::Uuid,
-    partition_index: i32,
-) -> Result<Vec<ConsumerRecord>> {
-    let mut records = Vec::new();
-    for tr in response.responses {
-        if tr.topic != topic_name && tr.topic_id != topic_id {
-            continue;
-        }
-        for pr in tr.partitions {
-            if pr.partition_index != partition_index {
-                continue;
-            }
-            if pr.error_code != 0 {
-                if pr.error_code == KafkaErrorCode::REBALANCE_IN_PROGRESS.code() {
-                    warn!("REBALANCE_IN_PROGRESS for partition {}", pr.partition_index);
-                    continue;
-                }
-                warn!(
-                    "Fetch error for partition {}: {}",
-                    pr.partition_index,
-                    KafkaErrorCode::from_i16(pr.error_code)
-                );
-                continue;
-            }
-            let Some(batch) = pr.records else {
-                continue;
-            };
-            let base_offset = batch.base_offset;
-            let first_ts = batch.first_timestamp;
-            for (idx, rec) in batch.records.into_iter().enumerate() {
-                records.push(ConsumerRecord {
-                    topic: topic_name.to_string(),
-                    partition: partition_index,
-                    offset: base_offset + idx as i64,
-                    timestamp: first_ts + rec.timestamp_delta,
-                    key: rec.key,
-                    value: rec.value.unwrap_or_default(),
-                    headers: rec
-                        .headers
-                        .into_iter()
-                        .map(|h| Header {
-                            key: h.key,
-                            value: h.value.unwrap_or_default(),
-                        })
-                        .collect(),
-                });
-            }
-        }
-    }
-    Ok(records)
 }
 
 pub(crate) async fn list_offset_for(

@@ -20,6 +20,7 @@
 mod common;
 
 use common::compose;
+use common::run_with_timeout;
 use kafka_client::{
     Client, ConsumerConfig, ProducerConfig, ProducerRecord, SaslMechanismType, admin::NewTopic,
 };
@@ -31,14 +32,11 @@ async fn setup() {
 }
 
 /// SASL broker bootstrap address
-fn sasl_bootstrap_addrs() -> Vec<std::net::SocketAddr> {
+fn sasl_bootstrap_addrs() -> Vec<String> {
     let bootstrap = std::env::var("KAFKA_BOOTSTRAP_SASL")
         .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
         .unwrap_or_else(|_| "127.0.0.1:9094".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
-        .collect()
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 /// 从环境变量读取 SASL 配置
@@ -56,111 +54,117 @@ fn sasl_config_from_env() -> Option<(SaslMechanismType, String, String)> {
 
 #[tokio::test]
 async fn test_sasl_authentication() {
-    setup().await;
-    let Some((mechanism, username, password)) = sasl_config_from_env() else {
-        eprintln!("SKIP: SASL_MECHANISM not set, skipping SASL auth test");
-        return;
-    };
+    run_with_timeout(async {
+        setup().await;
+        let Some((mechanism, username, password)) = sasl_config_from_env() else {
+            eprintln!("SKIP: SASL_MECHANISM not set, skipping SASL auth test");
+            return;
+        };
 
-    let addrs = sasl_bootstrap_addrs();
+        let addrs = sasl_bootstrap_addrs();
 
-    println!(
-        "=== SASL Auth Test: mechanism={}, user={}, bootstrap={:?} ===",
-        mechanism.as_str(),
-        username,
-        addrs
-    );
+        println!(
+            "=== SASL Auth Test: mechanism={}, user={}, bootstrap={:?} ===",
+            mechanism.as_str(),
+            username,
+            addrs
+        );
 
-    let client = Client::builder(addrs.clone())
-        .with_client_id("sasl-auth-test")
-        .with_sasl(mechanism, &username, &password)
-        .with_metadata_ttl(Duration::from_secs(10))
-        .build()
-        .await
-        .expect("Failed to build Client with SASL auth");
-
-    // 1. 验证 metadata 可以正常获取
-    client
-        .refresh_metadata()
-        .await
-        .expect("Failed to refresh metadata after SASL auth");
-
-    let brokers = client.metadata().get_all_brokers().await;
-    println!("  Metadata OK: {} broker(s) in cluster", brokers.len());
-    assert!(!brokers.is_empty(), "Expected at least 1 broker");
-
-    // 2. 基本生产消费验证
-    let topic = "sasl-auth-test-topic";
-
-    // 创建主题（SASL 是单节点集群，rf=1）
-    let result = client
-        .admin()
-        .create_topic(&NewTopic::new(topic, 1, 1))
-        .await
-        .unwrap();
-    assert!(
-        result.is_success() || result.already_exists(),
-        "Create topic failed: {:?}",
-        result.error_message
-    );
-    println!("  Topic '{}' created (rf=1)", topic);
-    common::wait_for_topic_ready(&client, topic, 1).await;
-
-    // 生产消息
-    let producer = client.producer(ProducerConfig::new()).await;
-
-    for i in 0..5 {
-        let record = ProducerRecord::new(topic, bytes::Bytes::from(format!("sasl-msg-{}", i)));
-        producer
-            .send(record)
+        let client = Client::builder(addrs.clone())
+            .with_client_id("sasl-auth-test")
+            .with_sasl(mechanism, &username, &password)
+            .with_metadata_ttl(Duration::from_secs(10))
+            .build()
             .await
-            .expect("Failed to produce message via SASL auth");
-    }
-    producer.flush().await.expect("Failed to flush producer");
-    println!("  Produced 5 messages via SASL auth");
+            .expect("Failed to build Client with SASL auth");
 
-    // 消费消息（从最早偏移开始，避免错过已生产的消息）
-    let mut consumer = client.consumer(ConsumerConfig::new("sasl-auth-test-group").with_earliest());
+        // 1. 验证 metadata 可以正常获取
+        client
+            .refresh_metadata()
+            .await
+            .expect("Failed to refresh metadata after SASL auth");
 
-    consumer.subscribe(vec![topic.to_string()]).await.unwrap();
+        let brokers = client.metadata().get_all_brokers().await;
+        println!("  Metadata OK: {} broker(s) in cluster", brokers.len());
+        assert!(!brokers.is_empty(), "Expected at least 1 broker");
 
-    // 等待分配
-    for i in 0..10 {
-        let assignment = consumer.group().assignment().await;
-        let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
-        if has_partitions > 0 {
-            println!("  Consumer joined group after ~{}s", i + 1);
-            break;
+        // 2. 基本生产消费验证
+        let topic = "sasl-auth-test-topic";
+
+        // 创建主题（SASL 是单节点集群，rf=1）
+        let result = client
+            .admin()
+            .create_topic(&NewTopic::new(topic, 1, 1))
+            .await
+            .unwrap();
+        assert!(
+            result.is_success() || result.already_exists(),
+            "Create topic failed: {:?}",
+            result.error_message
+        );
+        println!("  Topic '{}' created (rf=1)", topic);
+        common::wait_for_topic_ready(&client, topic, 1).await;
+
+        // 生产消息
+        let producer = client.producer(ProducerConfig::new()).await;
+
+        for i in 0..5 {
+            let record = ProducerRecord::new(topic, bytes::Bytes::from(format!("sasl-msg-{}", i)));
+            producer
+                .send(record)
+                .await
+                .expect("Failed to produce message via SASL auth");
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+        producer.flush().await.expect("Failed to flush producer");
+        println!("  Produced 5 messages via SASL auth");
 
-    // 消费消息
-    let mut all = Vec::new();
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    while all.len() < 5 && std::time::Instant::now() < deadline {
-        match consumer.poll_timeout(Duration::from_millis(3000)).await {
-            Ok(records) => all.extend(records),
-            Err(e) => eprintln!("  WARNING: Poll error: {}", e),
+        let mut consumer = client.consumer(
+            ConsumerConfig::new()
+                .with_group_id("sasl-auth-test")
+                .with_earliest(),
+        );
+
+        consumer.subscribe(vec![topic.to_string()]).await.unwrap();
+
+        // 等待分配
+        for i in 0..10 {
+            let assignment = consumer.group().assignment().await;
+            let has_partitions: usize = assignment.values().map(|v| v.len()).sum();
+            if has_partitions > 0 {
+                println!("  Consumer joined group after ~{}s", i + 1);
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
-    }
 
-    println!("  Consumed {}/5 messages via SASL auth", all.len());
-    assert!(
-        all.len() >= 5,
-        "Expected at least 5 messages, got {}",
-        all.len()
-    );
+        // 消费消息
+        let mut all = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while all.len() < 5 && std::time::Instant::now() < deadline {
+            match consumer.poll_timeout(Duration::from_millis(3000)).await {
+                Ok(records) => all.extend(records),
+                Err(e) => eprintln!("  WARNING: Poll error: {}", e),
+            }
+        }
 
-    for r in &all {
-        let value = String::from_utf8_lossy(&r.value);
-        println!("    {}", value);
-    }
+        println!("  Consumed {}/5 messages via SASL auth", all.len());
+        assert!(
+            all.len() >= 5,
+            "Expected at least 5 messages, got {}",
+            all.len()
+        );
 
-    if let Err(e) = client.close().await {
-        eprintln!("  Close warning: {}", e);
-    }
-    println!("=== SASL Auth Test PASSED ===");
+        for r in &all {
+            let value = String::from_utf8_lossy(&r.value);
+            println!("    {}", value);
+        }
+
+        if let Err(e) = client.close().await {
+            eprintln!("  Close warning: {}", e);
+        }
+        println!("=== SASL Auth Test PASSED ===");
+    })
+    .await;
 }
 
 #[tokio::test]

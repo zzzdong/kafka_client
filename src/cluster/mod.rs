@@ -255,6 +255,49 @@ impl ClusterClient {
         )))
     }
 
+    /// Query a broker configuration value (e.g. "max.message.bytes").
+    ///
+    /// Uses the DescribeConfigs API (broker resource type 4, empty resource name
+    /// = the target broker itself). Returns `None` if the config key is unknown
+    /// or the broker doesn't support DescribeConfigs.
+    pub(crate) async fn query_broker_config(&self, key: &str) -> Option<usize> {
+        use protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
+        use protocol::describe_configs_response::DescribeConfigsResponse;
+
+        let request = DescribeConfigsRequest {
+            resources: vec![DescribeConfigsResource {
+                resource_type: 4,             // broker
+                resource_name: String::new(), // empty = target broker itself
+                configuration_keys: Some(vec![key.to_string()]),
+            }],
+            include_synonyms: false,
+            include_documentation: false,
+        };
+
+        let response: Result<DescribeConfigsResponse> = self.send_to_any_broker(&request).await;
+        match response {
+            Ok(resp) => {
+                for result in resp.results {
+                    if result.error_code == 0 {
+                        for config in result.configs {
+                            if config.name == key
+                                && let Some(ref val) = config.value
+                            {
+                                debug!("Broker config {} = {}", key, val);
+                                return val.parse::<usize>().ok();
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Err(e) => {
+                warn!("Failed to query broker config '{}': {}", key, e);
+                None
+            }
+        }
+    }
+
     // ================================================================
     // Metadata
     // ================================================================

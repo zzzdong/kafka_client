@@ -20,7 +20,7 @@
 
 pub mod compose;
 
-use std::net::SocketAddr;
+use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -30,13 +30,10 @@ use kafka_client::{
 };
 
 /// 获取 bootstrap 地址。从环境变量读取，回退到默认值。
-fn bootstrap_addrs() -> Vec<SocketAddr> {
+fn bootstrap_addrs() -> Vec<String> {
     let servers = std::env::var("KAFKA_BOOTSTRAP")
         .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
-    servers
-        .split(',')
-        .map(|s| s.trim().parse().expect("Invalid KAFKA_BOOTSTRAP address"))
-        .collect()
+    servers.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 pub fn cluster_size() -> usize {
@@ -117,7 +114,8 @@ pub fn default_producer_config() -> ProducerConfig {
 }
 
 pub fn consumer_config(group_id: &str, reset: AutoOffsetReset) -> ConsumerConfig {
-    ConsumerConfig::new(group_id)
+    ConsumerConfig::new()
+        .with_group_id(group_id)
         .with_auto_commit_interval(Duration::from_secs(1))
         .with_auto_offset_reset(reset)
         .with_min_bytes(0)
@@ -201,16 +199,7 @@ pub async fn consume_all_timeout(
     expected_count: i32,
     timeout: Duration,
 ) -> Vec<ConsumerRecord> {
-    // 使用唯一组 ID，避免已提交偏移量干扰后续运行
-    let unique_group = format!(
-        "{}-{}",
-        group_id,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    let mut consumer = client.consumer(consumer_config(&unique_group, AutoOffsetReset::Earliest));
+    let mut consumer = client.consumer(consumer_config(group_id, AutoOffsetReset::Earliest));
     consumer.subscribe(vec![topic.to_string()]).await.unwrap();
 
     // No assignment wait loop — consumer auto-joins on first poll().
@@ -232,7 +221,7 @@ pub async fn consume_all_timeout(
     assert!(
         all.len() as i32 >= expected_count,
         "Consumer '{}' got only {} messages, expected at least {}",
-        unique_group,
+        group_id,
         all.len(),
         expected_count
     );
@@ -301,4 +290,29 @@ pub async fn wait_for_new_leader(
         sleep(Duration::from_secs(1)).await;
     }
     None
+}
+
+/// Run a test body with a 180-second timeout.
+///
+/// Without this wrapper a hanging test will stall the test runner
+/// indefinitely (cargo test only prints a warning after 60s).
+///
+/// # Usage
+///
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_foo() {
+///     common::run_with_timeout(async {
+///         setup().await;
+///         // ... test body ...
+///     }).await;
+/// }
+/// ```
+pub async fn run_with_timeout<F, T>(f: F) -> T
+where
+    F: Future<Output = T>,
+{
+    tokio::time::timeout(Duration::from_secs(180), f)
+        .await
+        .expect("Test timed out after 180s — check Docker cluster and Kafka connectivity")
 }

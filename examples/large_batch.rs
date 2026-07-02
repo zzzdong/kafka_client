@@ -14,16 +14,12 @@
 
 use bytes::Bytes;
 use kafka_client::{Client, ConsumerConfig, ProducerConfig, ProducerRecord, admin::NewTopic};
-use std::net::SocketAddr;
 use std::time::Duration;
 
-fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
-        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| s.trim().parse().expect("Invalid bootstrap address"))
-        .collect()
+fn get_bootstrap_addrs() -> Vec<String> {
+    let bootstrap =
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 fn get_topic_name() -> String {
@@ -69,22 +65,19 @@ async fn main() {
 
     // 2. Create topic
     println!("\n[2] Creating topic '{}' (3 partitions)...", topic);
+    let cluster_info = client.admin().describe_cluster().await.unwrap();
+    let rf = (3).min(cluster_info.brokers.len()).max(1) as i16;
     let result = client
         .admin()
-        .create_topic(&NewTopic::new(&topic, 3, 3))
+        .create_topic(&NewTopic::new(&topic, 3, rf))
         .await
         .unwrap();
-    if result.error_code != 0 && result.error_code != 36 {
-        eprintln!(
-            "ERROR: Topic creation failed: error_code={}",
-            result.error_code
-        );
+    use kafka_client::KafkaErrorCode;
+    if !result.error_code.is_ok() && result.error_code != KafkaErrorCode::TOPIC_ALREADY_EXISTS {
+        eprintln!("ERROR: Topic creation failed: {}", result.error_code);
         std::process::exit(1);
     }
-    println!(
-        "  Topic '{}' ready (error_code={})",
-        &topic, result.error_code
-    );
+    println!("  Topic '{}' ready ({})", topic, result.error_code);
 
     // Wait for metadata
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -119,7 +112,8 @@ async fn main() {
 
     // 4. Consume messages
     println!("\n[4] Consuming messages...");
-    let consumer_config = ConsumerConfig::new("cg-large-example")
+    let consumer_config = ConsumerConfig::new()
+        .with_group_id("cg-large-example")
         .with_auto_commit_interval(Duration::from_secs(1))
         .with_earliest()
         .with_min_bytes(0)

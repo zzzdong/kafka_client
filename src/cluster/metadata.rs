@@ -249,4 +249,14 @@ impl MetadataCache {
         let addr_str = format!("{}:{}", addr.ip(), addr.port());
         inner.broker_addresses.get(&addr_str).copied()
     }
+
+    pub async fn get_cluster_id(&self) -> Option<String> {
+        let inner = self.inner.read().await;
+        inner.cluster_id.clone()
+    }
+
+    pub async fn get_controller_id(&self) -> Option<i32> {
+        let inner = self.inner.read().await;
+        inner.controller_id
+    }
 }

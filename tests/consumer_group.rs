@@ -76,7 +76,7 @@ async fn test_consumer_group_rebalance() {
 
     // 消费者 1 加入组
     let c1_client = build_test_client().await;
-    let mut c1 = c1_client.consumer(consumer_config(group_id, AutoOffsetReset::Earliest));
+    let mut c1 = c1_client.consumer(consumer_config(&group_id, AutoOffsetReset::Earliest));
     c1.subscribe(vec!["tc-rebalance".to_string()])
         .await
         .unwrap();
@@ -88,7 +88,7 @@ async fn test_consumer_group_rebalance() {
 
     // 消费者 2 加入同一个组 → 触发 Rebalance
     let c2_client = build_test_client().await;
-    let mut c2 = c2_client.consumer(consumer_config(group_id, AutoOffsetReset::Earliest));
+    let mut c2 = c2_client.consumer(consumer_config(&group_id, AutoOffsetReset::Earliest));
     c2.subscribe(vec!["tc-rebalance".to_string()])
         .await
         .unwrap();

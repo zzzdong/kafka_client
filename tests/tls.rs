@@ -36,18 +36,11 @@ async fn setup() {
 }
 
 /// Read TLS bootstrap address from environment.
-fn tls_bootstrap_addrs() -> Vec<std::net::SocketAddr> {
+fn tls_bootstrap_addrs() -> Vec<String> {
     let bootstrap = std::env::var("KAFKA_BOOTSTRAP_TLS")
         .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
         .unwrap_or_else(|_| "127.0.0.1:9093".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| {
-            s.trim()
-                .parse()
-                .expect("Invalid KAFKA_BOOTSTRAP_TLS address")
-        })
-        .collect()
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 /// Returns the path to the fixtures/tls directory (absolute path).
@@ -63,6 +56,7 @@ fn tls_fixtures_dir() -> &'static str {
 /// gen-certs.sh.  NoCertificateVerification (dangerous mode) is
 /// incompatible with the Kafka broker's TLS stack in rustls 0.23
 /// (causes AlertReceived(HandshakeFailure)), so we always verify.
+#[allow(deprecated)]
 fn base_tls_config() -> TlsConfig {
     let dir = tls_fixtures_dir();
     TlsConfig {
@@ -161,7 +155,11 @@ async fn test_tls_produce_and_consume() {
     producer.flush().await.expect("Failed to flush producer");
     println!("  Produced 5 messages via TLS");
 
-    let mut consumer = client.consumer(ConsumerConfig::new("tls-test-group").with_earliest());
+    let mut consumer = client.consumer(
+        ConsumerConfig::new()
+            .with_group_id("tls-test-group")
+            .with_earliest(),
+    );
 
     consumer
         .subscribe(vec![topic.to_string()])

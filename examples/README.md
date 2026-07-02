@@ -141,7 +141,7 @@ cargo run --example admin_operations
 ### Connection
 
 ```rust
-let client = Client::builder(vec!["localhost:9092".parse().unwrap()])
+let client = Client::builder(vec!["localhost:9092".to_string()])
     .with_client_id("my-app")
     .build()
     .await?;
@@ -204,7 +204,7 @@ producer.flush().await?;
 
 ```rust
 let consumer = client.consumer(
-    ConsumerConfig::new("my-group")
+    ConsumerConfig::new().with_group_id("my-group")
         .with_earliest()
 );
 consumer.subscribe(vec!["topic".to_string()]).await?;

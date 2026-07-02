@@ -11,7 +11,7 @@
 //! use kafka_client::Client;
 //!
 //! // Create client — connects to cluster, discovers all brokers
-//! let client = Client::builder(vec!["localhost:9092".parse()?])
+//! let client = Client::builder(vec!["localhost:9092".into()])
 //!     .with_plaintext()
 //!     .build()
 //!     .await?;
@@ -36,7 +36,7 @@
 //!     ProducerConfig::new().with_acks(-1).with_retries(3)
 //! ).await;
 //!
-//! // Consumer with group coordination
+//! // Consumer with group coordination  
 //! let mut consumer = client.consumer(
 //!     ConsumerConfig::new("my-group").with_earliest()
 //! );
@@ -54,7 +54,7 @@ pub mod transport; // Public for advanced users who need low-level access
 mod wire;
 
 // Public re-exports
-pub use error::{KafkaError, Result};
+pub use error::{KafkaError, KafkaErrorCode, Result};
 pub use kafka_client_protocol as protocol;
 pub use sasl::{SaslCredentials, SaslMechanismType};
 pub use transport::{SecurityProtocol, TlsConfig};
@@ -67,8 +67,8 @@ pub use producer::{
 
 // Consumer types
 pub use consumer::{
-    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, GroupConsumer, GroupHandle,
-    OffsetHandle, PartitionAssignmentStrategy, SimpleConsumer,
+    AutoOffsetReset, Consumer, ConsumerConfig, ConsumerRecord, ConsumerStream, GroupHandle,
+    OffsetHandle, PartitionAssignmentStrategy,
 };
 
 // Metadata types (read-only queries)
@@ -80,7 +80,6 @@ pub const NAME: &str = env!("CARGO_PKG_NAME");
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -100,13 +99,13 @@ use crate::cluster::ClusterClient;
 /// ```ignore
 /// use kafka_client::Client;
 ///
-/// let client = Client::builder(vec!["localhost:9092".parse().unwrap()])
+/// let client = Client::builder(vec!["localhost:9092".into()])
 ///     .with_plaintext()
 ///     .build()
 ///     .await?;
 ///
-/// let producer = client.producer_default().await?;
-/// let consumer = client.consumer_default().await?;
+/// let producer = client.producer_default().await;
+/// let consumer = client.consumer_default();
 /// ```
 pub struct Client {
     cluster: Arc<ClusterClient>,
@@ -114,7 +113,10 @@ pub struct Client {
 
 impl Client {
     /// Create a builder for constructing the client.
-    pub fn builder(bootstrap_servers: Vec<SocketAddr>) -> ClientBuilder {
+    ///
+    /// Accepts hostnames or IP addresses (e.g. `"localhost:9092"`).
+    /// Hostnames are resolved during `build()`.
+    pub fn builder(bootstrap_servers: Vec<String>) -> ClientBuilder {
         ClientBuilder::new(bootstrap_servers)
     }
 
@@ -148,7 +150,10 @@ impl Client {
 
     /// Create a [`Consumer`] with default configuration.
     ///
-    /// Uses a default group id, enabling group-coordinated consumption.
+    /// Creates a direct-mode consumer (no consumer group). All partitions
+    /// of the subscribed topics are fetched directly from the cluster.
+    /// Use [`Consumer`](Consumer) with `ConsumerConfig::new("my-group")`
+    /// for group-coordinated consumption.
     pub fn consumer_default(&self) -> Consumer {
         Consumer::new(self.cluster.clone(), ConsumerConfig::default())
     }
@@ -159,12 +164,12 @@ impl Client {
     ///
     /// ```ignore
     /// // Simple consumer (no consumer group)
-    /// let consumer = client.consumer(ConsumerConfig::default()).await?;
+    /// let consumer = client.consumer(ConsumerConfig::default());
     ///
     /// // Group consumer
     /// let consumer = client.consumer(
     ///     ConsumerConfig::new("my-group").with_earliest()
-    /// ).await?;
+    /// );
     /// ```
     pub fn consumer(&self, config: ConsumerConfig) -> Consumer {
         Consumer::new(self.cluster.clone(), config)
@@ -240,7 +245,7 @@ impl Client {
 ///
 /// Supports plaintext, TLS, SASL, and SASL+TLS configurations.
 pub struct ClientBuilder {
-    bootstrap_servers: Vec<SocketAddr>,
+    bootstrap_servers: Vec<String>,
     security_protocol: crate::transport::SecurityProtocol,
     client_id: String,
     sasl_credentials: Option<crate::sasl::SaslCredentials>,
@@ -249,7 +254,9 @@ pub struct ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new builder with the given bootstrap servers.
-    pub fn new(bootstrap_servers: Vec<SocketAddr>) -> Self {
+    ///
+    /// Accepts hostnames or IP addresses (e.g. `"localhost:9092"`).
+    pub fn new(bootstrap_servers: Vec<String>) -> Self {
         Self {
             bootstrap_servers,
             security_protocol: crate::transport::SecurityProtocol::Plaintext,
@@ -370,8 +377,30 @@ impl ClientBuilder {
 
     /// Connect to the cluster and build the [`Client`].
     pub async fn build(self) -> Result<Client> {
+        let mut resolved = Vec::with_capacity(self.bootstrap_servers.len());
+        for server in &self.bootstrap_servers {
+            match tokio::net::lookup_host(server).await {
+                Ok(mut addrs) => {
+                    if let Some(addr) = addrs.next() {
+                        resolved.push(addr);
+                    } else {
+                        return Err(KafkaError::Io(format!(
+                            "Failed to resolve bootstrap server: {}",
+                            server
+                        )));
+                    }
+                }
+                Err(e) => {
+                    return Err(KafkaError::Io(format!(
+                        "Failed to resolve bootstrap server '{}': {}",
+                        server, e
+                    )));
+                }
+            }
+        }
+
         let config = crate::cluster::ClusterConfig {
-            bootstrap_servers: self.bootstrap_servers,
+            bootstrap_servers: resolved,
             security_protocol: self.security_protocol,
             client_id: self.client_id,
             metadata_ttl: self.metadata_ttl,
@@ -386,6 +415,6 @@ impl ClientBuilder {
 }
 
 /// Convenience builder function — equivalent to `Client::builder(...)`.
-pub fn builder(bootstrap_servers: Vec<SocketAddr>) -> ClientBuilder {
+pub fn builder(bootstrap_servers: Vec<String>) -> ClientBuilder {
     ClientBuilder::new(bootstrap_servers)
 }

@@ -8,7 +8,7 @@
 //! ```ignore
 //! use kafka_client::{Client, admin::NewTopic};
 //!
-//! let client = Client::builder(vec!["localhost:9092".parse().unwrap()])
+//! let client = Client::builder(vec!["localhost:9092".to_string()])
 //!     .build().await?;
 //! let admin = client.admin();
 //!
@@ -28,7 +28,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::cluster::ClusterClient;
-use crate::error::{KafkaError, Result};
+use crate::error::{KafkaError, KafkaErrorCode, Result};
 use crate::protocol::{
     CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
     DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
@@ -92,7 +92,7 @@ pub struct AdminTopicResult {
     /// Topic name.
     pub name: String,
     /// Error code (0 = success).
-    pub error_code: i16,
+    pub error_code: KafkaErrorCode,
     /// Error message, if any.
     pub error_message: Option<String>,
 }
@@ -100,12 +100,12 @@ pub struct AdminTopicResult {
 impl AdminTopicResult {
     /// Returns `true` if the operation succeeded for this topic.
     pub fn is_success(&self) -> bool {
-        self.error_code == 0
+        self.error_code.is_ok()
     }
 
-    /// Returns `true` if the topic already existed (code 36 = TOPIC_ALREADY_EXISTS).
+    /// Returns `true` if the topic already existed.
     pub fn already_exists(&self) -> bool {
-        self.error_code == 36
+        self.error_code == KafkaErrorCode::TOPIC_ALREADY_EXISTS
     }
 }
 
@@ -297,7 +297,7 @@ impl AdminClient {
             .into_iter()
             .map(|t| AdminTopicResult {
                 name: t.name,
-                error_code: t.error_code,
+                error_code: KafkaErrorCode::from_i16(t.error_code),
                 error_message: t.error_message,
             })
             .collect();
@@ -341,7 +341,7 @@ impl AdminClient {
             .into_iter()
             .map(|r| AdminTopicResult {
                 name: r.name.unwrap_or_default(),
-                error_code: r.error_code,
+                error_code: KafkaErrorCode::from_i16(r.error_code),
                 error_message: r.error_message,
             })
             .collect();
@@ -454,8 +454,8 @@ impl AdminClient {
             .collect();
 
         Ok(AdminClusterInfo {
-            cluster_id: None, // MetadataCache doesn't expose this yet
-            controller_id: None,
+            cluster_id: metadata.get_cluster_id().await,
+            controller_id: metadata.get_controller_id().await,
             brokers,
         })
     }
@@ -593,5 +593,27 @@ impl AdminClient {
     /// Refresh the internal metadata cache (force refresh).
     pub async fn refresh_metadata(&self) -> Result<()> {
         self.cluster.refresh_metadata().await
+    }
+
+    // ------------------------------------------------------------------
+    // Broker configuration
+    // ------------------------------------------------------------------
+
+    /// Query a broker configuration value (e.g. `"max.message.bytes"`).
+    ///
+    /// Uses the Kafka `DescribeConfigs` API (resource type `BROKER=4`).
+    /// Returns `None` if the config key is unknown, the broker doesn't
+    /// support this API, or the value is not a valid integer.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let max_bytes = admin.get_broker_config("max.message.bytes").await?;
+    /// if let Some(bytes) = max_bytes {
+    ///     println!("Broker max message size: {} bytes", bytes);
+    /// }
+    /// ```
+    pub async fn get_broker_config(&self, key: &str) -> Option<usize> {
+        self.cluster.query_broker_config(key).await
     }
 }

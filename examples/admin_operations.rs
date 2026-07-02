@@ -17,19 +17,11 @@
 //! ```
 
 use kafka_client::{Client, admin::NewTopic};
-use std::net::SocketAddr;
 
-fn get_bootstrap_addrs() -> Vec<SocketAddr> {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP")
-        .unwrap_or_else(|_| "127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097".to_string());
-    bootstrap
-        .split(',')
-        .map(|s| {
-            s.trim()
-                .parse()
-                .expect("Invalid bootstrap address format. Expected: host:port")
-        })
-        .collect()
+fn get_bootstrap_addrs() -> Vec<String> {
+    let bootstrap =
+        std::env::var("KAFKA_BOOTSTRAP").unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+    bootstrap.split(',').map(|s| s.trim().to_string()).collect()
 }
 
 #[tokio::main]
@@ -82,19 +74,21 @@ async fn main() {
 
     // ── Create a topic ──
     let topic_name = "admin-example-topic";
+    let rf = (3).min(info.brokers.len()).max(1) as i16;
     println!(
-        "\n[4] Creating topic '{}' (3 partitions, rf=1)...",
-        topic_name
+        "\n[4] Creating topic '{}' (3 partitions, rf={})...",
+        topic_name, rf
     );
     let result = admin
-        .create_topic(&NewTopic::new(topic_name, 3, 1))
+        .create_topic(&NewTopic::new(topic_name, 3, rf))
         .await
         .expect("Failed to create topic");
 
+    use kafka_client::KafkaErrorCode;
     match result.error_code {
-        0 => println!("  Created successfully"),
-        36 => println!("  Already exists"),
-        code => eprintln!("  Failed with error code {}", code),
+        KafkaErrorCode::NONE => println!("  Created successfully"),
+        KafkaErrorCode::TOPIC_ALREADY_EXISTS => println!("  Already exists"),
+        code => eprintln!("  Failed: {}", code),
     }
 
     // ── Describe the topic ──

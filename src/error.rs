@@ -2,7 +2,7 @@ use std::fmt;
 use thiserror::Error;
 
 // 重新导出 protocol 模块的错误类型
-pub use kafka_client_protocol::ProtocolError;
+pub use kafka_client_protocol::{KafkaErrorCode, ProtocolError};
 
 /// Error connecting to a specific broker.
 #[derive(Debug, Clone)]
@@ -71,10 +71,10 @@ pub enum KafkaError {
     UnsupportedApi(i16),
 
     #[error("Produce error: {0}")]
-    ProduceError(i16),
+    ProduceError(KafkaErrorCode),
 
     #[error("Offset commit error: {0}")]
-    OffsetCommitError(i16),
+    OffsetCommitError(KafkaErrorCode),
 
     #[error("No offset stored")]
     NoOffsetStored,

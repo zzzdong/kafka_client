@@ -23,7 +23,7 @@
 //! let client = common::build_test_client().await;
 //! ```
 
-use std::net::{SocketAddr, TcpStream};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -121,12 +121,17 @@ static COMPOSE_STARTED: AtomicBool = AtomicBool::new(false);
 /// - 进程内只启动一次（`AtomicBool` 保护）
 pub async fn ensure(cluster: &Cluster) {
     // 环境变量已设置 → 外部管理，完全跳过
-    let externally_managed = is_externally_managed(cluster);
-    if externally_managed {
+    if is_externally_managed(cluster) {
         return;
     }
 
-    // 仅启动一次（跨所有集群类型）
+    // 在 compose 启动前就设置环境变量，使并发测试能直接使用默认地址。
+    unsafe {
+        std::env::set_var(cluster.env_var, cluster.default_bootstrap);
+        std::env::set_var("KAFKA_CLUSTER_SIZE", cluster.default_size.to_string());
+    }
+
+    // 仅启动一次 compose（AtomicBool 保护）
     if COMPOSE_STARTED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -141,12 +146,6 @@ pub async fn ensure(cluster: &Cluster) {
     );
     start_compose(cluster).await;
     wait_for_cluster(cluster).await;
-
-    // 设置环境变量，使 common/mod.rs 的函数可用
-    unsafe {
-        std::env::set_var(cluster.env_var, cluster.default_bootstrap);
-        std::env::set_var("KAFKA_CLUSTER_SIZE", cluster.default_size.to_string());
-    }
 }
 
 /// 检查集群是否是外部管理的（环境变量已设置）
@@ -227,12 +226,15 @@ async fn wait_for_cluster(cluster: &Cluster) {
 
     // Phase 1: TCP port check (适用于所有集群类型)
     for addr in &addrs {
+        let socket_addr: std::net::SocketAddr = addr
+            .parse()
+            .unwrap_or_else(|e| panic!("Invalid bootstrap address '{}': {}", addr, e));
         loop {
             if std::time::Instant::now() > deadline {
                 panic!("Timeout waiting for cluster '{}' at {}", cluster.name, addr);
             }
-            if TcpStream::connect_timeout(addr, Duration::from_secs(2)).is_ok() {
-                eprintln!("  TCP port {} ready", addr.port());
+            if TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2)).is_ok() {
+                eprintln!("  TCP port {} ready", socket_addr.port());
                 break;
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -276,16 +278,12 @@ async fn wait_for_cluster(cluster: &Cluster) {
 }
 
 /// 从环境变量或默认值解析 bootstrap 地址
-fn resolve_bootstrap_addrs(cluster: &Cluster) -> Vec<SocketAddr> {
+fn resolve_bootstrap_addrs(cluster: &Cluster) -> Vec<String> {
     let bootstrap_str = std::env::var(cluster.env_var)
         .or_else(|_| std::env::var("KAFKA_BOOTSTRAP"))
         .unwrap_or_else(|_| cluster.default_bootstrap.to_string());
     bootstrap_str
         .split(',')
-        .map(|s| {
-            s.trim()
-                .parse()
-                .expect(&format!("Invalid bootstrap address: '{}'", s))
-        })
+        .map(|s| s.trim().to_string())
         .collect()
 }

@@ -230,10 +230,9 @@ impl RecordBatch {
         if buf.remaining() < 4 {
             return Err(ProtocolError::insufficient_data(4, buf.remaining()));
         }
+        // 保存 CRC 校验区域快照（attributes 到 records 结束）
+        let crc_snapshot = buf.slice(..);
         let crc = buf.get_u32();
-
-        // 保存当前位置用于 CRC 校验
-        let _data_start = buf.len();
 
         if buf.remaining() < 2 {
             return Err(ProtocolError::insufficient_data(2, buf.remaining()));
@@ -297,13 +296,12 @@ impl RecordBatch {
             records.push(Record::decode(&mut records_buf)?);
         }
 
-        // TODO: 验证 CRC
-        // let data_end = buf.len();
-        // let data = &buf[data_end..data_start];
-        // let calculated_crc = Self::calculate_crc(data);
-        // if calculated_crc != crc {
-        //     return Err(ProtocolError::invalid_format("CRC mismatch"));
-        // }
+        // 验证 CRC（覆盖从 attributes 到 records 结束的所有数据）
+        let crc_data = &crc_snapshot[4..];
+        let calculated_crc = Self::calculate_crc(crc_data);
+        if calculated_crc != crc {
+            return Err(ProtocolError::invalid_data("CRC mismatch"));
+        }
 
         Ok(RecordBatch {
             base_offset: 0,  // 由外层设置

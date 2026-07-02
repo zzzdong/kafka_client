@@ -20,15 +20,6 @@ async fn setup() {
     compose::ensure(&compose::clusters::THREE_BROKER).await;
 }
 
-/// 创建一个唯一组 ID，避免跨测试运行的已提交偏移量干扰。
-fn unique_group_id(prefix: &str) -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!("{}-{}", prefix, ts)
-}
-
 #[tokio::test]
 async fn test_consumer_seek_to_earliest() {
     setup().await;
@@ -41,10 +32,11 @@ async fn test_consumer_seek_to_earliest() {
     client.refresh_metadata().await.unwrap();
     sleep(Duration::from_millis(500)).await;
 
-    let group_id = unique_group_id("cg-seek-test");
+    let group_id = "cg-seek-test";
     let seek_client = build_test_client().await;
     let mut consumer = seek_client.consumer(
-        ConsumerConfig::new(&group_id)
+        ConsumerConfig::new()
+            .with_group_id(group_id)
             .with_auto_commit(false)
             .with_auto_offset_reset(AutoOffsetReset::Latest),
     );

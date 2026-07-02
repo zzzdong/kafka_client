@@ -159,6 +159,7 @@ run_tests() {
     SASL_MECHANISM="${SASL_MECHANISM:-PLAIN}" \
     SASL_USERNAME="${SASL_USERNAME:-admin}" \
     SASL_PASSWORD="${SASL_PASSWORD:-admin-secret}" \
+    RUST_TEST_THREADS=1 \
     cargo test --test "${test_name}" --features integration_tests -- --nocapture 2>&1
 }
 

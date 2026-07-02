@@ -12,17 +12,18 @@ pub enum PartitionRouting {
     Random,
 }
 
-/// Partition router
+/// Partition router (cloneable for concurrent access)
+#[derive(Clone)]
 pub struct PartitionRouter {
     routing: PartitionRouting,
-    counter: AtomicU32,
+    counter: std::sync::Arc<AtomicU32>,
 }
 
 impl PartitionRouter {
     pub fn new(routing: PartitionRouting) -> Self {
         Self {
             routing,
-            counter: AtomicU32::new(0),
+            counter: std::sync::Arc::new(AtomicU32::new(0)),
         }
     }
 

@@ -1,4 +1,5 @@
-//! Internal consumer types — shared between consumer variants and the reactor.
+//! Internal consumer types — shared between the unified background task
+//! and the public Consumer facade.
 
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -10,49 +11,70 @@ use crate::protocol::FetchRequest;
 use kafka_client_protocol::RecordBatch;
 
 // ---------------------------------------------------------------------------
-// Reactor states
+// Modes
 // ---------------------------------------------------------------------------
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReactorState {
-    Init,
-    Joining,
-    Fetching,
-    Rebalancing,
-    /// Consumer has left the group. Waits for a new Subscribe command.
-    Stopped,
+pub(crate) enum ConsumerMode {
+    /// No consumer group — fetch all assigned partitions directly
+    Direct,
+    /// Consumer group — join/sync + heartbeat + commit
+    Group,
 }
 
 // ---------------------------------------------------------------------------
-// Commands sent via mpsc to the reactor
+// Commands sent via mpsc to the background task
 // ---------------------------------------------------------------------------
 pub(crate) enum ConsumerCommand {
+    /// Subscribe to topics (group mode: join group; direct mode: get all partitions)
+    /// `reply` is resolved when partition assignment and offset initialization complete.
     Subscribe {
         topics: Vec<String>,
+        reply: Option<oneshot::Sender<Result<()>>>,
     },
-    Commit {
-        reply: oneshot::Sender<Result<()>>,
+    /// Manually assign specific partitions (direct mode only)
+    /// `reply` is resolved when offset initialization completes.
+    Assign {
+        topic: String,
+        partitions: Vec<i32>,
+        reply: Option<oneshot::Sender<Result<()>>>,
     },
+    /// Manually set offset for a partition
+    Seek {
+        topic: String,
+        partition: i32,
+        offset: i64,
+    },
+    /// Commit current offsets (group mode only)
+    Commit { reply: oneshot::Sender<Result<()>> },
+    /// Get current offset for a partition
     GetOffset {
         topic: String,
         partition: i32,
         reply: oneshot::Sender<Option<i64>>,
     },
+    /// Set offset for a partition (internal use)
     SetOffset {
         topic: String,
         partition: i32,
         offset: i64,
     },
-    Heartbeat {
-        reply: oneshot::Sender<Result<()>>,
-    },
-    Leave {
-        reply: oneshot::Sender<Result<()>>,
-    },
+    /// Send a heartbeat (group mode only)
+    Heartbeat { reply: oneshot::Sender<Result<()>> },
+    /// Signal that the consumer has started polling (triggers fetching to begin).
+    /// Fetches are NOT started automatically on partition assignment — they wait
+    /// for this command to avoid buffering records before any receiver is ready.
+    StartPolling,
+    /// Leave the consumer group
+    Leave { reply: oneshot::Sender<Result<()>> },
+    /// Get current partition assignment
     GetAssignment {
         reply: oneshot::Sender<HashMap<String, Vec<i32>>>,
     },
-    /// Trigger try_send_fetches() — used after poll() to prime pipeline
-    TryFetch,
+    /// Shutdown the background task
+    Shutdown,
+    /// Unsubscribe from all topics (direct mode: clear assignment;
+    /// group mode: also leave the group)
+    Unsubscribe { reply: oneshot::Sender<Result<()>> },
 }
 
 // ---------------------------------------------------------------------------
