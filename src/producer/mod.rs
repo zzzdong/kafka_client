@@ -252,6 +252,7 @@ impl ProducerConfig {
     pub fn with_enable_idempotence(mut self) -> Self {
         self.enable_idempotence = true;
         self.acks = -1;
+        self.retries = i32::MAX as u32;
         self.delivery_timeout_ms = 300_000; // 5 minutes
         self
     }
@@ -367,36 +368,74 @@ impl ProducerState {
                 enable2_pc: false,
                 keep_prepared_txn: false,
             };
-            let response: Result<InitProducerIdResponse> =
-                self.cluster.send_to_any_broker(&request).await;
-            match response {
-                Ok(resp) if resp.error_code == 0 => {
-                    self.producer_id = resp.producer_id;
-                    self.producer_epoch = resp.producer_epoch;
-                    self.producer_id_initialized = true;
-                    debug!(
-                        "Obtained producer_id={}, epoch={}",
-                        resp.producer_id, resp.producer_epoch
-                    );
+
+            let deadline = Instant::now() + Duration::from_millis(self.config.delivery_timeout_ms);
+            let mut init_error = None;
+            let mut backoff = Duration::from_millis(100);
+            for attempt in 0..self.config.retries.max(1) {
+                if Instant::now() >= deadline {
+                    init_error = Some(KafkaError::ProduceError(KafkaErrorCode::from_i16(-1)));
+                    break;
                 }
-                Ok(resp) => {
-                    let err = KafkaError::ProduceError(KafkaErrorCode::from_i16(resp.error_code));
-                    for (_, entry) in buffer {
-                        for tx in entry.pending {
-                            let _ = tx.send(Err(err.clone()));
+                let response: Result<InitProducerIdResponse> =
+                    self.cluster.send_to_any_broker(&request).await;
+                match response {
+                    Ok(resp) if resp.error_code == 0 => {
+                        self.producer_id = resp.producer_id;
+                        self.producer_epoch = resp.producer_epoch;
+                        self.producer_id_initialized = true;
+                        debug!(
+                            "Obtained producer_id={}, epoch={} (attempt {})",
+                            resp.producer_id,
+                            resp.producer_epoch,
+                            attempt + 1
+                        );
+                        break;
+                    }
+                    Ok(resp) => {
+                        let code = KafkaErrorCode::from_i16(resp.error_code);
+                        let err = KafkaError::ProduceError(code);
+                        let retryable = code.is_retriable();
+                        warn!(
+                            "InitProducerId failed with {} (attempt {})",
+                            err,
+                            attempt + 1
+                        );
+                        init_error = Some(err);
+                        if !retryable || attempt + 1 >= self.config.retries.max(1) {
+                            break;
                         }
                     }
-                    return Err(err);
-                }
-                Err(e) => {
-                    warn!("Failed to init producer id: {}", e);
-                    for (_, entry) in buffer {
-                        for tx in entry.pending {
-                            let _ = tx.send(Err(KafkaError::ConnectionClosed));
+                    Err(e) => {
+                        warn!(
+                            "Failed to init producer id (attempt {}): {}",
+                            attempt + 1,
+                            e
+                        );
+                        let retryable = match &e {
+                            KafkaError::Io(_) | KafkaError::ConnectionClosed => true,
+                            KafkaError::ProduceError(code) => code.is_retriable(),
+                            _ => false,
+                        };
+                        init_error = Some(e);
+                        if !retryable || attempt + 1 >= self.config.retries.max(1) {
+                            break;
                         }
                     }
-                    return Err(e);
                 }
+                tokio::time::sleep(backoff).await;
+                backoff = backoff.mul_f32(2.0).min(Duration::from_secs(10));
+            }
+
+            if !self.producer_id_initialized {
+                let err =
+                    init_error.unwrap_or(KafkaError::ProduceError(KafkaErrorCode::from_i16(-1)));
+                for (_, entry) in buffer {
+                    for tx in entry.pending {
+                        let _ = tx.send(Err(err.clone()));
+                    }
+                }
+                return Err(err);
             }
         }
 
@@ -561,8 +600,12 @@ impl ProducerState {
         for (result, chunk) in results.into_iter().zip(chunks) {
             match result {
                 Ok(metadata) => {
-                    for tx in chunk.pending {
-                        let _ = tx.send(Ok(metadata.clone()));
+                    for (idx, tx) in chunk.pending.into_iter().enumerate() {
+                        let per_record_meta = RecordMetadata {
+                            offset: metadata.offset + idx as i64,
+                            ..metadata.clone()
+                        };
+                        let _ = tx.send(Ok(per_record_meta));
                     }
                 }
                 Err(KafkaError::ProduceError(code))
@@ -640,8 +683,12 @@ impl ProducerState {
             for (result, chunk) in results.into_iter().zip(batch) {
                 match result {
                     Ok(metadata) => {
-                        for tx in chunk.pending {
-                            let _ = tx.send(Ok(metadata.clone()));
+                        for (idx, tx) in chunk.pending.into_iter().enumerate() {
+                            let per_record_meta = RecordMetadata {
+                                offset: metadata.offset + idx as i64,
+                                ..metadata.clone()
+                            };
+                            let _ = tx.send(Ok(per_record_meta));
                         }
                     }
                     Err(KafkaError::ProduceError(code))

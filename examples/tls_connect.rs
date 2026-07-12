@@ -64,10 +64,8 @@ async fn main() {
     println!("TLS Domain: {}", domain);
 
     // Build TLS config
-    #[allow(deprecated)]
     let tls_config = TlsConfig {
         domain,
-        verify_certificate: true,
         ..Default::default()
     };
 

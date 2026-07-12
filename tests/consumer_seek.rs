@@ -1,9 +1,10 @@
-//! 消费者偏移量 Seek 测试
+//! Consumer offset seek test
 //!
-//! 验证消费者可以手动 Seek 到指定偏移量，重新消费历史消息。
-//! 需要 3-broker 集群（consumer group 需要 coordinator）。
+//! Verifies that a consumer can manually seek to a specific offset and
+//! re-consume historical messages. Requires a 3-broker cluster (consumer
+//! groups need a coordinator).
 //!
-//! 单独运行:
+//! Run individually:
 //!   cargo test --test consumer_seek --features integration_tests -- --nocapture
 
 #![cfg(feature = "integration_tests")]
@@ -13,6 +14,7 @@ mod common;
 use common::build_test_client;
 use common::compose;
 use kafka_client::{AutoOffsetReset, ConsumerConfig};
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -25,8 +27,11 @@ async fn test_consumer_seek_to_earliest() {
     setup().await;
     let client = build_test_client().await;
 
-    common::create_topic(&client, "tc-seek", 2).await;
-    common::produce_messages(&client, "tc-seek", 10).await;
+    // Use a unique topic name per test run so that repeated executions or
+    // leftover broker state do not pollute the assertion set.
+    let topic = format!("tc-seek-{}", std::process::id());
+    common::create_topic(&client, &topic, 2).await;
+    common::produce_messages(&client, &topic, 10).await;
 
     // Give metadata time to settle before consumer starts
     client.refresh_metadata().await.unwrap();
@@ -42,7 +47,7 @@ async fn test_consumer_seek_to_earliest() {
     );
 
     consumer
-        .subscribe(vec!["tc-seek".to_string()])
+        .subscribe(vec![topic.clone()])
         .await
         .unwrap();
 
@@ -96,19 +101,20 @@ async fn test_consumer_seek_to_earliest() {
         println!("  After fast-forward: got {} messages", empty.len());
     }
 
-    // Seek 各分区到 offset=0
+    // Seek every assigned partition to offset 0.
     let assignment = consumer.group().assignment().await;
-    for (topic, partitions) in &assignment {
+    for (t, partitions) in &assignment {
         for &p in partitions {
-            consumer.offsets().set(topic, p, 0).await;
-            println!("  Seeked {}/{} to offset 0", topic, p);
+            consumer.offsets().set(t, p, 0).await;
+            println!("  Seeked {}/{} to offset 0", t, p);
         }
     }
 
-    // 重新消费 - 应获取全部 10 条消息
+    // Re-consume. We should observe all 10 produced messages (duplicates are
+    // acceptable because records may already be buffered before the seek).
     let mut all = Vec::new();
     let consume_deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while all.len() < 10 && std::time::Instant::now() < consume_deadline {
+    while all.len() < 20 && std::time::Instant::now() < consume_deadline {
         let records = consumer
             .poll_timeout(Duration::from_millis(3000))
             .await
@@ -121,18 +127,22 @@ async fn test_consumer_seek_to_earliest() {
     }
 
     println!("  Consumed {} messages after seek (expected 10)", all.len());
-    assert!(
-        all.len() >= 10,
-        "Expected at least 10 messages after seek, got {}",
-        all.len()
-    );
-
-    let mut values: Vec<_> = all
+    // Fetching may return duplicates across partition boundaries or when
+    // records were already buffered before the seek. The contract we assert
+    // here is that every produced message is observable after seeking to
+    // the earliest offset.
+    let values: HashSet<_> = all
         .iter()
         .map(|r| String::from_utf8_lossy(&r.value).to_string())
         .collect();
-    values.sort();
-    println!("  Messages after seek (sorted): {:?}", values);
+    println!("  Unique messages after seek: {:?}", values);
+    assert!(
+        values.len() >= 10,
+        "Expected at least 10 unique messages after seek, got {} unique from {} total: {:?}",
+        values.len(),
+        all.len(),
+        values
+    );
     for i in 0..10 {
         let expected = format!("msg-{}", i);
         assert!(

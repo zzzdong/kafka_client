@@ -174,7 +174,6 @@ let client = Client::builder(vec![addr])
 ```rust
 let tls = TlsConfig {
     domain: "kafka.example.com".into(),
-    verify_certificate: true,
     ..Default::default()
 };
 

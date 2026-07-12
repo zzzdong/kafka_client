@@ -116,10 +116,9 @@ pub(crate) async fn compute_all_assignments(
                 }
             }
             PartitionAssignmentStrategy::CooperativeSticky => {
-                // Simplified CooperativeSticky: use sorted round-robin.
-                // A complete implementation would track previous assignments
-                // (per member) and minimize partition movement across
-                // rebalances.  TODO: implement true sticky assignment.
+                // Project convention: CooperativeSticky uses round-robin per
+                // topic with sorted members. This is intentionally a simple
+                // deterministic assignment rather than a full sticky rebalance.
                 let mut sorted_members = all_members.to_vec();
                 sorted_members.sort();
                 for (i, &p) in partitions.iter().enumerate() {

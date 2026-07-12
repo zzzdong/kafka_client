@@ -6,25 +6,25 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
-/// TCP 网络流
+/// TCP network stream.
 pub struct TcpNetworkStream {
     inner: TcpStream,
 }
 
 impl TcpNetworkStream {
-    /// 建立 TCP 连接
+    /// Establish a plain TCP connection to the given address.
     pub async fn connect(addr: SocketAddr) -> io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
         Ok(Self { inner: stream })
     }
 
-    /// 从现有流创建（用于测试）
+    /// Create a stream from an existing `TcpStream` (mainly for tests).
     pub fn from_stream(stream: TcpStream) -> Self {
         Self { inner: stream }
     }
 }
 
-// 实现 AsyncRead
+// AsyncRead implementation
 impl AsyncRead for TcpNetworkStream {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -35,7 +35,7 @@ impl AsyncRead for TcpNetworkStream {
     }
 }
 
-// 实现 AsyncWrite
+// AsyncWrite implementation
 impl AsyncWrite for TcpNetworkStream {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -54,7 +54,7 @@ impl AsyncWrite for TcpNetworkStream {
     }
 }
 
-// 实现 NetworkStream
+// NetworkStream implementation
 impl NetworkStream for TcpNetworkStream {
     fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.inner.peer_addr()

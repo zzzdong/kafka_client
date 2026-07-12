@@ -145,7 +145,6 @@ use kafka_client::{Client, TlsConfig};
 
 let tls = TlsConfig {
     domain: "kafka.example.com".to_string(),
-    verify_certificate: true,
     ..Default::default()
 };
 

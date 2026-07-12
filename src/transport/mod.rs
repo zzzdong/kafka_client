@@ -8,30 +8,31 @@ pub mod tls;
 pub use tcp::TcpNetworkStream;
 pub use tls::{TlsConfig, TlsNetworkStream};
 
-/// 网络流抽象 trait
+/// Abstract network stream trait.
 ///
-/// 统一 TCP 和 TLS 连接，使上层无需关心底层加密细节
+/// Unifies TCP and TLS connections so that upper layers do not need to know
+/// whether the underlying transport is encrypted.
 pub trait NetworkStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
-    /// 获取对端地址
+    /// Return the remote peer address.
     fn peer_addr(&self) -> io::Result<SocketAddr>;
 
-    /// 获取本地地址
+    /// Return the local address.
     fn local_addr(&self) -> io::Result<SocketAddr>;
 
-    /// 是否使用 TLS 加密
+    /// Return `true` if the stream is encrypted with TLS.
     fn is_secure(&self) -> bool;
 }
 
-/// 安全协议类型
+/// Security protocol type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityProtocol {
-    /// 明文 TCP
+    /// Plaintext TCP.
     Plaintext,
-    /// TLS/SSL
+    /// TLS/SSL.
     Ssl(TlsConfig),
-    /// SASL + 明文（需 SASL 认证）
+    /// SASL over plaintext (requires SASL authentication).
     SaslPlaintext,
-    /// SASL + TLS
+    /// SASL over TLS.
     SaslSsl(TlsConfig),
 }
 
@@ -51,11 +52,11 @@ impl SecurityProtocol {
     }
 }
 
-/// 传输层连接器
+/// Transport layer connector.
 pub struct TransportConnector;
 
 impl TransportConnector {
-    /// 建立网络连接
+    /// Establish a network connection with the given security protocol.
     pub async fn connect(
         addr: SocketAddr,
         protocol: &SecurityProtocol,

@@ -1,7 +1,7 @@
 use std::fmt;
 use thiserror::Error;
 
-// 重新导出 protocol 模块的错误类型
+// Re-export error types from the protocol module.
 pub use kafka_client_protocol::{KafkaErrorCode, ProtocolError};
 
 /// Error connecting to a specific broker.
@@ -177,6 +177,9 @@ pub enum SaslError {
 
     #[error("Invalid state")]
     InvalidState,
+
+    #[error("Invalid key: {0}")]
+    InvalidKey(String),
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),

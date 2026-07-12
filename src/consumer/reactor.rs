@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::interval;
 use tracing::{debug, warn};
 
@@ -106,6 +106,7 @@ pub(crate) fn spawn_consumer_task(
             shutdown: false,
             last_metadata_refresh: None,
             metadata_refresh_interval: Duration::from_secs(1),
+            pending_subscribe_reply: None,
         };
         orch.run().await;
     });
@@ -249,6 +250,9 @@ struct ConsumerOrchestrator {
     last_metadata_refresh: Option<std::time::Instant>,
     /// Minimum interval between metadata refreshes.
     metadata_refresh_interval: Duration,
+    /// Pending reply for a group-mode `subscribe()` call. Resolved when the
+    /// group receives its first partition assignment and offsets are initialized.
+    pending_subscribe_reply: Option<oneshot::Sender<Result<()>>>,
 }
 
 impl ConsumerOrchestrator {
@@ -293,11 +297,15 @@ impl ConsumerOrchestrator {
         }
 
         // --- Clean shutdown ---
-        // 1. Send leave group if active
+        // 1. Resolve any pending subscribe() so callers don't hang
+        if let Some(reply) = self.pending_subscribe_reply.take() {
+            let _ = reply.send(Err(KafkaError::ConnectionClosed));
+        }
+        // 2. Send leave group if active
         if self.group_active {
             let _ = self.send_leave_group().await;
         }
-        // 2. Shutdown GroupCoordinator
+        // 3. Shutdown GroupCoordinator
         if let Some(gc) = self.group_coordinator.take() {
             gc.shutdown().await;
         }
@@ -323,15 +331,19 @@ impl ConsumerOrchestrator {
                         }
                     }
                     ConsumerMode::Group => {
+                        // If a previous subscribe() is still awaiting its first
+                        // assignment, resolve it with an error so it doesn't hang.
+                        if let Some(old_reply) = self.pending_subscribe_reply.take() {
+                            let _ = old_reply.send(Err(KafkaError::ConnectionClosed));
+                        }
                         if let Some(ref gc) = self.group_coordinator {
                             let _ = gc.cmd_tx.send(GroupCommand::Join { topics });
                         }
-                        // Resolve immediately — group join happens asynchronously.
-                        // The caller can wait for partition assignment via
-                        // group().assignment() or just start polling.
-                        if let Some(reply) = reply {
-                            let _ = reply.send(Ok(()));
-                        }
+                        // Wait for the first partition assignment before
+                        // resolving subscribe(). This satisfies the public API
+                        // contract that subscribe() blocks until assignment and
+                        // offset initialization are complete.
+                        self.pending_subscribe_reply = reply;
                     }
                 }
             }
@@ -477,8 +489,14 @@ impl ConsumerOrchestrator {
                 self.group_generation_id = generation_id;
 
                 // Initialize offsets for newly assigned partitions
-                if let Err(e) = self.init_offsets_for_group().await {
+                let init_result = self.init_offsets_for_group().await;
+                if let Err(ref e) = init_result {
                     warn!("Failed to init offsets for group assignment: {}", e);
+                }
+                // Resolve any pending subscribe() reply now that assignment and
+                // offset initialization are complete.
+                if let Some(reply) = self.pending_subscribe_reply.take() {
+                    let _ = reply.send(init_result);
                 }
                 // Start fetching only if consumer is ready (poll/into_stream called).
                 // Otherwise wait for StartPolling to avoid buffering records
@@ -513,6 +531,9 @@ impl ConsumerOrchestrator {
                 self.assigned_partitions.clear();
                 self.next_in_line_records.clear();
                 self.pending_fetches.clear();
+                if let Some(reply) = self.pending_subscribe_reply.take() {
+                    let _ = reply.send(Err(e.clone()));
+                }
             }
         }
     }

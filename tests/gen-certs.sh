@@ -233,16 +233,8 @@ echo "Generated files in ${CERTS_DIR}:"
 ls -la "${CERTS_DIR}/"
 echo ""
 echo "=== Client TlsConfig (Rust test) ==="
-echo "  // Without certificate verification (self-signed):"
+echo "  // Certificate verification is always enabled."
 echo '  TlsConfig {'
-echo '    verify_certificate: false,'
-echo '    domain: "localhost".to_string(),'
-echo '    ..Default::default()'
-echo '  }'
-echo ""
-echo "  // With CA certificate verification:"
-echo '  TlsConfig {'
-echo '    verify_certificate: true,'
 echo '    domain: "localhost".to_string(),'
 echo '    ca_cert_path: Some("tests/fixtures/tls/ca-cert.pem".to_string()),'
 echo '    ..Default::default()'

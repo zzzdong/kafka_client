@@ -52,16 +52,13 @@ fn tls_fixtures_dir() -> &'static str {
 /// The broker requires `ssl.client.auth=required`, so every connection
 /// must present a client certificate signed by the test CA.
 ///
-/// Uses verify_certificate=true since the CA cert is available from
-/// gen-certs.sh.  NoCertificateVerification (dangerous mode) is
-/// incompatible with the Kafka broker's TLS stack in rustls 0.23
-/// (causes AlertReceived(HandshakeFailure)), so we always verify.
-#[allow(deprecated)]
+/// Certificate verification is always enabled; NoCertificateVerification
+/// (dangerous mode) is incompatible with the Kafka broker's TLS stack in
+/// rustls 0.23 (causes AlertReceived(HandshakeFailure)).
 fn base_tls_config() -> TlsConfig {
     let dir = tls_fixtures_dir();
     TlsConfig {
         domain: "localhost".to_string(),
-        verify_certificate: true,
         ca_cert_path: Some(format!("{}/ca-cert.pem", dir)),
         client_cert_path: Some(format!("{}/broker-cert.pem", dir)),
         client_key_path: Some(format!("{}/broker-key.pem", dir)),

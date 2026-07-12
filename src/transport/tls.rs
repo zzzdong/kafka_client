@@ -10,61 +10,43 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::{self, ClientConfig};
 
-/// TLS 配置
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// TLS configuration.
+///
+/// Certificate verification is always enabled. The `NoCertificateVerification`
+/// path in rustls 0.23 is incompatible with the Kafka TLS stack (it causes an
+/// `AlertReceived` error), so this library does not provide a way to skip
+/// certificate verification.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TlsConfig {
-    /// 是否验证证书（生产环境应为 true）
-    ///
-    /// **此字段当前不生效。** Rustls 0.23 中 `NoCertificateVerification`
-    /// 路径与 Kafka TLS 栈不兼容（会导致 `AlertReceived`），因此实际
-    /// 始终使用标准证书验证路径。详见 `build_config` 注释。
-    #[deprecated(
-        since = "0.4.0",
-        note = "此字段当前不生效——rustls 0.23 的 NoCertificateVerification \
-                路径与 Kafka TLS 栈不兼容。证书验证始终启用。如果确实需要 \
-                跳过验证，请改用 `dangerous_config` 等替代方案。"
-    )]
-    pub verify_certificate: bool,
-    /// 服务器域名（用于 SNI 和证书验证）
+    /// Server domain name used for SNI and certificate verification.
     pub domain: String,
-    /// CA 证书文件路径（可选，不设置则使用系统证书）
+    /// Path to a CA certificate file. If not set, the system certificate store
+    /// is used.
     pub ca_cert_path: Option<String>,
-    /// 客户端证书路径（mTLS 时使用）
+    /// Path to the client certificate (used for mTLS).
     pub client_cert_path: Option<String>,
-    /// 客户端私钥路径（mTLS 时使用）
+    /// Path to the client private key (used for mTLS).
     pub client_key_path: Option<String>,
 }
 
-#[allow(deprecated)]
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            verify_certificate: true,
-            domain: String::new(),
-            ca_cert_path: None,
-            client_cert_path: None,
-            client_key_path: None,
-        }
-    }
-}
-
-/// TLS 网络流
+/// TLS network stream.
 pub struct TlsNetworkStream {
     inner: tokio_rustls::client::TlsStream<TcpStream>,
 }
 
 impl TlsNetworkStream {
-    /// 建立 TLS 连接（包含 TCP 连接 + TLS 握手）
+    /// Establish a TLS connection (TCP connection + TLS handshake).
     pub async fn connect(addr: SocketAddr, config: TlsConfig) -> io::Result<Self> {
         let tcp = TcpStream::connect(addr).await?;
         Self::from_stream(tcp, config).await
     }
 
-    /// 在已有 TCP 流上执行 TLS 握手
+    /// Perform the TLS handshake over an existing TCP stream.
     ///
-    /// 将 TCP 连接和 TLS 握手分离为两个步骤，方便上层分别处理两类错误：
-    /// - TCP 连接失败（地址不可达、端口未监听等）
-    /// - TLS 握手失败（证书错误、域名不匹配等）
+    /// Splitting TCP connection and TLS handshake into two separate steps makes
+    /// it easier for callers to distinguish between:
+    /// - TCP-level failures (unreachable address, port not listening, etc.)
+    /// - TLS-level failures (certificate errors, hostname mismatch, etc.)
     pub async fn from_stream(tcp: TcpStream, config: TlsConfig) -> io::Result<Self> {
         let domain = config.domain.clone();
         let tls_config = Self::build_config(&config)?;
@@ -77,14 +59,11 @@ impl TlsNetworkStream {
         Ok(Self { inner: tls_stream })
     }
 
-    /// 构建 TLS 客户端配置
+    /// Build a TLS client configuration.
     ///
-    /// NOTE: `verify_certificate=false` (NoCertificateVerification) is
-    /// incompatible with Kafka's TLS stack in rustls 0.23 because the
-    /// `dangerous().with_custom_certificate_verifier()` builder path
-    /// causes the broker to reject the handshake (AlertReceived).
-    /// Therefore we always use the standard builder path regardless of
-    /// the `verify_certificate` setting.
+    /// Always uses the standard certificate verification path. The
+    /// `NoCertificateVerification` path in rustls 0.23 is incompatible with
+    /// the Kafka TLS stack (it causes an `AlertReceived` error).
     fn build_config(config: &TlsConfig) -> io::Result<Arc<ClientConfig>> {
         let mut root_certs = rustls::RootCertStore::empty();
 
@@ -134,7 +113,7 @@ impl TlsNetworkStream {
     }
 }
 
-// 实现 AsyncRead
+// AsyncRead implementation
 impl AsyncRead for TlsNetworkStream {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -145,7 +124,7 @@ impl AsyncRead for TlsNetworkStream {
     }
 }
 
-// 实现 AsyncWrite
+// AsyncWrite implementation
 impl AsyncWrite for TlsNetworkStream {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -164,7 +143,7 @@ impl AsyncWrite for TlsNetworkStream {
     }
 }
 
-// 实现 NetworkStream
+// NetworkStream implementation
 impl NetworkStream for TlsNetworkStream {
     fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.inner.get_ref().0.peer_addr()

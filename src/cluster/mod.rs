@@ -334,8 +334,7 @@ impl ClusterClient {
         Ok(())
     }
 
-    /// Fetch metadata for specific topics
-    /// 预留功能，用于特定主题的元数据刷新
+    /// Fetch metadata for the given topics.
     #[allow(dead_code)]
     pub(crate) async fn fetch_metadata_for_topics(&self, topics: &[String]) -> Result<()> {
         let request_topics: Vec<protocol::MetadataRequestTopic> = topics

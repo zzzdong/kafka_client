@@ -6,8 +6,9 @@ use hmac::{Hmac, KeyInit, Mac};
 use pbkdf2::pbkdf2_hmac;
 use rand::Rng;
 use sha2::{Digest, Sha256, Sha512};
+use subtle::ConstantTimeEq;
 
-/// SCRAM 状态
+/// SCRAM state.
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum ScramState {
     Initial,
@@ -16,9 +17,9 @@ enum ScramState {
     Complete,
 }
 
-/// SCRAM 机制实现（同步版本，用于连接认证）
-/// SCRAM mechanism (synchronous version)
-/// Used by handshake.rs for SASL authentication
+/// SCRAM mechanism implementation (synchronous version).
+///
+/// Used by `handshake.rs` for SASL authentication.
 pub struct ScramMechanism {
     mechanism_type: SaslMechanismType,
     state: ScramState,
@@ -64,7 +65,7 @@ impl ScramMechanism {
         general_purpose::STANDARD.encode(bytes)
     }
 
-    /// 获取机制名称
+    /// Return the SASL mechanism name.
     #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self.mechanism_type {
@@ -74,25 +75,25 @@ impl ScramMechanism {
         }
     }
 
-    /// 是否为 client-first 机制
+    /// Return `true` if this mechanism sends the first client message.
     #[allow(dead_code)]
     pub fn is_client_first(&self) -> bool {
         true
     }
 
-    /// 认证是否完成
+    /// Return `true` if the authentication exchange has completed.
     #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         matches!(self.state, ScramState::Complete)
     }
 
-    /// 认证是否成功
+    /// Return `true` if the authentication exchange completed successfully.
     #[allow(dead_code)]
     pub fn is_success(&self) -> bool {
         self.success
     }
 
-    /// 重置状态（用于重试）
+    /// Reset the mechanism state so it can be reused for a retry.
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = ScramState::Initial;
@@ -105,19 +106,19 @@ impl ScramMechanism {
         self.salted_password = None;
     }
 
-    /// 生成初始响应（client-first）
+    /// Generate the client-first message.
     pub fn client_first(&mut self, credentials: &SaslCredentials) -> Result<Bytes, SaslError> {
         self.username = credentials.username().to_string();
         self.password = credentials.password().to_string();
 
-        // 格式: n,,n=username,r=client_nonce
+        // Format: n,,n=username,r=client_nonce
         let msg = format!("n,,n={},r={}", self.username, self.client_nonce);
         self.state = ScramState::WaitingServerFirst;
 
         Ok(Bytes::from(msg))
     }
 
-    /// 处理服务器第一轮挑战，生成 client-final
+    /// Process the server-first challenge and generate the client-final message.
     pub fn client_final(&mut self, server_first: &[u8]) -> Result<Bytes, SaslError> {
         if self.state != ScramState::WaitingServerFirst {
             return Err(SaslError::InvalidState);
@@ -131,7 +132,7 @@ impl ScramMechanism {
         Ok(Bytes::from(client_final))
     }
 
-    /// 验证服务器最终响应
+    /// Verify the server-final message.
     pub fn verify_server_final(&mut self, server_final: &[u8]) -> Result<(), SaslError> {
         if self.state != ScramState::WaitingServerFinal {
             return Err(SaslError::InvalidState);
@@ -151,17 +152,19 @@ impl ScramMechanism {
         }
     }
 
-    fn hmac(&self, key: &[u8], data: &[u8]) -> Vec<u8> {
+    fn hmac(&self, key: &[u8], data: &[u8]) -> Result<Vec<u8>, SaslError> {
         match self.mechanism_type {
             SaslMechanismType::ScramSha256 => {
-                let mut mac = Hmac::<Sha256>::new_from_slice(key).unwrap();
+                let mut mac = Hmac::<Sha256>::new_from_slice(key)
+                    .map_err(|_| SaslError::InvalidKey("HMAC-SHA-256 key invalid".to_string()))?;
                 mac.update(data);
-                mac.finalize().into_bytes().to_vec()
+                Ok(mac.finalize().into_bytes().to_vec())
             }
             SaslMechanismType::ScramSha512 => {
-                let mut mac = Hmac::<Sha512>::new_from_slice(key).unwrap();
+                let mut mac = Hmac::<Sha512>::new_from_slice(key)
+                    .map_err(|_| SaslError::InvalidKey("HMAC-SHA-512 key invalid".to_string()))?;
                 mac.update(data);
-                mac.finalize().into_bytes().to_vec()
+                Ok(mac.finalize().into_bytes().to_vec())
             }
             _ => unreachable!(),
         }
@@ -253,7 +256,7 @@ impl ScramMechanism {
         self.salted_password = Some(salted_password.clone());
 
         // ClientKey = HMAC(SaltedPassword, "Client Key")
-        let client_key = self.hmac(&salted_password, b"Client Key");
+        let client_key = self.hmac(&salted_password, b"Client Key")?;
 
         // StoredKey = H(ClientKey)
         let stored_key = self.hash(&client_key);
@@ -280,7 +283,7 @@ impl ScramMechanism {
         self.auth_message = Some(auth_message.clone());
 
         // ClientSignature = HMAC(StoredKey, AuthMessage)
-        let client_signature = self.hmac(&stored_key, auth_message.as_bytes());
+        let client_signature = self.hmac(&stored_key, auth_message.as_bytes())?;
 
         // ClientProof = ClientKey XOR ClientSignature
         let client_proof: Vec<u8> = client_key
@@ -309,13 +312,15 @@ impl ScramMechanism {
         let auth_message = self.auth_message.as_ref().ok_or(SaslError::InvalidState)?;
 
         // ServerKey = HMAC(SaltedPassword, "Server Key")
-        let server_key = self.hmac(salted_password, b"Server Key");
+        let server_key = self.hmac(salted_password, b"Server Key")?;
 
         // ServerSignature = HMAC(ServerKey, AuthMessage)
-        let expected_signature = self.hmac(&server_key, auth_message.as_bytes());
-        let expected_signature_b64 = general_purpose::STANDARD.encode(&expected_signature);
+        let expected_signature = self.hmac(&server_key, auth_message.as_bytes())?;
 
-        if signature != expected_signature_b64 {
+        let signature_bytes = general_purpose::STANDARD
+            .decode(signature)
+            .map_err(|e| SaslError::InvalidChallenge(format!("Invalid server signature: {}", e)))?;
+        if !bool::from(signature_bytes.ct_eq(&expected_signature)) {
             return Err(SaslError::AuthenticationFailed(
                 "Server signature verification failed".to_string(),
             ));
@@ -388,7 +393,9 @@ mod tests {
     #[test]
     fn test_hmac_sha256() {
         let m = ScramMechanism::new_sha256();
-        let mac = m.hmac(b"key", b"The quick brown fox jumps over the lazy dog");
+        let mac = m
+            .hmac(b"key", b"The quick brown fox jumps over the lazy dog")
+            .unwrap();
         assert_eq!(
             hex::encode(&mac),
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
@@ -472,11 +479,15 @@ mod tests {
         server.client_final(sf.as_bytes()).unwrap();
 
         // Both sides should compute the same salted_password → same ServerKey → same signature
-        let server_key = server.hmac(server.salted_password.as_ref().unwrap(), b"Server Key");
-        let server_sig = server.hmac(
-            &server_key,
-            server.auth_message.as_ref().unwrap().as_bytes(),
-        );
+        let server_key = server
+            .hmac(server.salted_password.as_ref().unwrap(), b"Server Key")
+            .unwrap();
+        let server_sig = server
+            .hmac(
+                &server_key,
+                server.auth_message.as_ref().unwrap().as_bytes(),
+            )
+            .unwrap();
         let srv_final = format!("v={}", general_purpose::STANDARD.encode(&server_sig));
 
         // 4. Client verifies

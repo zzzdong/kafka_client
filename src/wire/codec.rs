@@ -85,7 +85,14 @@ impl Encoder<KafkaFrame> for KafkaCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: KafkaFrame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.put_i32(item.data.len() as i32);
+        let len = item.data.len();
+        if len > i32::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Frame too large to encode",
+            ));
+        }
+        dst.put_i32(len as i32);
         dst.extend_from_slice(&item.data);
         Ok(())
     }
