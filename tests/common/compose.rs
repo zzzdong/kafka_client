@@ -102,6 +102,18 @@ pub mod clusters {
         host_port: 9093,
         is_secure: true,
     };
+
+    pub const KERBEROS: Cluster = Cluster {
+        name: "kerberos",
+        compose_file: "docker-compose.kerberos.yml",
+        env_var: "KAFKA_BOOTSTRAP_KERBEROS",
+        default_bootstrap: "127.0.0.1:9096",
+        default_size: 1,
+        containers: &["kdc-kerberos", "kafka-kerberos-broker"],
+        internal_port: 9096,
+        host_port: 9096,
+        is_secure: true,
+    };
 }
 
 // ============================================================================

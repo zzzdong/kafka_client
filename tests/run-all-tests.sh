@@ -40,6 +40,7 @@ THREE_BROKER_TESTS=(
 
 SASL_TESTS=("auth")
 TLS_TESTS=("tls")
+KERBEROS_TESTS=("kerberos" "kerberos_service_ticket")
 
 # 如果未设置 KAFKA_BOOTSTRAP，设为默认的 3-broker 地址
 DEFAULT_BOOTSTRAP="127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097"
@@ -69,6 +70,9 @@ echo "=== Stopping any leftover Kafka test containers ==="
 ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
 ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
 ${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
+# Clean up kerberos keytabs before starting fresh
+rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
+${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
 
 echo "=== Starting 3-broker cluster (docker-compose.yml) ==="
 echo "    CLI: ${CLI}, Image: ${KAFKA_IMAGE}"
@@ -80,13 +84,18 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.sasl.yml up -d
 echo "=== Starting TLS broker (docker-compose.tls.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.tls.yml up -d
 
+echo "=== Starting KDC + Kerberos Kafka (docker-compose.kerberos.yml) ==="
+KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos.yml up -d --build
+# KDC 初始化后生成 keytabs, Kafka 通过 depends_on:condition:service_healthy 自动启动
+
 # ---------------------------------------------------------------------------
 # 2. Wait for brokers to be ready
 # ---------------------------------------------------------------------------
 wait_broker() {
     local container="$1" internal_port="$2" host_port="$3"
+    local max_retries="${4:-60}"
     echo -n "  ${container} (port ${host_port})... "
-    for i in $(seq 1 60); do
+    for i in $(seq 1 "${max_retries}"); do
         if ${CLI} exec "${container}" \
             kafka-broker-api-versions.sh \
             --bootstrap-server "127.0.0.1:${internal_port}" 2>/dev/null; then
@@ -138,6 +147,11 @@ wait_broker "kafka-tls-broker" 9093 9093 || {
     echo "WARNING: TLS broker not ready — TLS tests may be skipped"
 }
 
+echo "=== Waiting for Kerberos Kafka broker to be ready ==="
+wait_broker "kafka-kerberos-broker" 9096 9096 120 || {
+    echo "WARNING: Kerberos broker not ready — Kerberos tests may be skipped"
+}
+
 # ---------------------------------------------------------------------------
 # 3. Run all integration tests
 # ---------------------------------------------------------------------------
@@ -153,9 +167,13 @@ run_tests() {
     fi
     echo "  [RUN] ${test_name}"
     KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP}" \
-    KAFKA_BOOTSTRAP_SASL="127.0.0.1:9094" \
-    KAFKA_BOOTSTRAP_TLS="127.0.0.1:9093" \
-    KAFKA_CLUSTER_SIZE="3" \
+    KAFKA_BOOTSTRAP_SASL="${KAFKA_BOOTSTRAP_SASL:-127.0.0.1:9094}" \
+    KAFKA_BOOTSTRAP_TLS="${KAFKA_BOOTSTRAP_TLS:-127.0.0.1:9093}" \
+    KAFKA_BOOTSTRAP_KERBEROS="${KAFKA_BOOTSTRAP_KERBEROS:-127.0.0.1:9096}" \
+    KERBEROS_KEYTAB="${KERBEROS_KEYTAB:-${SCRIPT_DIR}/fixtures/kerberos/keytabs/client.keytab}" \
+    KERBEROS_KDC_HOST="${KERBEROS_KDC_HOST:-localhost}" \
+    KERBEROS_KDC_PORT="${KERBEROS_KDC_PORT:-8888}" \
+    KAFKA_CLUSTER_SIZE="${KAFKA_CLUSTER_SIZE:-3}" \
     SASL_MECHANISM="${SASL_MECHANISM:-PLAIN}" \
     SASL_USERNAME="${SASL_USERNAME:-admin}" \
     SASL_PASSWORD="${SASL_PASSWORD:-admin-secret}" \
@@ -183,6 +201,17 @@ for test in "${TLS_TESTS[@]}"; do
     run_tests "${test}" || TEST_EXIT_CODE=$?
 done
 
+echo ""
+echo "--- Kerberos tests ---"
+for test in "${KERBEROS_TESTS[@]}"; do
+    # Kerberos 需要额外的环境变量
+    KAFKA_BOOTSTRAP_KERBEROS="127.0.0.1:9096" \
+    KERBEROS_KEYTAB="${SCRIPT_DIR}/fixtures/kerberos/keytabs/client.keytab" \
+    KERBEROS_KDC_HOST="localhost" \
+    KERBEROS_KDC_PORT="8888" \
+    run_tests "${test}" || TEST_EXIT_CODE=$?
+done
+
 # ---------------------------------------------------------------------------
 # 4. Cleanup
 # ---------------------------------------------------------------------------
@@ -193,6 +222,8 @@ if [ -z "${SKIP_CLEANUP:-}" ]; then
     ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
     ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
     ${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
+    rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
+    ${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
 else
     echo "  SKIP_CLEANUP set — leaving clusters running"
 fi

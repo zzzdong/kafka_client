@@ -48,6 +48,7 @@ mod cluster;
 pub mod connection; // Public for advanced users who need low-level access
 mod consumer;
 mod error;
+
 mod producer;
 mod sasl;
 pub mod transport; // Public for advanced users who need low-level access
@@ -56,6 +57,8 @@ mod wire;
 // Public re-exports
 pub use error::{KafkaError, KafkaErrorCode, Result};
 pub use kafka_client_protocol as protocol;
+pub use krb5_gss::gss::GssContext;
+pub use krb5_gss::{KerberosCredentials, KerberosError};
 pub use sasl::{SaslCredentials, SaslMechanismType};
 pub use transport::{SecurityProtocol, TlsConfig};
 
@@ -249,7 +252,12 @@ pub struct ClientBuilder {
     security_protocol: crate::transport::SecurityProtocol,
     client_id: String,
     sasl_credentials: Option<crate::sasl::SaslCredentials>,
+    kerberos_credentials: Option<krb5_gss::KerberosCredentials>,
     metadata_ttl: Duration,
+    kdc_host: Option<String>,
+    kdc_port: u16,
+    /// Kerberos 服务 principal 的主机名 (如 `broker.example.com`)。默认使用 bootstrap IP。
+    broker_hostname: Option<String>,
 }
 
 impl ClientBuilder {
@@ -262,7 +270,11 @@ impl ClientBuilder {
             security_protocol: crate::transport::SecurityProtocol::Plaintext,
             client_id: NAME.to_string(),
             sasl_credentials: None,
+            kerberos_credentials: None,
             metadata_ttl: Duration::from_secs(300),
+            kdc_host: None,
+            kdc_port: 88,
+            broker_hostname: None,
         }
     }
 
@@ -359,6 +371,38 @@ impl ClientBuilder {
         )
     }
 
+    /// Configure SASL/GSSAPI (Kerberos) authentication.
+    ///
+    /// Requires the `kerberos` feature. Example:
+    /// ```ignore
+    /// use kafka_client::KerberosCredentials;
+    /// let client = Client::builder(vec![addr])
+    ///     .with_kerberos(KerberosCredentials::new("client@EXAMPLE.COM").with_keytab("/path/kafka.keytab"))
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn with_kerberos(mut self, credentials: krb5_gss::KerberosCredentials) -> Self {
+        self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
+        self.kerberos_credentials = Some(credentials);
+        self
+    }
+
+    /// 设置 KDC 地址。仅当 kerberos 认证启用时生效, 默认端口 88。
+    ///
+    /// 若不设置, KDC 地址将从 realm 域名推断 (未实现) 或回退到 `localhost:88`。
+    pub fn with_kdc(mut self, host: impl Into<String>, port: u16) -> Self {
+        self.kdc_host = Some(host.into());
+        self.kdc_port = port;
+        self
+    }
+
+    /// 设置 broker 主机名 (用于 Kerberos 服务 principal `service/hostname`)。
+    /// 仅当 kerberos 认证启用时生效。
+    pub fn with_broker_hostname(mut self, host: impl Into<String>) -> Self {
+        self.broker_hostname = Some(host.into());
+        self
+    }
+
     // --- Other settings ---
 
     /// Set a custom client ID (sent to Kafka brokers).
@@ -405,6 +449,10 @@ impl ClientBuilder {
             client_id: self.client_id,
             metadata_ttl: self.metadata_ttl,
             sasl: self.sasl_credentials,
+            kerberos: self.kerberos_credentials,
+            kdc_host: self.kdc_host,
+            kdc_port: self.kdc_port,
+            broker_hostname: self.broker_hostname,
         };
 
         let cluster = ClusterClient::connect(config).await?;

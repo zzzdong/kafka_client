@@ -16,6 +16,7 @@ use crate::error::{KafkaError, Result};
 use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{ApiVersionsRequest, MetadataResponseBroker};
+use krb5_gss::KerberosCredentials;
 
 /// Broker connection entry.
 ///
@@ -74,6 +75,10 @@ pub(crate) struct BrokerManager {
     client_name: String,
     client_version: String,
     sasl: Option<SaslCredentials>,
+    kerberos: Option<KerberosCredentials>,
+    kdc_host: Option<String>,
+    kdc_port: u16,
+    broker_hostname: Option<String>,
     brokers: DashMap<i32, BrokerEntry>,
     addr_to_node: DashMap<SocketAddr, i32>,
     next_unknown_node_id: AtomicI32,
@@ -87,6 +92,7 @@ impl BrokerManager {
         client_name: String,
         client_version: String,
         sasl: Option<SaslCredentials>,
+        kerberos: Option<KerberosCredentials>,
     ) -> Self {
         Self {
             bootstrap_servers,
@@ -95,23 +101,53 @@ impl BrokerManager {
             client_name,
             client_version,
             sasl,
+            kerberos,
+            kdc_host: None,
+            kdc_port: 88,
+            broker_hostname: None,
             brokers: DashMap::new(),
             addr_to_node: DashMap::new(),
             next_unknown_node_id: AtomicI32::new(i32::MIN),
         }
     }
 
-    async fn connect_to_broker(&self, addr: SocketAddr) -> Result<ConnectionHandle> {
+    /// 设置 KDC 地址 (供内部 Builder 传递)。
+    pub(crate) fn with_kdc(mut self, host: Option<String>, port: u16) -> Self {
+        self.kdc_host = host;
+        self.kdc_port = port;
+        self
+    }
+
+    /// 设置 broker 主机名 (Kerberos 服务 principal 用)。
+    pub(crate) fn with_broker_hostname(mut self, host: Option<String>) -> Self {
+        self.broker_hostname = host;
+        self
+    }
+
+    async fn connect_to_broker(
+        &self,
+        addr: SocketAddr,
+        broker_hostname: Option<&str>,
+    ) -> Result<ConnectionHandle> {
         let mut builder = Builder::new(
             addr,
             self.security_protocol.clone(),
             self.client_name.clone(),
             self.client_version.clone(),
         )
-        .with_client_id(self.client_id.clone());
+        .with_client_id(self.client_id.clone())
+        .with_kdc(self.kdc_host.clone().unwrap_or_default(), self.kdc_port);
+
+        if let Some(host) = broker_hostname {
+            builder = builder.with_broker_hostname(host);
+        }
 
         if let Some(ref sasl) = self.sasl {
             builder = builder.with_sasl(sasl.mechanism(), sasl.clone());
+        }
+
+        if let Some(ref krb) = self.kerberos {
+            builder = builder.with_kerberos(krb.clone());
         }
 
         builder.build().await
@@ -122,7 +158,10 @@ impl BrokerManager {
         let addrs: Vec<SocketAddr> = self.bootstrap_servers.clone();
         let mut errors: Vec<crate::error::BrokerConnError> = Vec::new();
         for addr in addrs {
-            match self.connect_to_broker(addr).await {
+            match self
+                .connect_to_broker(addr, self.broker_hostname.as_deref())
+                .await
+            {
                 Ok(conn) => {
                     let node_id = self.next_unknown_node_id.fetch_sub(1, Ordering::SeqCst);
                     self.register_broker(node_id, addr, conn).await;
@@ -178,7 +217,7 @@ impl BrokerManager {
         }
 
         // No existing entry — create a new one
-        let conn = self.connect_to_broker(addr).await?;
+        let conn = self.connect_to_broker(addr, None).await?;
         let node_id = self.next_unknown_node_id.fetch_sub(1, Ordering::SeqCst);
         self.register_broker(node_id, addr, conn).await;
         self.brokers
@@ -198,7 +237,7 @@ impl BrokerManager {
         node_id: i32,
         addr: SocketAddr,
     ) -> Option<ConnectionHandle> {
-        match self.connect_to_broker(addr).await {
+        match self.connect_to_broker(addr, None).await {
             Ok(new_conn) => {
                 if let Some(entry) = self.brokers.get(&node_id) {
                     entry.swap_conn(new_conn);
@@ -245,7 +284,7 @@ impl BrokerManager {
             }
 
             // Try new connection
-            match self.connect_to_broker(addr).await {
+            match self.connect_to_broker(addr, Some(&broker.host)).await {
                 Ok(conn) => {
                     self.register_broker(node_id, addr, conn).await;
                     debug!("Registered/updated broker {} at {}", node_id, addr);
@@ -283,7 +322,7 @@ impl BrokerManager {
             None => return,
         };
 
-        match self.connect_to_broker(addr).await {
+        match self.connect_to_broker(addr, None).await {
             Ok(new_conn) => {
                 if let Some(entry) = self.brokers.get(&node_id) {
                     entry.swap_conn(new_conn);

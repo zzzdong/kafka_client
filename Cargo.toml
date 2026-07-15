@@ -52,6 +52,8 @@ serde_json = { workspace = true }
 
 # 协议
 kafka-client-protocol = { version = "0.2.0", path = "kafka-client-protocol" }
+# Kerberos / SASL GSSAPI
+krb5-gss = { version = "0.1.0-beta.2", path = "krb5-gss" }
 
 # UUID
 uuid = { workspace = true }
@@ -69,7 +71,8 @@ members = [
     "kafka-client-protocol-core",
     "kafka-client-protocol-codegen",
     "kafka-client-protocol-derive",
-    "kafka-client-protocol"
+    "kafka-client-protocol",
+    "krb5-gss"
 ]
 
 [workspace.package]

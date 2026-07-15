@@ -86,6 +86,9 @@ pub enum SaslMechanismType {
     Plain,
     ScramSha256,
     ScramSha512,
+    /// SASL/GSSAPI (Kerberos)。凭证模型为 principal + keytab, 而非 username/password。
+    /// 需启用 feature `kerberos` 才可在连接握手阶段被使用。
+    Gssapi,
 }
 
 impl SaslMechanismType {
@@ -95,6 +98,7 @@ impl SaslMechanismType {
             Self::Plain => "PLAIN",
             Self::ScramSha256 => "SCRAM-SHA-256",
             Self::ScramSha512 => "SCRAM-SHA-512",
+            Self::Gssapi => "GSSAPI",
         }
     }
 }

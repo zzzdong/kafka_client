@@ -361,6 +361,13 @@ pub struct Builder {
     client_version: String,
     client_id: Option<String>,
     sasl_config: Option<(crate::sasl::SaslMechanismType, crate::sasl::SaslCredentials)>,
+    kerberos_config: Option<krb5_gss::KerberosCredentials>,
+    /// Broker 主机名 (用于构造 Kerberos 服务 principal `service/host`)。None 时回退为 IP。
+    broker_hostname: Option<String>,
+    /// KDC 主机名 (None 时回退为 realm 域名或 localhost)。
+    kdc_host: Option<String>,
+    /// KDC 端口。默认 88。
+    kdc_port: u16,
 }
 
 impl Builder {
@@ -377,6 +384,10 @@ impl Builder {
             client_version,
             client_id: Some("kafka-client".to_string()),
             sasl_config: None,
+            kerberos_config: None,
+            broker_hostname: None,
+            kdc_host: None,
+            kdc_port: 88,
         }
     }
 
@@ -391,6 +402,30 @@ impl Builder {
 
     pub fn with_client_id(mut self, client_id: String) -> Self {
         self.client_id = Some(client_id);
+        self
+    }
+
+    /// Configure SASL/GSSAPI (Kerberos) authentication.
+    ///
+    /// Requires the `kerberos` feature. Switches the security protocol to
+    /// `SaslPlaintext` (combine with TLS separately if needed).
+    pub fn with_kerberos(mut self, credentials: krb5_gss::KerberosCredentials) -> Self {
+        self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
+        self.kerberos_config = Some(credentials);
+        self
+    }
+
+    /// 设置 KDC 地址 (主机名 + 端口)。仅当 kerberos 认证启用时生效。
+    pub fn with_kdc(mut self, host: impl Into<String>, port: u16) -> Self {
+        self.kdc_host = Some(host.into());
+        self.kdc_port = port;
+        self
+    }
+
+    /// 设置 broker 主机名 (用于 Kerberos 服务 principal)。
+    /// kerberos 需要 `service/hostname` 格式, 如果未设置则回退为 IP 字符串。
+    pub fn with_broker_hostname(mut self, host: impl Into<String>) -> Self {
+        self.broker_hostname = Some(host.into());
         self
     }
 
@@ -437,7 +472,8 @@ impl Builder {
         seq_conn.set_negotiated(negotiated);
 
         // 3.5. Probe server for SASL requirement (client has no credentials configured)
-        if self.sasl_config.is_none() {
+        let has_kerberos = self.kerberos_config.is_some();
+        if !self.sasl_config.is_some() && !has_kerberos {
             let probe_req = protocol::SaslHandshakeRequest {
                 mechanism: "PLAIN".to_string(),
             };
@@ -464,20 +500,29 @@ impl Builder {
             }
         }
 
-        // 4. SASL authentication
-        if let Some((mechanism, credentials)) = self.sasl_config {
+        // 4. SASL authentication (Kerberos/GSSAPI)
+        if let Some(mut creds) = self.kerberos_config.clone() {
+            // broker_hostname 不由 caller 设定时, 用 IP 字符串.
+            // Kerberos 服务 principal 需要与 broker 的 JAAS principal 一致.
+            // 优先使用 credentials 中存储的 broker_hostname, 可确保重连时一致.
+            if creds.broker_hostname.is_none()
+                && let Some(ref h) = self.broker_hostname
+            {
+                creds = creds.with_broker_hostname(h.clone());
+            }
+            Handshake::sasl_authenticate_gssapi(
+                &mut seq_conn,
+                creds,
+                &self.addr.ip().to_string(), // fallback when creds.broker_hostname not set
+                self.kdc_host.as_deref(),
+                self.kdc_port,
+            )
+            .await
+            .map_err(auth_err)?;
+        } else if let Some((mechanism, credentials)) = self.sasl_config {
             Handshake::sasl_authenticate(&mut seq_conn, mechanism, credentials)
                 .await
-                .map_err(|e| {
-                    // Ensure SASL errors are reported as AuthenticationFailed
-                    match &e {
-                        KafkaError::Protocol(msg) => KafkaError::AuthenticationFailed(msg.clone()),
-                        KafkaError::SaslError(sasl_err) => {
-                            KafkaError::AuthenticationFailed(sasl_err.to_string())
-                        }
-                        _ => e,
-                    }
-                })?;
+                .map_err(auth_err)?;
         }
 
         // 5. Convert to pipelining handle
@@ -488,6 +533,15 @@ impl Builder {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Map handshake/SASL errors to [`KafkaError::AuthenticationFailed`].
+fn auth_err(e: KafkaError) -> KafkaError {
+    match &e {
+        KafkaError::Protocol(msg) => KafkaError::AuthenticationFailed(msg.clone()),
+        KafkaError::SaslError(sasl_err) => KafkaError::AuthenticationFailed(sasl_err.to_string()),
+        _ => e,
+    }
+}
 
 /// Extract the correlation_id from a Kafka response frame.
 ///

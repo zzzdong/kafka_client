@@ -15,6 +15,7 @@ use crate::error::{KafkaError, Result};
 use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{self as protocol, Request, Response};
+use krb5_gss::KerberosCredentials;
 
 /// Cluster connection configuration (crate-internal)
 #[derive(Debug, Clone)]
@@ -25,6 +26,14 @@ pub(crate) struct ClusterConfig {
     pub metadata_ttl: Duration,
     /// SASL authentication credentials (None = no authentication)
     pub sasl: Option<SaslCredentials>,
+    /// SASL/GSSAPI (Kerberos) credentials.
+    pub kerberos: Option<KerberosCredentials>,
+    /// KDC 地址: host. 为 None 时回退为 realm 域名或 localhost。
+    pub kdc_host: Option<String>,
+    /// KDC 端口。
+    pub kdc_port: u16,
+    /// Broker 主机名 (Kerberos 服务 principal 用)。
+    pub broker_hostname: Option<String>,
 }
 
 impl Default for ClusterConfig {
@@ -35,6 +44,10 @@ impl Default for ClusterConfig {
             client_id: "rust-kafka-client".to_string(),
             metadata_ttl: Duration::from_secs(300),
             sasl: None,
+            kerberos: None,
+            kdc_host: None,
+            kdc_port: 88,
+            broker_hostname: None,
         }
     }
 }
@@ -55,14 +68,29 @@ pub(crate) struct ClusterClient {
 impl ClusterClient {
     /// Connect to cluster: bootstrap → ApiVersions negotiation → refresh metadata
     pub(crate) async fn connect(config: ClusterConfig) -> Result<Self> {
-        let broker_manager = Arc::new(BrokerManager::new(
-            config.bootstrap_servers.clone(),
-            config.security_protocol.clone(),
-            config.client_id.clone(),
-            crate::NAME.to_string(),
-            crate::VERSION.to_string(),
-            config.sasl.clone(),
-        ));
+        // 把用户配置的 broker_hostname 注入 kerberos credentials,
+        // 确保跨所有连接使用一致的服务 principal hostname.
+        let mut kerberos = config.kerberos.clone();
+        if let Some(ref krb) = kerberos
+            && krb.broker_hostname.is_none()
+            && let Some(ref host) = config.broker_hostname
+        {
+            kerberos = Some(krb.clone().with_broker_hostname(host.clone()));
+        }
+
+        let broker_manager = Arc::new(
+            BrokerManager::new(
+                config.bootstrap_servers.clone(),
+                config.security_protocol.clone(),
+                config.client_id.clone(),
+                crate::NAME.to_string(),
+                crate::VERSION.to_string(),
+                config.sasl.clone(),
+                kerberos,
+            )
+            .with_kdc(config.kdc_host.clone(), config.kdc_port)
+            .with_broker_hostname(config.broker_hostname.clone()),
+        );
 
         broker_manager.bootstrap().await.map_err(|e| {
             debug!(error = ?e, "bootstrap failed");

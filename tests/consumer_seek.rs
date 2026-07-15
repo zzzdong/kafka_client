@@ -46,10 +46,7 @@ async fn test_consumer_seek_to_earliest() {
             .with_auto_offset_reset(AutoOffsetReset::Latest),
     );
 
-    consumer
-        .subscribe(vec![topic.clone()])
-        .await
-        .unwrap();
+    consumer.subscribe(vec![topic.clone()]).await.unwrap();
 
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
