@@ -16,6 +16,10 @@ use crate::error::Result;
 use std::future::Future;
 use std::pin::Pin;
 
+/// Maximum accepted KDC response body size (16 MiB) to guard against an unbounded
+/// allocation (and thus a DoS) if a (malicious/faulty) KDC returns a huge length prefix.
+const MAX_KDC_RESPONSE_LEN: usize = 16 * 1024 * 1024;
+
 /// Boxed future: allows `KdcTransport` to be used as a `dyn` trait object without extra dependencies.
 ///
 /// The output is the KDC response body (`AS-REP` / `TGS-REP`) without the 4-byte length prefix.
@@ -40,6 +44,9 @@ pub trait KdcTransport: Send + Sync {
 // ---------------------------------------------------------------------------
 // TokioKdcTransport — built-in KDC transport based on tokio TcpStream
 // ---------------------------------------------------------------------------
+
+cfg_if::cfg_if! {
+if #[cfg(feature = "tokio-transport")] {
 
 /// KDC transport implementation based on tokio TcpStream (provided by default).
 ///
@@ -75,7 +82,6 @@ impl KdcTransport for TokioKdcTransport {
                 crate::error::KerberosError::Protocol(format!("KDC TCP connect to {addr}: {e}"))
             })?;
 
-            // Send 4-byte big-endian length prefix + AS-REQ/TGS-REQ (single write to avoid TCP partial write issues)
             let mut framed = (req.len() as u32).to_be_bytes().to_vec();
             framed.extend_from_slice(&req);
             stream.write_all(&framed).await.map_err(|e| {
@@ -85,15 +91,18 @@ impl KdcTransport for TokioKdcTransport {
                 ))
             })?;
 
-            // Read 4-byte big-endian length prefix
             let mut len_buf = [0u8; 4];
             stream.read_exact(&mut len_buf).await.map_err(|e| {
                 let msg = format!("KDC read length failed: {e} (sent {} bytes)", req.len());
                 crate::error::KerberosError::Protocol(msg)
             })?;
             let resp_len = u32::from_be_bytes(len_buf) as usize;
+            if resp_len > MAX_KDC_RESPONSE_LEN {
+                return Err(crate::error::KerberosError::Protocol(format!(
+                    "KDC response too large: {resp_len} bytes (max {MAX_KDC_RESPONSE_LEN})"
+                )));
+            }
 
-            // Read response body
             let mut resp = vec![0u8; resp_len];
             stream.read_exact(&mut resp).await.map_err(|e| {
                 crate::error::KerberosError::Protocol(format!("KDC read response failed: {e}"))
@@ -103,6 +112,9 @@ impl KdcTransport for TokioKdcTransport {
         })
     }
 }
+
+} // cfg(feature = "tokio-transport")
+} // cfg_if
 
 #[cfg(test)]
 pub(crate) mod test_util {

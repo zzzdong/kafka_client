@@ -1,11 +1,8 @@
-RFC 3961: Encryption and Checksum Specifications for Kerberos 5
 
-    K. Raeburn
 
-Proposed Standard
-This RFC was updated, see
 
-    RFC 8429.
+
+
 
 Network Working Group                                         K. Raeburn
 Request for Comments: 3961                                           MIT
@@ -59,8 +56,7 @@ Table of Contents
 
 
 Raeburn                     Standards Track                     [Page 1]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -116,8 +112,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 2]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -173,8 +168,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 3]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -230,8 +224,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 4]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -287,8 +280,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 5]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -344,8 +336,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 6]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -401,8 +392,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 7]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -458,8 +448,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 8]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -515,8 +504,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                     [Page 9]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -572,8 +560,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 10]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -629,8 +616,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 11]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -686,8 +672,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 12]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -743,8 +728,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 13]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -800,8 +784,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 14]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -857,8 +840,7 @@ pseudo-random function    tmp1 = H(octet-string)
 
 
 Raeburn                     Standards Track                    [Page 15]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -914,8 +896,7 @@ key-derivation function   The "well-known constant" used for the DK
 
 
 Raeburn                     Standards Track                    [Page 16]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -971,8 +952,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 17]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1028,8 +1008,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 18]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1085,8 +1064,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 19]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1142,8 +1120,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 20]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1199,8 +1176,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 21]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1256,8 +1232,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 22]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1313,8 +1288,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 23]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1370,8 +1344,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 24]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1427,8 +1400,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 25]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1484,8 +1456,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 26]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1541,8 +1512,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 27]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1598,8 +1568,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 28]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1655,8 +1624,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 29]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1712,8 +1680,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 30]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1769,8 +1736,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 31]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1826,8 +1792,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 32]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1883,8 +1848,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 33]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1940,8 +1904,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 34]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -1997,8 +1960,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 35]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2054,8 +2016,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 36]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2111,8 +2072,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 37]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2168,8 +2128,7 @@ A.1.  n-fold
 
 
 Raeburn                     Standards Track                    [Page 38]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2225,8 +2184,7 @@ intermediate key:                3d4a262c19fbb091
 
 
 Raeburn                     Standards Track                    [Page 39]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2282,8 +2240,7 @@ DES key:                 c4bf6b25adf7a4f8
 
 
 Raeburn                     Standards Track                    [Page 40]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2339,8 +2296,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 41]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2396,8 +2352,7 @@ RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
 Raeburn                     Standards Track                    [Page 42]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2453,8 +2408,7 @@ A.3.  DES3 DR and DK
 
 
 Raeburn                     Standards Track                    [Page 43]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2510,8 +2464,7 @@ A.5.  Modified CRC-32
 
 
 Raeburn                     Standards Track                    [Page 44]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2567,8 +2520,7 @@ B.  Significant Changes from RFC 1510
 
 
 Raeburn                     Standards Track                    [Page 45]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2624,8 +2576,7 @@ Notes
 
 
 Raeburn                     Standards Track                    [Page 46]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2681,8 +2632,7 @@ Normative References
 
 
 Raeburn                     Standards Track                    [Page 47]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2738,8 +2688,7 @@ Informative References
 
 
 Raeburn                     Standards Track                    [Page 48]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2795,8 +2744,7 @@ Editor's Address
 
 
 Raeburn                     Standards Track                    [Page 49]
-
-
+
 RFC 3961         Encryption and Checksum Specifications    February 2005
 
 
@@ -2852,3 +2800,4 @@ Acknowledgement
 
 
 Raeburn                     Standards Track                    [Page 50]
+

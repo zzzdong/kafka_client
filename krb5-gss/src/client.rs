@@ -20,6 +20,7 @@ use crate::credentials::KerberosCredentials;
 use crate::error::{KerberosError, Result};
 use crate::kerberos::client::{AcquiredTicket, KerberosClient};
 use crate::kerberos::transport::KdcTransport;
+#[cfg(feature = "tokio-transport")]
 use crate::kerberos::transport::TokioKdcTransport;
 
 /// High-level krb5 client: holds credentials and KDC transport, accessing the KDC directly.
@@ -57,6 +58,7 @@ impl Krb5Client {
     }
 
     /// Create with the built-in tokio TCP KDC transport.
+    #[cfg(feature = "tokio-transport")]
     pub fn new(creds: &KerberosCredentials, kdc_host: &str, kdc_port: u16) -> Result<Self> {
         let transport = Box::new(TokioKdcTransport::new(kdc_host, kdc_port));
         Self::with_transport(creds, transport)

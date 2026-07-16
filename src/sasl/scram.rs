@@ -111,11 +111,20 @@ impl ScramMechanism {
         self.username = credentials.username().to_string();
         self.password = credentials.password().to_string();
 
+        // SASLprep normalization + escape special chars (RFC 5802 §5.1)
+        // ',' → "=2C", '=' → "=3D"
+        let escaped_user = self.escape_name(&self.username);
+
         // Format: n,,n=username,r=client_nonce
-        let msg = format!("n,,n={},r={}", self.username, self.client_nonce);
+        let msg = format!("n,,n={},r={}", escaped_user, self.client_nonce);
         self.state = ScramState::WaitingServerFirst;
 
         Ok(Bytes::from(msg))
+    }
+
+    /// Escape username for SCRAM: '=' → "=3D", ',' → "=2C" (RFC 5802 §5.1).
+    fn escape_name(&self, s: &str) -> String {
+        s.replace('=', "=3D").replace(',', "=2C")
     }
 
     /// Process the server-first challenge and generate the client-final message.
@@ -140,11 +149,17 @@ impl ScramMechanism {
 
         let challenge_str = String::from_utf8(server_final.to_vec())?;
 
+        // RFC 5802 §7: server-final can be "v=<signature>" (success) or "e=<error>" (failure)
         if let Some(sig) = challenge_str.strip_prefix("v=") {
             self.verify_server_signature(sig)?;
             self.state = ScramState::Complete;
             self.success = true;
             Ok(())
+        } else if let Some(err_msg) = challenge_str.strip_prefix("e=") {
+            Err(SaslError::AuthenticationFailed(format!(
+                "Server SCRAM error: {}",
+                err_msg
+            )))
         } else {
             Err(SaslError::InvalidChallenge(
                 "Missing server signature".to_string(),
@@ -213,6 +228,12 @@ impl ScramMechanism {
         let mut iterations = None;
 
         for part in challenge.split(',') {
+            // RFC 5802 §6: reject mandatory (m=) extensions
+            if part.starts_with("m=") {
+                return Err(SaslError::InvalidChallenge(
+                    "Mandatory extension (m=) not supported".to_string(),
+                ));
+            }
             if let Some(value) = part.strip_prefix("r=") {
                 nonce = Some(value.to_string());
             } else if let Some(value) = part.strip_prefix("s=") {
@@ -239,6 +260,13 @@ impl ScramMechanism {
             ));
         }
 
+        // Reject dangerously low iteration counts
+        if iterations < 4096 {
+            return Err(SaslError::InvalidChallenge(format!(
+                "Iteration count {iterations} too low (minimum 4096)"
+            )));
+        }
+
         self.server_nonce = Some(nonce);
         self.salt = Some(salt);
         self.iterations = Some(iterations);
@@ -261,8 +289,13 @@ impl ScramMechanism {
         // StoredKey = H(ClientKey)
         let stored_key = self.hash(&client_key);
 
-        // ClientFirstMessageBare = "n=", username, ",r=", client_nonce
-        let client_first_message_bare = format!("n={},r={}", self.username, self.client_nonce);
+        // ClientFirstMessageBare = "n=", escaped_username, ",r=", client_nonce
+        // Must use escaped username (same as what was sent in client_first)
+        let client_first_message_bare = format!(
+            "n={},r={}",
+            self.escape_name(&self.username),
+            self.client_nonce
+        );
 
         // ServerFirstMessage = "r=", server_nonce, ",s=", base64(salt), ",i=", iterations
         let server_first_message = format!(
@@ -533,6 +566,96 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("nonce")
+        );
+    }
+
+    // ── B1: Server-side `e=` error reporting ─────────────────────────
+
+    #[test]
+    fn test_server_error_e_is_reported() {
+        let mut m = new_sha256("test");
+        m.client_first(&sha256_creds()).unwrap();
+        assert!(m.client_final(b"r=test123,s=c2FsdA==,i=4096").is_ok());
+        let err = m
+            .verify_server_final(b"e=authentication_failed")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("authentication_failed"),
+            "e= error should be reported: {err}"
+        );
+    }
+
+    // ── B3: `m=` mandatory extension rejected ────────────────────────
+
+    #[test]
+    fn test_m_extension_rejected() {
+        let mut m = new_sha256("test");
+        m.client_first(&sha256_creds()).unwrap();
+        let err = m.client_final(b"m=not-supported,r=test-random,s=c2FsdA==,i=4096");
+        assert!(err.is_err(), "m= extension should be rejected");
+        assert!(
+            err.unwrap_err().to_string().contains("Mandatory extension"),
+            "error should mention mandatory extension"
+        );
+    }
+
+    // ── B4: Low iterations rejected ──────────────────────────────────
+
+    #[test]
+    fn test_low_iterations_rejected() {
+        let mut m = new_sha256("test");
+        m.client_first(&sha256_creds()).unwrap();
+        let err = m.client_final(b"r=test-ok,s=c2FsdA==,i=1");
+        assert!(err.is_err(), "i=1 should be rejected");
+        assert!(
+            err.unwrap_err().to_string().contains("too low"),
+            "error should mention too low"
+        );
+    }
+
+    #[test]
+    fn test_edge_iterations_4096_accepted() {
+        let mut m = new_sha256("test");
+        m.client_first(&sha256_creds()).unwrap();
+        // i=4096 is the minimum and should be accepted
+        assert!(m.client_final(b"r=test-edge,s=c2FsdA==,i=4096").is_ok());
+    }
+
+    // ── B2: Username escaping ─────────────────────────────────────────
+
+    #[test]
+    fn test_username_with_special_chars_escaped() {
+        let creds = SaslCredentials::scram_sha256("u,ser", "pass");
+        let mut m = new_sha256("nonce123");
+        let cf = m.client_first(&creds).unwrap();
+        let cf_str = std::str::from_utf8(&cf).unwrap();
+        // ',' should be escaped to "=2C"
+        assert!(
+            cf_str.contains("n=u=2Cser"),
+            "comma in username should be escaped: {cf_str}"
+        );
+    }
+
+    #[test]
+    fn test_username_escape_roundtrip() {
+        let creds = SaslCredentials::scram_sha256("user", "pass");
+        let mut m = new_sha256("nonce123");
+        let cf = m.client_first(&creds).unwrap();
+        let cf_str = std::str::from_utf8(&cf).unwrap();
+        // Normal username should be unchanged
+        assert!(cf_str.contains("n=user"), "normal username: {cf_str}");
+    }
+
+    #[test]
+    fn test_username_eq_escaped() {
+        let creds = SaslCredentials::scram_sha256("u=ser", "pass");
+        let mut m = new_sha256("nonce123");
+        let cf = m.client_first(&creds).unwrap();
+        let cf_str = std::str::from_utf8(&cf).unwrap();
+        // '=' should be escaped to "=3D"
+        assert!(
+            cf_str.contains("n=u=3Dser"),
+            "equals sign should be escaped: {cf_str}"
         );
     }
 }

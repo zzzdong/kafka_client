@@ -204,7 +204,8 @@ done
 echo ""
 echo "--- Kerberos tests ---"
 for test in "${KERBEROS_TESTS[@]}"; do
-    # Kerberos 需要额外的环境变量
+    # Kerberos 连接的是单节点 broker (port 9096)，而非 3-broker 集群
+    KAFKA_CLUSTER_SIZE=1 \
     KAFKA_BOOTSTRAP_KERBEROS="127.0.0.1:9096" \
     KERBEROS_KEYTAB="${SCRIPT_DIR}/fixtures/kerberos/keytabs/client.keytab" \
     KERBEROS_KDC_HOST="localhost" \

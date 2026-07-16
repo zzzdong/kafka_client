@@ -55,29 +55,54 @@ impl Keytab {
     }
 }
 
+/// 从 `buf` 的 `off` 处读取一个 big-endian `u16`，并推进 `off`。
+/// 越界时返回错误而非 panic（防止畸形 keytab 触发索引越界）。
+fn read_u16(buf: &[u8], off: &mut usize) -> Result<u16> {
+    if *off + 2 > buf.len() {
+        return Err(KerberosError::Keytab("truncated keytab entry (u16)".into()));
+    }
+    let v = u16::from_be_bytes([buf[*off], buf[*off + 1]]);
+    *off += 2;
+    Ok(v)
+}
+
+/// 从 `buf` 的 `off` 处读取一个 big-endian `u32`，并推进 `off`。
+fn read_u32(buf: &[u8], off: &mut usize) -> Result<u32> {
+    if *off + 4 > buf.len() {
+        return Err(KerberosError::Keytab("truncated keytab entry (u32)".into()));
+    }
+    let v = u32::from_be_bytes([buf[*off], buf[*off + 1], buf[*off + 2], buf[*off + 3]]);
+    *off += 4;
+    Ok(v)
+}
+
+/// 从 `buf` 的 `off` 处读取一个 `u8`，并推进 `off`。
+fn read_u8(buf: &[u8], off: &mut usize) -> Result<u8> {
+    if *off + 1 > buf.len() {
+        return Err(KerberosError::Keytab("truncated keytab entry (u8)".into()));
+    }
+    let v = buf[*off];
+    *off += 1;
+    Ok(v)
+}
+
 fn parse_entry(buf: &[u8]) -> Result<KeytabEntry> {
     let mut off = 0;
-    let num_comp = u16::from_be_bytes([buf[off], buf[off + 1]]) as usize;
-    off += 2;
+    let num_comp = read_u16(buf, &mut off)? as usize;
     let realm = read_str(buf, &mut off)?;
     let mut comps = Vec::new();
     for _ in 0..num_comp {
         comps.push(read_str(buf, &mut off)?);
     }
     let principal = comps.join("/");
-    let _name_type = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
-    off += 4;
-    let timestamp = u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
-    off += 4;
-    let kvno = buf[off];
-    off += 1;
-    let enctype = u16::from_be_bytes([buf[off], buf[off + 1]]);
-    off += 2;
+    let _name_type = read_u32(buf, &mut off)?;
+    let timestamp = read_u32(buf, &mut off)?;
+    let kvno = read_u8(buf, &mut off)?;
+    let enctype = read_u16(buf, &mut off)?;
     let etype = Etype::from_u32(enctype as u32)
         .ok_or_else(|| KerberosError::Keytab(format!("unsupported etype {enctype}")))?;
     // key 长度: v2 使用 2 字节长度
-    let key_len = u16::from_be_bytes([buf[off], buf[off + 1]]) as usize;
-    off += 2;
+    let key_len = read_u16(buf, &mut off)? as usize;
     if off + key_len > buf.len() {
         return Err(KerberosError::Keytab("truncated key".into()));
     }

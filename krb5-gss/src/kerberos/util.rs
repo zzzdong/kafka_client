@@ -23,6 +23,20 @@ pub fn now_micros() -> i32 {
         .unwrap_or(0)
 }
 
+/// Return a (GeneralizedTime, cusec) pair from a single timestamp snapshot.
+///
+/// This avoids the race condition where two separate `SystemTime::now()` calls
+/// could cross a second boundary and produce inconsistent `ctime`/`cusec` values.
+/// Per RFC 4120 §5.4.1, both MUST refer to the same instant.
+pub fn utc_now_with_micros() -> (String, i32) {
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let cusec = (d.as_micros() % 1_000_000) as i32;
+    (format!("{}Z", utc_calendar(secs)), cusec)
+}
+
 /// Returns the UTC time `n` days from now in GeneralizedTime format.
 pub fn utc_add_days(n: u64) -> String {
     let secs = SystemTime::now()
@@ -38,7 +52,7 @@ fn utc_calendar(secs: u64) -> String {
     let mut y = 1970u32;
     let mut rem = days;
     loop {
-        let leap = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+        let leap = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
             366
         } else {
             365
@@ -50,7 +64,7 @@ fn utc_calendar(secs: u64) -> String {
         y += 1;
     }
     let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let mut m = 1u32;
     let mut d = rem;
     loop {
@@ -90,7 +104,7 @@ mod tests {
     #[test]
     fn test_now_micros_range() {
         let micros = now_micros();
-        assert!(micros >= 0 && micros < 1_000_000);
+        assert!((0..1_000_000).contains(&micros));
     }
 
     #[test]

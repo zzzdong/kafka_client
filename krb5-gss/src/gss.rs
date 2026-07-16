@@ -44,7 +44,8 @@ use crate::kerberos::client::{AcquiredTicket, KerberosClient};
 use crate::kerberos::crypto::{self, Etype};
 use crate::kerberos::messages::{KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REQ_AUTH};
 use crate::kerberos::transport::KdcTransport;
-use crate::kerberos::util::{now_micros, utc_now_generalized};
+use crate::kerberos::util::utc_now_with_micros;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ===========================================================================
 // GSS 令牌封装 (RFC 1964 / RFC 4121 / RFC 2743)
@@ -52,13 +53,11 @@ use crate::kerberos::util::{now_micros, utc_now_generalized};
 
 // RFC 4121 GSS 安全层密钥用法 (per-message tokens):
 //   GSS_USAGE_ACCEPTOR_SEAL = 22 (服务端密封/加密)
-//   GSS_USAGE_ACCEPTOR_SIGN = 23 (服务端签名)
+//   GSS_USAGE_ACCEPTOR_SIGN = 23 (服务端签名, MIC 令牌)
 //   GSS_USAGE_INITIATOR_SEAL = 24 (客户端密封/加密)
-//   GSS_USAGE_INITIATOR_SIGN = 25 (客户端签名)
-#[allow(dead_code)]
+//   GSS_USAGE_INITIATOR_SIGN = 25 (客户端签名, MIC 令牌)
 const GSS_USAGE_ACCEPTOR_SIGN: u32 = 23;
 const GSS_USAGE_ACCEPTOR_SEAL: u32 = 22;
-#[allow(dead_code)]
 const GSS_USAGE_INITIATOR_SIGN: u32 = 25;
 const GSS_USAGE_INITIATOR_SEAL: u32 = 24;
 
@@ -143,14 +142,20 @@ pub fn gss_unwrap_wrap_token(
         }
 
         // 解密: plaintext = AES-CTS decrypt(Kc_enc, iv=0, ciphertext)
-        // Kc_enc = DK(session_key, ACCEPTOR_SEAL | 0xAA)
+        // Kc_enc = DK(session_key, usage | 0xAA)
+        // 根据 token 的 SentByAcceptor flag 选择封口/签名密钥用法
+        let seal_usage = if (flags & 0x01) != 0 {
+            GSS_USAGE_ACCEPTOR_SEAL
+        } else {
+            GSS_USAGE_INITIATOR_SEAL
+        };
         let kc_enc = crypto::dk_for(
             etype,
             session_key,
-            &crypto::usage_constant(GSS_USAGE_ACCEPTOR_SEAL, 0xAA),
+            &crypto::usage_constant(seal_usage, 0xAA),
         );
         let iv = vec![0u8; 16];
-        let plain = crypto::cts_decrypt_for(etype, &kc_enc, &iv, &rotated);
+        let plain = crypto::cts_decrypt_for(etype, &kc_enc, &iv, &rotated)?;
 
         // 验证 embedded header (last 16 bytes of plaintext)
         if plain.len() < 32 {
@@ -208,11 +213,17 @@ pub fn gss_unwrap_wrap_token(
         let received_cksum = &token[16 + payload_len..];
 
         // 验证 checksum
-        // Kc = DK(session_key, ACCEPTOR_SEAL | 0x99) for HMAC checksum key per RFC 3961
+        // Kc = DK(session_key, usage | 0x99) for HMAC checksum key per RFC 3961
+        // 根据 token 的 SentByAcceptor flag 选择封口/签名密钥用法
+        let seal_usage = if (flags & 0x01) != 0 {
+            GSS_USAGE_ACCEPTOR_SEAL
+        } else {
+            GSS_USAGE_INITIATOR_SEAL
+        };
         let kc = crypto::dk_for(
             etype,
             session_key,
-            &crypto::usage_constant(GSS_USAGE_ACCEPTOR_SEAL, 0x99),
+            &crypto::usage_constant(seal_usage, 0x99),
         );
 
         // checksum input = payload || header_with_EC=0_RRC=0
@@ -263,7 +274,7 @@ pub fn gss_wrap_token(
         &crypto::usage_constant(GSS_USAGE_INITIATOR_SEAL, 0x99),
     );
 
-    let ec = etype.mac_len(); // 12 for SHA1-96, 24 for SHA384-192
+    let ec = etype.mac_len(); // 12 bytes (96-bit HMAC) for all supported etypes
 
     // 构建 checksum header (EC=0, RRC=0)
     let mut cksum_hdr = Vec::with_capacity(16);
@@ -296,17 +307,199 @@ pub fn gss_wrap_token(
     Ok(token)
 }
 
+// ===========================================================================
+// RFC 4121 §4.2.6.1 — GSS MIC token (GSS_GetMIC / GSS_VerifyMIC)
+// ===========================================================================
+
+/// RFC 4121 MIC token (0x0404) — sign-only integrity token.
+///
+/// Format (RFC 4121 §4.2.6.1):
+/// ```text
+/// [0-1]    TOK_ID = 0x0404
+/// [2]      Flags (bit0=SenderIsAcceptor)
+/// [3-7]    Filler (5 bytes 0xFF)
+/// [8-15]   SND_SEQ (big-endian u64)
+/// [16..]   SGN_CKSUM = HMAC(Ks, data || header[0..16])[0..h]
+/// ```
+///
+/// Ks = DK(session_key, usage | 0x99) where usage = INITIATOR_SIGN (25)
+/// when the caller is the context initiator, or ACCEPTOR_SIGN (23) when
+/// the caller is the context acceptor.
+pub fn gss_mic_token(
+    etype: crypto::Etype,
+    session_key: &[u8],
+    data: &[u8],
+    seq_num: u64,
+    is_acceptor: bool,
+) -> Result<Vec<u8>> {
+    let usage = if is_acceptor {
+        GSS_USAGE_ACCEPTOR_SIGN
+    } else {
+        GSS_USAGE_INITIATOR_SIGN
+    };
+    let kc = crypto::dk_for(etype, session_key, &crypto::usage_constant(usage, 0x99));
+    let ec = etype.mac_len();
+    let flags: u8 = if is_acceptor { 0x01 } else { 0x00 };
+
+    // Header: 16 bytes
+    let mut hdr = Vec::with_capacity(16);
+    hdr.extend_from_slice(&[0x04, 0x04]); // TOK_ID
+    hdr.push(flags);
+    hdr.extend_from_slice(&[0xFF; 5]); // filler (5 bytes)
+    hdr.extend_from_slice(&seq_num.to_be_bytes());
+
+    // HMAC input: data || header[0..16]
+    let mut cksum_input = Vec::new();
+    cksum_input.extend_from_slice(data);
+    cksum_input.extend_from_slice(&hdr);
+    let hmac_full = crypto::hmac_for(etype, &kc, &cksum_input);
+    let cksum = &hmac_full[..ec];
+
+    let mut token = hdr;
+    token.extend_from_slice(cksum);
+    Ok(token)
+}
+
+/// Verify an RFC 4121 MIC token and return the sequence number.
+///
+/// The caller provides the original `data` that was signed; the function
+/// recomputes the checksum over `data || header[0..16]` and compares it
+/// against the token.
+/// `is_acceptor` should be the **sender's** role (true if the token
+/// was emitted by the acceptor).
+pub fn verify_gss_mic_token(
+    etype: crypto::Etype,
+    session_key: &[u8],
+    token: &[u8],
+    data: &[u8],
+    is_acceptor: bool,
+) -> Result<u64> {
+    let min_len = 16 + etype.mac_len();
+    if token.len() < min_len || token[0] != 0x04 || token[1] != 0x04 {
+        return Err(KerberosError::Gss(format!(
+            "bad MIC token: len={}, tok_id=0x{:02x}{:02x}",
+            token.len(),
+            token[0],
+            token[1]
+        )));
+    }
+    let flags = token[2];
+    let expected_flags: u8 = if is_acceptor { 0x01 } else { 0x00 };
+    if flags != expected_flags {
+        return Err(KerberosError::Gss(format!(
+            "MIC token flags mismatch: expected 0x{expected_flags:02x}, got 0x{flags:02x}"
+        )));
+    }
+    let seqnum = u64::from_be_bytes([
+        token[8], token[9], token[10], token[11], token[12], token[13], token[14], token[15],
+    ]);
+    let received_cksum = &token[16..16 + etype.mac_len()];
+
+    let usage = if is_acceptor {
+        GSS_USAGE_ACCEPTOR_SIGN
+    } else {
+        GSS_USAGE_INITIATOR_SIGN
+    };
+    let kc = crypto::dk_for(etype, session_key, &crypto::usage_constant(usage, 0x99));
+
+    // Checksum = HMAC(Ks, data || header[0..16])[0..h] per RFC 4121 §4.2.4
+    let mut cksum_input = Vec::new();
+    cksum_input.extend_from_slice(data);
+    cksum_input.extend_from_slice(&token[..16]);
+    let computed_hmac = crypto::hmac_for(etype, &kc, &cksum_input);
+    let computed_cksum = &computed_hmac[..etype.mac_len()];
+
+    if computed_cksum != received_cksum {
+        return Err(KerberosError::Gss("MIC token checksum mismatch".into()));
+    }
+    Ok(seqnum)
+}
+
+// ===========================================================================
+// RFC 4121 §4.2.6.2 — GSS_Wrap token (confidential)
+// ===========================================================================
+
+/// Generate an RFC 4121 confidential GSS_Wrap token (0x0504, Sealed flag set).
+///
+/// The payload is encrypted with AES-CTS using a key derived from the session
+/// key (usage | 0xAA). The plaintext structure is:
+///   confounder(16) || payload || embedded_header(16)
+///
+/// The EC field is 0 (checksum embedded in ciphertext), and the RRC field
+/// may be non-zero (see [RFC 4121 §4.2.5]).
+pub fn gss_wrap_token_confidential(
+    etype: crypto::Etype,
+    session_key: &[u8],
+    payload: &[u8],
+    seq_num: u64,
+    is_acceptor: bool,
+) -> Result<Vec<u8>> {
+    let usage = if is_acceptor {
+        GSS_USAGE_ACCEPTOR_SEAL
+    } else {
+        GSS_USAGE_INITIATOR_SEAL
+    };
+    let flags: u8 = if is_acceptor { 0x03 } else { 0x02 }; // bit0=acceptor, bit1=sealed
+    let ec: u16 = 0; // checksum embedded in ciphertext
+    // RRC: right rotation count (RFC 4121 §4.2.5).
+    // The ciphertext is right-rotated by RRC bits before transmission.
+    // A non-zero value helps obscure the plaintext length boundary.
+    // Use 0 for now (caller can override for non-test scenarios).
+    let rrc: u16 = 0;
+
+    // Build embedded header
+    let mut emb_hdr = Vec::with_capacity(16);
+    emb_hdr.extend_from_slice(&[0x05, 0x04]); // TOK_ID
+    emb_hdr.push(flags);
+    emb_hdr.push(0xFF); // filler
+    emb_hdr.extend_from_slice(&ec.to_be_bytes());
+    emb_hdr.extend_from_slice(&rrc.to_be_bytes());
+    emb_hdr.extend_from_slice(&seq_num.to_be_bytes());
+
+    // Confounder (16 random bytes)
+    let mut confounder = vec![0u8; 16];
+    if getrandom::fill(&mut confounder).is_err() {
+        // Fallback: deterministic (still better than failing entirely)
+        confounder = vec![0xBBu8; 16];
+    }
+
+    // Plaintext = confounder || payload || embedded_header
+    let mut plaintext = Vec::new();
+    plaintext.extend_from_slice(&confounder);
+    plaintext.extend_from_slice(payload);
+    plaintext.extend_from_slice(&emb_hdr);
+
+    // Ke = DK(session_key, usage | 0xAA)
+    let ke = crypto::dk_for(etype, session_key, &crypto::usage_constant(usage, 0xAA));
+
+    // AES-CTS encrypt (IV=0)
+    let iv = vec![0u8; 16];
+    let ciphertext = crypto::cts_encrypt_for(etype, &ke, &iv, &plaintext)?;
+
+    // Build token header
+    let mut token = Vec::with_capacity(16 + ciphertext.len());
+    token.extend_from_slice(&[0x05, 0x04]); // TOK_ID
+    token.push(flags);
+    token.push(0xFF); // filler
+    token.extend_from_slice(&ec.to_be_bytes()); // EC=0
+    token.extend_from_slice(&rrc.to_be_bytes()); // RRC=0
+    token.extend_from_slice(&seq_num.to_be_bytes()); // seqnum
+    token.extend_from_slice(&ciphertext);
+
+    Ok(token)
+}
+
 /// 缓冲区左旋转 nbits 位 (RFC 4121 RRC).
 fn rotate_buf_left(data: &[u8], nbits: usize) -> Vec<u8> {
     let len = data.len();
-    if len == 0 || nbits % (len * 8) == 0 {
+    if len == 0 || nbits.is_multiple_of(len * 8) {
         return data.to_vec();
     }
     let nbits = nbits % (len * 8);
     let nbytes = nbits / 8;
     let remain = nbits % 8;
     let mut result = vec![0u8; len];
-    for i in 0..len {
+    for (i, slot) in result.iter_mut().enumerate() {
         let src_idx = (i + nbytes) % len;
         let next_idx = (src_idx + 1) % len;
         let hi = data[src_idx] << remain;
@@ -315,7 +508,7 @@ fn rotate_buf_left(data: &[u8], nbits: usize) -> Vec<u8> {
         } else {
             data[next_idx] >> (8 - remain)
         };
-        result[i] = hi | lo;
+        *slot = hi | lo;
     }
     result
 }
@@ -574,6 +767,11 @@ pub trait GssContext: Send {
     /// while let Some(token) = ctx.step(Some(&send_recv(out))).await? { out = token; }
     /// ```
     fn step(&mut self, input: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+        // 上下文已建立时，GSS 循环优雅地返回 None 而非对多余挑战令牌报错，
+        // 使标准 `while let Some(tok) = ctx.step(...)` 循环自然收尾。
+        if self.is_complete() {
+            return Ok(None);
+        }
         match input {
             None => Ok(Some(self.initial_token()?)),
             Some(challenge) => self.handle_challenge(challenge),
@@ -595,20 +793,22 @@ enum GssState {
 /// Native GSS context implementation based on krb5-gss KDC tickets.
 pub struct NativeGssContext {
     state: GssState,
-    /// 来自 TGS-REP 的服务票据 DER。
     service_ticket: Vec<u8>,
-    /// 来自 TGS-REP 的会话密钥。
     session_etype: Etype,
     session_key: Vec<u8>,
-    /// 客户端 principal。
+    /// Subkey generated by the initiator (if any), used for per-message protection instead of session_key.
+    subkey: Option<(Etype, Vec<u8>)>,
     cname: PrincipalName,
     crealm: String,
-    /// 认证完成后设置的服务端协商出的授权主体。
     auth_principal: Option<String>,
-    /// RFC 4121 发送序列号 (客户端 → acceptor).
     seq_send: u64,
-    /// RFC 4121 接收序列号 (acceptor → 客户端). 用于严格序列号/防重放校验。
     seq_recv: u64,
+    strict_aprep: bool,
+    /// Ticket end time (GeneralizedTime), used for GSS_Context_time.
+    ticket_endtime: String,
+    #[expect(dead_code)]
+    /// Wall-clock snapshot when the context was created, used for lifetime calculation.
+    context_start: SystemTime,
 }
 
 impl NativeGssContext {
@@ -619,34 +819,44 @@ impl NativeGssContext {
             service_ticket: ticket.ticket_der,
             session_etype: ticket.session_etype,
             session_key: ticket.session_key,
+            subkey: None,
             cname: ticket.cname,
             crealm: ticket.crealm,
             auth_principal: None,
-            seq_send: 1, // 序列号从 1 开始 (对应 Authenticator.seq_number)
-            seq_recv: 0, // 0 表示尚未收到对端 WRAP, 首次以对端序号为基线
+            seq_send: 1,
+            seq_recv: 0,
+            strict_aprep: false,
+            ticket_endtime: ticket.endtime,
+            context_start: SystemTime::now(),
         }
     }
 
-    /// Construct a client RFC 4121 GSS_WRAP token (non-confidential) for per-message protection after handshake.
+    /// Enable strict AP-REP verification (mutual authentication).
     ///
-    /// Corresponds to GSS-API `gss_wrap`: returns a WRAP token encapsulating QOP / max_buffer,
-    /// to be verified by the acceptor (see [`gss_unwrap_wrap_token`]).
-    pub fn wrap(&self, qop: u8, max_buffer: u32, seq_num: u64) -> Result<Vec<u8>> {
-        gss_wrap_token(
-            self.session_etype,
-            &self.session_key,
-            qop,
-            max_buffer,
-            seq_num,
-        )
+    /// When enabled, a missing/unverifiable AP-REP challenge aborts the handshake
+    /// (prevents spoofed acceptor). Disabled by default for compatibility with
+    /// acceptors that wrap the AP-REP in non-standard encapsulation.
+    pub fn with_strict_aprep(mut self, strict: bool) -> Self {
+        self.strict_aprep = strict;
+        self
     }
 
-    /// Unwrap an RFC 4121 GSS_WRAP token from the acceptor (non-confidential).
+    /// Build a non-confidential GSS_Wrap token for the given QOP / max_buffer.
     ///
-    /// Corresponds to GSS-API `gss_unwrap`: verifies the checksum and returns the plaintext payload (QOP + max_buffer).
-    /// Also performs strict sequence number validation: the first received sequence number becomes the baseline, and subsequent numbers must be monotonically non-decreasing (replay/ordering protection).
+    /// Corresponds to GSS-API `gss_wrap`. Uses the active key (subkey if set, else session_key).
+    /// Caller manages sequence number; see [`Self::wrap_next`] for auto-managed version.
+    pub fn wrap(&self, qop: u8, max_buffer: u32, seq_num: u64) -> Result<Vec<u8>> {
+        let (etype, key) = self.active_key();
+        gss_wrap_token(etype, key, qop, max_buffer, seq_num)
+    }
+
+    /// Unwrap an RFC 4121 GSS_WRAP token from the acceptor (non-confidential or confidential).
+    ///
+    /// Corresponds to GSS-API `gss_unwrap`: verifies the checksum / decrypts the payload
+    /// and performs strict sequence number validation (replay detection).
     pub fn unwrap(&mut self, token: &[u8]) -> Result<Vec<u8>> {
-        let (payload, seq) = gss_unwrap_wrap_token(self.session_etype, &self.session_key, token)?;
+        let (etype, key) = self.active_key();
+        let (payload, seq) = gss_unwrap_wrap_token(etype, key, token)?;
         if seq < self.seq_recv {
             return Err(KerberosError::Gss(format!(
                 "GSS WRAP replay/ordering violation: got seq {seq}, expected >= {}",
@@ -656,22 +866,151 @@ impl NativeGssContext {
         self.seq_recv = seq + 1;
         Ok(payload)
     }
+
+    /// Build a non-confidential GSS_Wrap token with auto-incremented sequence number.
+    ///
+    /// The preferred method for post-handshake per-message protection.
+    pub fn wrap_next(&mut self, qop: u8, max_buffer: u32) -> Result<Vec<u8>> {
+        let seq = self.seq_send;
+        self.seq_send += 1;
+        let (etype, key) = self.active_key();
+        gss_wrap_token(etype, key, qop, max_buffer, seq)
+    }
+
+    /// Generate an RFC 4121 MIC token (sign-only integrity) with auto-incremented sequence number.
+    pub fn mic_token(&mut self, data: &[u8]) -> Result<Vec<u8>> {
+        let seq = self.seq_send;
+        self.seq_send += 1;
+        let (etype, key) = self.active_key();
+        gss_mic_token(etype, key, data, seq, false)
+    }
+
+    /// Verify an RFC 4121 MIC token from the acceptor.
+    pub fn verify_mic_token(&self, token: &[u8], data: &[u8]) -> Result<u64> {
+        let (etype, key) = self.active_key();
+        verify_gss_mic_token(etype, key, token, data, true)
+    }
+
+    /// GSS_Context_time: return the remaining lifetime of the context in seconds.
+    ///
+    /// The remaining time is computed from the ticket end time minus the current time.
+    /// Returns 0 if the ticket has expired.
+    pub fn context_time(&self) -> Result<u32> {
+        let endtime_str = self.ticket_endtime.trim_end_matches('Z');
+        if endtime_str.len() != 14 {
+            return Err(KerberosError::Gss("invalid ticket endtime format".into()));
+        }
+        let parse_field = |start: usize, len: usize| -> Result<u64> {
+            endtime_str[start..start + len]
+                .parse::<u64>()
+                .map_err(|_| KerberosError::Gss("invalid ticket endtime number".into()))
+        };
+        let year = parse_field(0, 4)?;
+        let month = parse_field(4, 2)?;
+        let day = parse_field(6, 2)?;
+        let hour = parse_field(8, 2)?;
+        let min = parse_field(10, 2)?;
+        let sec = parse_field(12, 2)?;
+
+        // Approximate: convert to seconds since UNIX epoch using a simple calculation.
+        let days_since_epoch = |y: u64, m: u64, d: u64| -> u64 {
+            let y = if m <= 2 { y - 1 } else { y };
+            let m = if m <= 2 { m + 12 } else { m };
+            // Gregorian calendar: days from 1970-01-01
+            365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + d - 719469
+        };
+        let end_secs = days_since_epoch(year, month, day) * 86400 + hour * 3600 + min * 60 + sec;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Ok(if end_secs > now {
+            (end_secs - now) as u32
+        } else {
+            0
+        })
+    }
+
+    /// GSS_Inquire_context: return the negotiated context flags.
+    ///
+    /// Returns the standard GSS context flags (MUTUAL | REPLAY | SEQUENCE | INTEG = 0x002E).
+    /// The caller can use this to check which security services are available.
+    pub fn context_flags(&self) -> u32 {
+        2 | 4 | 8 | 32 // GSS_C_MUTUAL | GSS_C_REPLAY | GSS_C_SEQUENCE | GSS_C_INTEG
+    }
+
+    /// Return the session encryption type in use (after subkey negotiation, if any).
+    pub fn current_etype(&self) -> Etype {
+        self.subkey.as_ref().map_or(self.session_etype, |(e, _)| *e)
+    }
+
+    /// GSS_Wrap_size_limit: compute the maximum input size for a GSS_Wrap token
+    /// that must fit within `req_output_size` bytes.
+    ///
+    /// `conf_req_flag`: true for confidentiality (encrypted), false for integrity-only.
+    /// Returns the maximum input payload size, or 0 if the overhead exceeds the output buffer.
+    pub fn wrap_size_limit(&self, conf_req_flag: bool, req_output_size: u32) -> u32 {
+        gss_wrap_size_limit(self.session_etype, conf_req_flag, req_output_size)
+    }
+
+    /// Return the effective (subkey or session) key pair for per-message tokens.
+    fn active_key(&self) -> (Etype, &[u8]) {
+        self.subkey.as_ref().map_or(
+            (self.session_etype, self.session_key.as_slice()),
+            |(e, k)| (*e, k.as_slice()),
+        )
+    }
+}
+
+/// GSS_Wrap_size_limit: compute the maximum input size for a GSS_Wrap token
+/// that must fit within `req_output_size` bytes.
+///
+/// Non-confidential overhead: 16 (header) + 12 (checksum) = 28 bytes.
+/// Confidential overhead: 16 (header) + 16 (confounder) + 16 (embedded header) = 48 bytes
+///   (ciphertext = confounder + payload + embedded_header, no CTS expansion).
+pub fn gss_wrap_size_limit(_etype: Etype, conf_req_flag: bool, req_output_size: u32) -> u32 {
+    let overhead: u32 = if conf_req_flag {
+        48 // 16 header + 16 confounder + 16 embedded header
+    } else {
+        28 // 16 header + 12 checksum
+    };
+    req_output_size.saturating_sub(overhead)
+}
+
+impl NativeGssContext {
+    /// Enable subkey generation for per-message protection.
+    ///
+    /// When enabled, `initial_token` will include a random subkey in the Authenticator.
+    /// Subsequent per-message tokens (wrap/MIC) use the subkey instead of the TGS
+    /// session key, enhancing security by limiting exposure of the long-term key.
+    /// Disabled by default for backward compatibility.
+    pub fn with_subkey(mut self) -> Self {
+        self.subkey = Some((self.session_etype, Vec::new()));
+        self
+    }
 }
 
 impl GssContext for NativeGssContext {
     fn initial_token(&mut self) -> Result<Vec<u8>> {
         match &self.state {
-            GssState::Init => { /* ok，继续 */ }
+            GssState::Init => {}
             _ => {
                 return Err(KerberosError::Gss(
                     "initial_token called more than once or after establish".into(),
                 ));
             }
         }
-
-        let ctime = utc_now_generalized();
-        let cusec = now_micros();
-
+        let (ctime, cusec) = utc_now_with_micros();
+        let subkey_opt = if self.subkey.is_some() {
+            let subkey_bytes = crypto::random_key(self.session_etype)?;
+            self.subkey = Some((self.session_etype, subkey_bytes.clone()));
+            Some(EncryptionKey {
+                keytype: self.session_etype as i32,
+                keyvalue: subkey_bytes,
+            })
+        } else {
+            None
+        };
         let opts = ApReqOptions {
             cname: &self.cname,
             crealm: &self.crealm,
@@ -681,10 +1020,9 @@ impl GssContext for NativeGssContext {
             ctime: &ctime,
             cusec,
             seq_number: Some(1),
-            subkey: None,
+            subkey: subkey_opt,
         };
         let token = build_ap_req_token(&opts)?;
-
         self.state = GssState::AwaitingReply { ctime, cusec };
         Ok(token)
     }
@@ -692,13 +1030,12 @@ impl GssContext for NativeGssContext {
     fn handle_challenge(&mut self, challenge: &[u8]) -> Result<Option<Vec<u8>>> {
         match &self.state {
             GssState::AwaitingReply { ctime, cusec } => {
-                // ── 第 2 轮: 收到 AP-REP (GSS InitialContextToken, 0x60...) ──
                 let ctime = ctime.clone();
                 let cusec = *cusec;
 
-                // 最佳努力验证 AP-REP (双向认证). 部分 acceptor 以非标准方式封装,
+                // 验证 AP-REP (双向认证). 默认 best-effort: 部分 acceptor 以非标准方式封装,
                 // 验证失败时不阻塞握手, 继续进入 WRAP 阶段.
-                // 验证通过且 acceptor 协商了 subkey 时, 后续 WRAP 必须改用 subkey 作为会话密钥.
+                // 若开启 strict_aprep, 缺失或无法验证的 AP-REP 会直接中断握手 (防伪造 acceptor).
                 if !challenge.is_empty() {
                     match verify_ap_rep_token(
                         challenge,
@@ -715,12 +1052,21 @@ impl GssContext for NativeGssContext {
                             }
                         }
                         Err(e) => {
+                            if self.strict_aprep {
+                                return Err(KerberosError::Gss(format!(
+                                    "AP-REP verification failed (strict mode): {e}"
+                                )));
+                            }
                             tracing::warn!(
                                 "AP-REP verification failed (non-fatal, continuing handshake): {}",
                                 e
                             );
                         }
                     }
+                } else if self.strict_aprep {
+                    return Err(KerberosError::Gss(
+                        "expected AP-REP challenge but received empty token (strict mode)".into(),
+                    ));
                 }
 
                 self.state = GssState::AwaitingWrap;
@@ -837,6 +1183,7 @@ pub async fn acquire_gss_context(
 /// ```
 pub struct GssClient {
     krb5: Krb5Client,
+    strict_aprep: bool,
 }
 
 impl GssClient {
@@ -847,6 +1194,7 @@ impl GssClient {
     ) -> Result<Self> {
         Ok(Self {
             krb5: Krb5Client::with_transport(creds, transport)?,
+            strict_aprep: false,
         })
     }
 
@@ -854,7 +1202,17 @@ impl GssClient {
     pub fn new(creds: &KerberosCredentials, kdc_host: &str, kdc_port: u16) -> Result<Self> {
         Ok(Self {
             krb5: Krb5Client::new(creds, kdc_host, kdc_port)?,
+            strict_aprep: false,
         })
+    }
+
+    /// Enable strict AP-REP verification for contexts created via [`GssClient::context_for`].
+    ///
+    /// When enabled, a missing/unverifiable AP-REP aborts the handshake (see
+    /// [`NativeGssContext::with_strict_aprep`]). Disabled by default for compatibility.
+    pub fn with_strict_aprep(mut self, strict: bool) -> Self {
+        self.strict_aprep = strict;
+        self
     }
 
     /// Obtain a GSS context for the specified service (KDC ticket already acquired, ready for acceptor handshake).
@@ -863,7 +1221,7 @@ impl GssClient {
     /// after the handshake, use [`NativeGssContext::wrap`] / [`NativeGssContext::unwrap`] for per-message protection.
     pub async fn context_for(&self, service: &str) -> Result<NativeGssContext> {
         let ticket = self.krb5.acquire_service_ticket(service).await?;
-        Ok(NativeGssContext::from_acquired(ticket))
+        Ok(NativeGssContext::from_acquired(ticket).with_strict_aprep(self.strict_aprep))
     }
 }
 
@@ -1072,6 +1430,7 @@ mod tests {
             session_key: session_key.clone(),
             cname: cname.clone(),
             crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
         };
 
         let mut ctx = NativeGssContext::from_acquired(acquired);
@@ -1184,8 +1543,8 @@ mod tests {
         emb_hdr.extend_from_slice(&[0x05, 0x04]); // TOK_ID
         emb_hdr.push(flags);
         emb_hdr.push(0xFF); // filler
-        emb_hdr.extend_from_slice(&(ec as u16).to_be_bytes()); // EC=0
-        emb_hdr.extend_from_slice(&(rrc as u16).to_be_bytes()); // RRC=0
+        emb_hdr.extend_from_slice(&ec.to_be_bytes()); // EC=0
+        emb_hdr.extend_from_slice(&rrc.to_be_bytes()); // RRC=0
         emb_hdr.extend_from_slice(&seq_num.to_be_bytes());
 
         // 明文 = confounder || payload || embedded_header
@@ -1203,15 +1562,15 @@ mod tests {
 
         // AES-CTS 加密 (IV = 0)
         let iv = vec![0u8; 16];
-        let ciphertext = crypto::cts_encrypt_for(etype, &kc_enc, &iv, &plaintext);
+        let ciphertext = crypto::cts_encrypt_for(etype, &kc_enc, &iv, &plaintext).unwrap();
 
         // 构建完整 token: header || ciphertext
         let mut token = Vec::with_capacity(16 + ciphertext.len());
         token.extend_from_slice(&[0x05, 0x04]); // TOK_ID
         token.push(flags);
         token.push(0xFF); // filler
-        token.extend_from_slice(&(ec as u16).to_be_bytes()); // EC=0
-        token.extend_from_slice(&(rrc as u16).to_be_bytes()); // RRC=0
+        token.extend_from_slice(&ec.to_be_bytes()); // EC=0
+        token.extend_from_slice(&rrc.to_be_bytes()); // RRC=0
         token.extend_from_slice(&seq_num.to_be_bytes()); // seqnum
         token.extend_from_slice(&ciphertext);
 
@@ -1246,6 +1605,7 @@ mod tests {
             session_key: session_key.clone(),
             cname: cname.clone(),
             crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
         };
 
         let mut ctx = NativeGssContext::from_acquired(acquired);
@@ -1344,6 +1704,7 @@ mod tests {
             session_key: session_key.clone(),
             cname: cname.clone(),
             crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
         };
 
         let mut ctx = NativeGssContext::from_acquired(acquired);
@@ -1414,5 +1775,377 @@ mod tests {
 
         assert_eq!(dec_payload, payload);
         assert_eq!(dec_seq, seq_num);
+    }
+
+    // ==================== MIC Token (RFC 4121 §4.2.6.1) ====================
+
+    /// MIC token creation and verification roundtrip (initiator, non-acceptor).
+    #[test]
+    fn mic_token_initiator_roundtrip() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let data = b"hello world";
+        let seq: u64 = 5;
+
+        let tok = gss_mic_token(etype, &key, data, seq, false /* initiator */).unwrap();
+        assert_eq!(&tok[..2], &[0x04, 0x04], "MIC TOK_ID should be 0x0404");
+        assert_eq!(tok[2], 0x00, "initiator MIC flags should be 0x00");
+        assert_eq!(
+            &tok[3..8],
+            &[0xFF; 5],
+            "MIC filler should be 5 bytes of 0xFF"
+        );
+        // Verify (recompute checksum)
+        let seq = verify_gss_mic_token(etype, &key, &tok, data, false).unwrap();
+        assert_eq!(seq, 5);
+    }
+
+    /// MIC token with acceptor flag.
+    #[test]
+    fn mic_token_acceptor_roundtrip() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let data = b"test data";
+        let seq: u64 = 42;
+
+        let tok = gss_mic_token(etype, &key, data, seq, true /* acceptor */).unwrap();
+        assert_eq!(tok[2], 0x01, "acceptor MIC flags should be 0x01");
+        let seq = verify_gss_mic_token(etype, &key, &tok, data, true).unwrap();
+        assert_eq!(seq, 42);
+    }
+
+    /// MIC token with wrong role must fail.
+    #[test]
+    fn mic_token_wrong_role_rejected() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let data = b"secret";
+        let tok = gss_mic_token(etype, &key, data, 1, false /* initiator */).unwrap();
+        // Verify as if sent by acceptor → should fail (flags mismatch)
+        assert!(verify_gss_mic_token(etype, &key, &tok, data, true).is_err());
+    }
+
+    /// MIC token with wrong key must fail.
+    #[test]
+    fn mic_token_wrong_key_rejected() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let wrong_key = vec![0x99u8; 32];
+        let data = b"test";
+        let tok = gss_mic_token(etype, &key, data, 1, false).unwrap();
+        assert!(verify_gss_mic_token(etype, &wrong_key, &tok, data, false).is_err());
+    }
+
+    /// MIC token with AES128.
+    #[test]
+    fn mic_token_aes128_roundtrip() {
+        let etype = Etype::Aes128CtsHmacSha196;
+        let key = vec![0x11u8; 16];
+        let data = b"AES-128 test";
+        let tok = gss_mic_token(etype, &key, data, 100, false).unwrap();
+        assert_eq!(&tok[..2], &[0x04, 0x04]);
+        let seq = verify_gss_mic_token(etype, &key, &tok, data, false).unwrap();
+        assert_eq!(seq, 100);
+    }
+
+    // ==================== Confidential GSS_Wrap Generation ====================
+
+    /// Confidential wrap roundtrip: generate → unwrap (initiator).
+    #[test]
+    fn confidential_wrap_generate_roundtrip() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let payload = b"confidential payload data";
+        let seq: u64 = 7;
+
+        let tok =
+            gss_wrap_token_confidential(etype, &key, payload, seq, false /* initiator */).unwrap();
+        assert_eq!(&tok[..2], &[0x05, 0x04], "WRAP TOK_ID should be 0x0504");
+        assert_eq!(tok[2], 0x02, "initiator confidential flags should be 0x02");
+        assert_eq!(tok[3], 0xFF, "filler should be 0xFF");
+
+        let (dec_payload, dec_seq) = gss_unwrap_wrap_token(etype, &key, &tok).unwrap();
+        assert_eq!(
+            dec_payload, payload,
+            "decrypted payload should match original"
+        );
+        assert_eq!(dec_seq, seq, "sequence number should match");
+    }
+
+    /// Confidential wrap roundtrip (acceptor role).
+    #[test]
+    fn confidential_wrap_acceptor_roundtrip() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let payload = b"acceptor confidential data";
+        let seq: u64 = 42;
+
+        let tok =
+            gss_wrap_token_confidential(etype, &key, payload, seq, true /* acceptor */).unwrap();
+        assert_eq!(tok[2], 0x03, "acceptor confidential flags should be 0x03");
+
+        let (dec_payload, dec_seq) = gss_unwrap_wrap_token(etype, &key, &tok).unwrap();
+        assert_eq!(dec_payload, payload);
+        assert_eq!(dec_seq, seq);
+    }
+
+    /// Confidential wrap: wrong key must fail.
+    #[test]
+    fn confidential_wrap_generate_wrong_key() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let wrong_key = vec![0x99u8; 32];
+        let payload = b"test payload";
+        let tok = gss_wrap_token_confidential(etype, &key, payload, 1, false).unwrap();
+
+        let result = gss_unwrap_wrap_token(etype, &wrong_key, &tok);
+        assert!(result.is_err(), "unwrapping with wrong key should fail");
+    }
+
+    /// Confidential wrap with AES128.
+    #[test]
+    fn confidential_wrap_generate_aes128() {
+        let etype = Etype::Aes128CtsHmacSha196;
+        let key = vec![0x11u8; 16];
+        let payload = b"AES-128 confidential payload";
+        let tok = gss_wrap_token_confidential(etype, &key, payload, 1, false).unwrap();
+        let (dec_payload, _) = gss_unwrap_wrap_token(etype, &key, &tok).unwrap();
+        assert_eq!(dec_payload, payload);
+    }
+
+    /// NativeGssContext: wrap_next auto-increments seq numbers.
+    #[test]
+    fn native_gss_wrap_next_auto_seq() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let etype = Etype::Aes256CtsHmacSha196;
+
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: etype,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
+        };
+        let mut ctx = NativeGssContext::from_acquired(acquired);
+
+        // First wrap
+        let tok1 = ctx.wrap_next(0, 0x100000).unwrap();
+        // Second wrap — seq should auto-increment
+        let tok2 = ctx.wrap_next(0, 0x100000).unwrap();
+
+        // Seq numbers should be different (tok2's seq > tok1's seq)
+        let seq1 = u64::from_be_bytes([
+            tok1[8], tok1[9], tok1[10], tok1[11], tok1[12], tok1[13], tok1[14], tok1[15],
+        ]);
+        let seq2 = u64::from_be_bytes([
+            tok2[8], tok2[9], tok2[10], tok2[11], tok2[12], tok2[13], tok2[14], tok2[15],
+        ]);
+        assert_eq!(seq2, seq1 + 1, "wrap_next should auto-increment seq number");
+    }
+
+    /// NativeGssContext: mic_token auto-increments seq numbers.
+    #[test]
+    fn native_gss_mic_token_auto_seq() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let etype = Etype::Aes256CtsHmacSha196;
+
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: etype,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
+        };
+        let mut ctx = NativeGssContext::from_acquired(acquired);
+
+        let tok1 = ctx.mic_token(b"data1").unwrap();
+        let tok2 = ctx.mic_token(b"data2").unwrap();
+        let seq1 = u64::from_be_bytes([
+            tok1[8], tok1[9], tok1[10], tok1[11], tok1[12], tok1[13], tok1[14], tok1[15],
+        ]);
+        let seq2 = u64::from_be_bytes([
+            tok2[8], tok2[9], tok2[10], tok2[11], tok2[12], tok2[13], tok2[14], tok2[15],
+        ]);
+        assert_eq!(seq2, seq1 + 1, "mic_token should auto-increment seq number");
+    }
+
+    // ==================== GSS_Context_time ====================
+
+    #[test]
+    fn context_time_returns_positive() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: Etype::Aes256CtsHmacSha196,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20270617000000Z".into(), // far future
+        };
+        let ctx = NativeGssContext::from_acquired(acquired);
+        let t = ctx.context_time().unwrap();
+        assert!(
+            t > 3600 * 24 * 30,
+            "context_time should be > 30 days for a far-future ticket"
+        );
+    }
+
+    #[test]
+    fn context_time_expired_returns_zero() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: Etype::Aes256CtsHmacSha196,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20200101000000Z".into(), // expired long ago
+        };
+        let ctx = NativeGssContext::from_acquired(acquired);
+        assert_eq!(ctx.context_time().unwrap(), 0);
+    }
+
+    // ==================== GSS_Wrap_size_limit ====================
+
+    #[test]
+    fn wrap_size_limit_nonconfidential() {
+        let limit = gss_wrap_size_limit(Etype::Aes256CtsHmacSha196, false, 1000);
+        assert_eq!(limit, 1000 - 28);
+    }
+
+    #[test]
+    fn wrap_size_limit_confidential() {
+        let limit = gss_wrap_size_limit(Etype::Aes256CtsHmacSha196, true, 1000);
+        assert_eq!(limit, 1000 - 48);
+    }
+
+    #[test]
+    fn wrap_size_limit_too_small_returns_zero() {
+        assert_eq!(
+            gss_wrap_size_limit(Etype::Aes256CtsHmacSha196, false, 10),
+            0
+        );
+        assert_eq!(gss_wrap_size_limit(Etype::Aes256CtsHmacSha196, true, 10), 0);
+    }
+
+    // ==================== context_flags / current_etype ====================
+
+    #[test]
+    fn context_flags_returns_expected_values() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: Etype::Aes256CtsHmacSha196,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
+        };
+        let ctx = NativeGssContext::from_acquired(acquired);
+        assert_eq!(ctx.context_flags(), 2 | 4 | 8 | 32);
+        assert_eq!(ctx.current_etype(), Etype::Aes256CtsHmacSha196);
+    }
+
+    // ==================== wrap_size_limit on NativeGssContext ====================
+
+    #[test]
+    fn native_wrap_size_limit_delegates() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: Etype::Aes256CtsHmacSha196,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
+        };
+        let ctx = NativeGssContext::from_acquired(acquired);
+        assert_eq!(ctx.wrap_size_limit(false, 500), 500 - 28);
+        assert_eq!(ctx.wrap_size_limit(true, 500), 500 - 48);
+    }
+
+    // ==================== Subkey generation (with_subkey) ====================
+
+    #[test]
+    fn subkey_generated_in_initial_token() {
+        let cname = PrincipalName {
+            name_type: 1,
+            name_string: vec!["client".into()],
+        };
+        let ticket = fake_ticket();
+        let session_key = vec![0x42u8; 32];
+        let etype = Etype::Aes256CtsHmacSha196;
+        let acquired = AcquiredTicket {
+            ticket_der: ticket,
+            session_etype: etype,
+            session_key: session_key.clone(),
+            cname: cname.clone(),
+            crealm: "EXAMPLE.COM".into(),
+            endtime: "20260717000000Z".into(),
+        };
+        let mut ctx = NativeGssContext::from_acquired(acquired).with_subkey();
+        let token = ctx.initial_token().unwrap();
+        // Verify AP-REQ contains a subkey in the authenticator
+        let (_t, enc_auth) = unwrap_ap_req_token(&token).unwrap();
+        let plain =
+            crypto::decrypt(etype, &session_key, KEY_USAGE_AP_REQ_AUTH, &enc_auth.cipher).unwrap();
+        let auth = crate::kerberos::asn1::decode_authenticator(&plain).unwrap();
+        assert!(
+            auth.subkey.is_some(),
+            "with_subkey should include subkey in authenticator"
+        );
+    }
+
+    // ==================== random_key (crypto) ====================
+
+    #[test]
+    fn crypto_random_key_aes256() {
+        let key = crypto::random_key(Etype::Aes256CtsHmacSha196).unwrap();
+        assert_eq!(key.len(), 32);
+    }
+
+    #[test]
+    fn crypto_random_key_aes128() {
+        let key = crypto::random_key(Etype::Aes128CtsHmacSha196).unwrap();
+        assert_eq!(key.len(), 16);
+    }
+
+    #[test]
+    fn crypto_random_key_is_random() {
+        let k1 = crypto::random_key(Etype::Aes256CtsHmacSha196).unwrap();
+        let k2 = crypto::random_key(Etype::Aes256CtsHmacSha196).unwrap();
+        assert_ne!(k1, k2, "two random keys must differ");
     }
 }

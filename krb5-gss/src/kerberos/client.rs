@@ -20,6 +20,11 @@ use crate::kerberos::messages::{
 };
 use crate::kerberos::transport::KdcTransport;
 
+/// PA-PAC-REQUEST padata value: `SEQUENCE { [0] include-pac BOOLEAN TRUE }`.
+/// DER encoding: `30 05 a0 03 01 01 ff`. Sent in AS-REQ/TGS-REQ to ask the KDC to
+/// include a PAC in the reply (required by Java/Kafka acceptors).
+const PAC_REQUEST_VALUE: &[u8] = &[0x30, 0x05, 0xa0, 0x03, 0x01, 0x01, 0xff];
+
 /// Service ticket + session key acquired from the KDC.
 #[derive(Clone)]
 pub struct AcquiredTicket {
@@ -28,6 +33,9 @@ pub struct AcquiredTicket {
     pub session_key: Vec<u8>,
     pub cname: PrincipalName,
     pub crealm: String,
+    /// End time of the service ticket (GeneralizedTime `YYYYMMDDHHMMSSZ`).
+    /// Used by GSS_Context_time to report remaining context lifetime.
+    pub endtime: String,
 }
 
 /// Temporary holder for the TGT decrypted from AS-REP (input to TGS-REQ).
@@ -146,32 +154,31 @@ impl KerberosClient {
             return self.parse_as_rep_inner(&resp);
         }
         if fb == 0x7E {
-            if let Ok(err) = decode_krb_error(&resp) {
-                if err.error_code == 25 {
-                    let req2 = self.build_as_req_auth(entry.etype, &entry.key, entry.kvno)?;
-                    let resp2 = transport.exchange(&self.realm, &req2).await?;
-                    let fb2 = resp2.first().copied().unwrap_or(0);
-                    if fb2 == TAG_AS_REP {
-                        return self.parse_as_rep_inner(&resp2);
-                    }
-                    if fb2 == 0x7E {
-                        if let Ok(e2) = decode_krb_error(&resp2) {
-                            return Err(KerberosError::Protocol(format!(
-                                "KDC error code={}",
-                                e2.error_code
-                            )));
-                        }
-                    }
-                    return Err(KerberosError::Protocol(
-                        "KRB-ERROR after PA-ENC-TIMESTAMP retry".into(),
-                    ));
-                }
+            let err = decode_krb_error(&resp)
+                .map_err(|_| KerberosError::Protocol("KRB-ERROR parse failed".into()))?;
+            if err.error_code != 25 {
                 return Err(KerberosError::Protocol(format!(
                     "KDC error code={}",
                     err.error_code
                 )));
             }
-            return Err(KerberosError::Protocol("KRB-ERROR parse failed".into()));
+            let req2 = self.build_as_req_auth(entry.etype, &entry.key, entry.kvno)?;
+            let resp2 = transport.exchange(&self.realm, &req2).await?;
+            let fb2 = resp2.first().copied().unwrap_or(0);
+            if fb2 == TAG_AS_REP {
+                return self.parse_as_rep_inner(&resp2);
+            }
+            if fb2 == 0x7E
+                && let Ok(e2) = decode_krb_error(&resp2)
+            {
+                return Err(KerberosError::Protocol(format!(
+                    "KDC error code={}",
+                    e2.error_code
+                )));
+            }
+            return Err(KerberosError::Protocol(
+                "KRB-ERROR after PA-ENC-TIMESTAMP retry".into(),
+            ));
         }
         Err(KerberosError::Protocol(format!(
             "unexpected first response tag 0x{fb:02x}",
@@ -183,18 +190,7 @@ impl KerberosClient {
         let till = chrono_like_add_days(1);
         let rtime = chrono_like_add_days(7);
         // 使用真正的随机 nonce 避免 KDC 回放缓存
-        let nonce: i32 = {
-            let mut buf = [0u8; 4];
-            if getrandom::fill(&mut buf).is_ok() {
-                i32::from_be_bytes(buf).abs()
-            } else {
-                let n = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as i32)
-                    .unwrap_or(0);
-                n.abs().max(1)
-            }
-        };
+        let nonce: i32 = random_nonce();
         // 同 kinit: forwardable=bit1, renewable=bit8
         let kdc_options = [0x40u8, 0x80, 0x00, 0x00];
         let body = KdcReqBody {
@@ -209,7 +205,7 @@ impl KerberosClient {
             till,
             rtime: Some(rtime),
             nonce,
-            etype: vec![18, 17, 20, 19, 16, 23, 25, 26],
+            etype: vec![20, 19, 18, 17],
             addresses: None,
         };
         encode_kdc_req_body(&body)
@@ -218,21 +214,12 @@ impl KerberosClient {
     /// 构建 AS-REQ (带 PA-PAC-REQUEST padata，对齐 kinit 行为)。
     fn build_as_req(&self) -> Result<Vec<u8>> {
         let body_der = self.build_as_req_body();
-        // kinit 发送 PA-PAC-REQUEST (type=150) padata
-        let pa1 = PaData {
-            padata_type: 150,
-            padata_value: vec![],
+        // PA-PAC-REQUEST (type=128): ask the KDC to include a PAC in the AS-REP (TGT).
+        let pa = PaData {
+            padata_type: 128,
+            padata_value: PAC_REQUEST_VALUE.to_vec(),
         };
-        let pa2 = PaData {
-            padata_type: 149,
-            padata_value: vec![],
-        };
-        let padasta_der = {
-            let mut seq = Vec::new();
-            seq.extend(encode_pa_data(&pa1));
-            seq.extend(encode_pa_data(&pa2));
-            crate::kerberos::asn1::tlv_seq(&seq)
-        };
+        let padasta_der = crate::kerberos::asn1::tlv_seq(&encode_pa_data(&pa));
         Ok(encode_kdc_req(
             PVNO,
             MSG_AS_REQ,
@@ -334,11 +321,7 @@ impl KerberosClient {
         // 1) 先构建 KDC-REQ-BODY (需要 body_der 做 checksum)
         let (sname_type, sname_comps) = parse_service_name(service);
         let till = chrono_like_add_days(1);
-        let nonce: i32 = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i32)
-            .unwrap_or(0))
-        .abs();
+        let nonce: i32 = random_nonce();
         let body = KdcReqBody {
             // canonicalize=bit16 (MIT krb5 KDC_OPT_CANONICALIZE=0x00010000).
             // KDC 需要 canonicalize 标志才会返回 PAC 授权数据。
@@ -353,7 +336,7 @@ impl KerberosClient {
             till: till.clone(),
             rtime: None,
             nonce,
-            etype: vec![tgt.session_etype as i32, 17, 20],
+            etype: vec![tgt.session_etype as i32, 17, 19, 20],
             addresses: None,
         };
         let body_der = encode_kdc_req_body(&body);
@@ -371,7 +354,8 @@ impl KerberosClient {
         let cksumtype_val: i32 = match tgt.session_etype {
             crypto::Etype::Aes256CtsHmacSha196 => 0x0010,
             crypto::Etype::Aes128CtsHmacSha196 => 0x000F,
-            _ => 0x0010,
+            crypto::Etype::Aes128CtsHmacSha256128 => 0x0013,
+            crypto::Etype::Aes256CtsHmacSha384192 => 0x0014,
         };
         let cksum = {
             // Checksum ::= SEQUENCE { cksumtype [0] INTEGER, checksum [1] OCTET STRING }
@@ -415,7 +399,7 @@ impl KerberosClient {
         //    否则 Java broker 收到无 PAC 的票据后可能直接拒绝认证。
         let pa_pac = PaData {
             padata_type: 128,
-            padata_value: vec![0x01, 0x01, 0xFF], // DER BOOLEAN TRUE
+            padata_value: PAC_REQUEST_VALUE.to_vec(),
         };
         let ap_req_der = encode_ap_req(&tgt.ticket_der, &enc_auth);
         let pa_tgs = PaData {
@@ -462,6 +446,7 @@ impl KerberosClient {
             session_key: enc_part.key.keyvalue,
             cname: self.cname.clone(),
             crealm: self.realm.clone(),
+            endtime: enc_part.endtime,
         })
     }
 }
@@ -486,6 +471,20 @@ fn parse_service_name(service: &str) -> (i32, Vec<String>) {
         (NT_SRV_HST, parts)
     } else {
         (NT_SRV_INST, parts)
+    }
+}
+
+/// 生成密码学安全的随机 32-bit nonce，用于 KDC 请求。
+fn random_nonce() -> i32 {
+    let mut buf = [0u8; 4];
+    if getrandom::fill(&mut buf).is_ok() {
+        i32::from_be_bytes(buf).abs().max(1)
+    } else {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i32)
+            .unwrap_or(0);
+        n.abs().max(1)
     }
 }
 

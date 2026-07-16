@@ -106,7 +106,7 @@ fn collect_tlvs(data: &[u8]) -> Result<Vec<(u8, Vec<u8>)>> {
     Ok(out)
 }
 
-fn field<'a>(fields: &'a [(u8, Vec<u8>)], tag: u8) -> Result<&'a [u8]> {
+fn field(fields: &[(u8, Vec<u8>)], tag: u8) -> Result<&[u8]> {
     fields
         .iter()
         .find(|(t, _)| *t == tag)
@@ -556,10 +556,8 @@ pub fn encode_pa_data(pd: &PaData) -> Vec<u8> {
     tlv_seq(&inner)
 }
 
-/// 编码 KDC-REQ-BODY (MIT krb5 实现约定)。
-///
-/// MIT krb5 使用的 context tag 编号与 RFC 4120 印刷版不同:
-/// RFC `[6]nonce` → MIT `[7]nonce`, RFC `[7]etype` → MIT `[8]etype` 等。
+/// Encode KDC-REQ-BODY with standard context tag numbering (RFC 4120 §5.4.2):
+/// `[0]kdc-options [1]cname [2]realm [3]sname [4]from [5]till [6]rtime [7]nonce [8]etype [9]addresses`.
 pub fn encode_kdc_req_body(body: &KdcReqBody) -> Vec<u8> {
     let mut inner = Vec::new();
     // [0] kdc-options: BIT STRING (1 byte unused + 4 bytes flags)

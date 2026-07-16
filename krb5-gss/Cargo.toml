@@ -1,33 +1,40 @@
 [package]
 name = "krb5-gss"
-version = "0.1.0-beta.2"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["zzzdong <kuwater@163.com>"]
 description = "Pure Rust Kerberos protocol engine and krb5 GSS-API mechanism (initiator), no FFI"
 documentation = "https://docs.rs/krb5-gss"
 repository = "https://github.com/zzzdong/kafka_client"
+homepage = "https://github.com/zzzdong/kafka_client/tree/main/krb5-gss"
+readme = "README.md"
 license = "Apache-2.0 OR MIT"
+categories = ["authentication", "cryptography", "network-programming"]
+keywords = ["kerberos", "gssapi", "kafka", "sasl", "krb5"]
 
 [dependencies]
-# ASN.1 DER encoding/decoding (Kerberos messages)
-der = "0.8"
-# Block ciphers and modes (AES + CTS CS3 variant per RFC 3962)
+# Block ciphers and modes (AES + CTS CS3 variant per RFC 3962/8009)
 aes = "0.9"
 cts = "0.7"
-# Other etype support (currently skeleton, enable later)
-des = "0.9"
-rc4 = "0.2"
 hmac = "0.13"
 sha1 = "0.11"
 sha2 = "0.11"
-digest = "0.11.3"
-# Basics
-thiserror = { workspace = true }
-base64 = "0.22"
-generic-array = "0.14"
+# Feature gating
+cfg-if = "1"
+# Error handling
+thiserror = "2"
+# Logging / diagnostics
 tracing = "0.1"
-# Cross-platform secure random
+# Cross-platform secure random (used for confounders, nonces, subkeys)
 getrandom = "0.4"
-# KDC network transport: built-in TokioKdcTransport based on tokio TcpStream
-tokio = { version = "1", features = ["net", "io-util"] }
+# KDC network transport (built-in TokioKdcTransport)
+tokio = { version = "1", features = ["net", "io-util"], optional = true }
+
+[features]
+default = ["tokio-transport"]
+tokio-transport = ["tokio"]
+
+[package.metadata.docs.rs]
+features = ["tokio-transport"]
+rustdoc-args = ["--cfg", "docsrs"]

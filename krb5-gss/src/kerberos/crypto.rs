@@ -5,20 +5,33 @@
 //! - [`string_to_key`] (RFC 3962 / RFC 8009)
 //! - AES-CTS (RFC 3962 ciphertext stealing, CS3 variant) encryption/decryption
 //! - `EncryptedData` envelope (confounder + CTS + HMAC truncation)
+//! - RFC 8009 etypes 19/20 (AES-CTS-HMAC-SHA256/384)
 use crate::error::{KerberosError, Result};
 use aes::Aes128;
 use aes::Aes256;
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit as AesKeyInit};
 use cts::{CbcCs3, Decrypt as CtsDecrypt, Encrypt as CtsEncrypt, KeyIvInit as CtsKeyIvInit};
-use hmac::Hmac;
+use sha2::{Sha256, Sha384};
 
-use sha2::Sha384;
-
-/// Kerberos 加密类型 (etype)。
+/// Kerberos encryption type (etype).
+///
+/// Supported types:
+/// - `Aes128CtsHmacSha196` (17) — RFC 3962
+/// - `Aes256CtsHmacSha196` (18) — RFC 3962
+/// - `Aes128CtsHmacSha256128` (19) — RFC 8009
+/// - `Aes256CtsHmacSha384192` (20) — RFC 8009
+///
+/// All non-deprecated AES-based etypes are implemented (17-20).
+/// Other etypes (DES, DES3, RC4-hmac = 23) are deprecated per RFC 8429
+/// and intentionally excluded. They are deliberately left out of the
+/// AS-REQ/TGS-REQ etype lists to prevent the KDC from selecting them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Etype {
     Aes128CtsHmacSha196 = 17,
     Aes256CtsHmacSha196 = 18,
+    /// AES-128-CTS-HMAC-SHA256-128 (RFC 8009).
+    Aes128CtsHmacSha256128 = 19,
+    /// AES-256-CTS-HMAC-SHA384-192 (RFC 8009).
     Aes256CtsHmacSha384192 = 20,
 }
 
@@ -27,21 +40,41 @@ impl Etype {
         match v {
             17 => Some(Etype::Aes128CtsHmacSha196),
             18 => Some(Etype::Aes256CtsHmacSha196),
+            19 => Some(Etype::Aes128CtsHmacSha256128),
             20 => Some(Etype::Aes256CtsHmacSha384192),
             _ => None,
         }
     }
     pub fn key_len(&self) -> usize {
         match self {
-            Etype::Aes128CtsHmacSha196 => 16,
+            Etype::Aes128CtsHmacSha196 | Etype::Aes128CtsHmacSha256128 => 16,
             Etype::Aes256CtsHmacSha196 | Etype::Aes256CtsHmacSha384192 => 32,
         }
     }
-    /// HMAC truncation length (bytes): etype 17/18 → 96-bit, etype 20 → 192-bit.
+    /// HMAC truncation length in bytes.
+    /// RFC 3962 (etypes 17/18): 96-bit = 12 bytes.
+    /// RFC 8009 (etype 19): 128-bit = 16 bytes.
+    /// RFC 8009 (etype 20): 192-bit = 24 bytes.
     pub fn mac_len(&self) -> usize {
         match self {
             Etype::Aes128CtsHmacSha196 | Etype::Aes256CtsHmacSha196 => 12,
+            Etype::Aes128CtsHmacSha256128 => 16,
             Etype::Aes256CtsHmacSha384192 => 24,
+        }
+    }
+    /// Whether this etype uses the RFC 8009 KDF (HMAC-SHA2 based).
+    pub fn is_rfc8009(&self) -> bool {
+        matches!(
+            self,
+            Etype::Aes128CtsHmacSha256128 | Etype::Aes256CtsHmacSha384192
+        )
+    }
+    /// The enctype name string used in RFC 8009 string-to-key salt prefix.
+    pub fn rfc8009_name(&self) -> &'static str {
+        match self {
+            Etype::Aes128CtsHmacSha256128 => "aes128-cts-hmac-sha256-128",
+            Etype::Aes256CtsHmacSha384192 => "aes256-cts-hmac-sha384-192",
+            _ => unreachable!(),
         }
     }
 }
@@ -62,13 +95,13 @@ fn rotate_right(data: &[u8], nbits: usize) -> Vec<u8> {
     let nbytes = (nbits / 8) % len;
     let remain = nbits % 8;
     let mut result = vec![0u8; len];
-    for i in 0..len {
+    for (i, slot) in result.iter_mut().enumerate() {
         let idx1 = (len + i - nbytes) % len;
         let idx2 = (len + i - nbytes - 1) % len;
         if remain == 0 {
-            result[i] = data[idx1];
+            *slot = data[idx1];
         } else {
-            result[i] = ((data[idx1] >> remain) | ((data[idx2] << (8 - remain)) & 0xff)) as u8;
+            *slot = (data[idx1] >> remain) | (data[idx2] << (8 - remain));
         }
     }
     result
@@ -135,46 +168,97 @@ pub fn nfold(data: &[u8], size: usize) -> Vec<u8> {
     result
 }
 
-// ------------------------- string-to-key (RFC 3962 / 8009) -------------------------
+// ------------------------- string-to-key & HMAC helpers -------------------------
 
-/// HMAC-SHA1 手写实现 (sha1 0.10 使用 digest 0.10, 与 hmac 0.13 的 digest 0.11 不兼容)。
+/// HMAC-SHA1 (RFC 2104), implemented via the `hmac` crate.
 fn hmac_sha1(key: &[u8], data: &[u8]) -> Vec<u8> {
-    use sha1::Digest;
-    const BLOCK: usize = 64;
-    let mut k = if key.len() > BLOCK {
-        sha1::Sha1::digest(key).to_vec()
-    } else {
-        key.to_vec()
-    };
-    k.resize(BLOCK, 0);
-    let mut ipad = k.clone();
-    let mut opad = k.clone();
-    for b in &mut ipad {
-        *b ^= 0x36;
-    }
-    for b in &mut opad {
-        *b ^= 0x5c;
-    }
-    let mut inner = ipad;
-    inner.extend_from_slice(data);
-    let inner_hash = sha1::Sha1::digest(&inner);
-    let mut outer = opad;
-    outer.extend_from_slice(&inner_hash);
-    sha1::Sha1::digest(&outer).to_vec()
+    use hmac::{Hmac, Mac};
+    type HmacSha1 = Hmac<sha1::Sha1>;
+    let mut mac = HmacSha1::new_from_slice(key).expect("hmac sha1 key");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
 }
 
+/// HMAC-SHA-256 (RFC 8009 etype 19).
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(key).expect("hmac sha256 key");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// HMAC-SHA-384 (RFC 8009 etype 20).
 fn hmac_sha384(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut m = <Hmac<Sha384> as hmac::digest::KeyInit>::new_from_slice(key).expect("hmac sha384");
-    use hmac::Mac;
-    m.update(data);
-    m.finalize().into_bytes().to_vec()
+    use hmac::{Hmac, Mac};
+    type HmacSha384 = Hmac<Sha384>;
+    let mut mac = HmacSha384::new_from_slice(key).expect("hmac sha384 key");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
 }
 
-/// AES string-to-key (RFC 3962 §4 / RFC 8009)。
+// ------------------------- KDF-HMAC-SHA2 (RFC 8009 §3) -------------------------
+
+/// KDF-HMAC-SHA2 as defined in RFC 8009 §3.
 ///
-/// 流程:
-///   1. t1 = PBKDF2(password, salt, iter, key_length)
-///   2. K = DK(t1, "kerberos")   // 使用 HMAC 驱动 DK
+/// ```text
+/// K1 = HMAC-SHA-256/384(key, 0x00000001 | label | 0x00 | k)
+/// output = k-truncate(K1)
+/// ```
+///
+/// `label` is `usage(4B BE) | suffix(1B)` (same format as RFC 3961).
+/// `k` is the desired output length in bits (as 4-byte big-endian).
+pub fn kdf_hmac_sha2(etype: Etype, key: &[u8], label: &[u8], out_bits: u32) -> Vec<u8> {
+    let mut input = Vec::with_capacity(4 + label.len() + 1 + 4);
+    input.extend_from_slice(&1u32.to_be_bytes()); // iteration counter i=1
+    input.extend_from_slice(label);
+    input.push(0x00); // separator
+    input.extend_from_slice(&out_bits.to_be_bytes()); // k
+    let k_bytes = (out_bits / 8) as usize;
+    let h = match etype {
+        Etype::Aes128CtsHmacSha256128 => hmac_sha256(key, &input),
+        Etype::Aes256CtsHmacSha384192 => hmac_sha384(key, &input),
+        _ => unreachable!(),
+    };
+    h[..k_bytes].to_vec()
+}
+
+/// Derive a per-message key (Kc/Ke/Ki) for RFC 8009 etypes.
+///
+/// For etype 19: Kc=128, Ke=128, Ki=128 bits.
+/// For etype 20: Kc=192, Ke=256, Ki=192 bits.
+fn dk_rfc8009(etype: Etype, key: &[u8], constant: &[u8], out_bits: u32) -> Vec<u8> {
+    kdf_hmac_sha2(etype, key, constant, out_bits)
+}
+
+/// Return the output bit length for the given etype and suffix.
+/// - `0x99` (checksum): Kc → 128 (etype 19) or 192 (etype 20)
+/// - `0xAA` (encryption): Ke → 128 (etype 19) or 256 (etype 20)
+/// - `0x55` (integrity): Ki → 128 (etype 19) or 192 (etype 20)
+fn rfc8009_out_bits(etype: Etype, suffix: u8) -> u32 {
+    match (etype, suffix) {
+        (Etype::Aes128CtsHmacSha256128, 0x99) => 128,
+        (Etype::Aes128CtsHmacSha256128, 0xAA) => 128,
+        (Etype::Aes128CtsHmacSha256128, 0x55) => 128,
+        (Etype::Aes256CtsHmacSha384192, 0x99) => 192,
+        (Etype::Aes256CtsHmacSha384192, 0xAA) => 256,
+        (Etype::Aes256CtsHmacSha384192, 0x55) => 192,
+        _ => unreachable!(),
+    }
+}
+
+// ------------------------- string-to-key (RFC 3962 / RFC 8009) -------------------------
+
+/// AES string-to-key: dispatches to RFC 3962 or RFC 8009 based on etype.
+///
+/// For RFC 3962 (etypes 17/18):
+///   1. t1 = PBKDF2-HMAC-SHA1(password, salt, iter, key_length)
+///   2. K = DK(t1, "kerberos") via AES-based DR
+///
+/// For RFC 8009 (etypes 19/20):
+///   1. saltp = enctype-name | 0x00 | salt
+///   2. tkey = PBKDF2-HMAC-SHA256/384(password, saltp, iter, key_length)
+///   3. base-key = KDF-HMAC-SHA2(tkey, "kerberos", key_length)
 pub fn string_to_key(etype: Etype, password: &[u8], salt: &[u8], iter: u32) -> Result<Vec<u8>> {
     let kl = etype.key_len();
     match etype {
@@ -186,24 +270,31 @@ pub fn string_to_key(etype: Etype, password: &[u8], salt: &[u8], iter: u32) -> R
             let t = pbkdf2_hmac_sha1(password, salt, iter, kl)?;
             Ok(dk_aes_aes(&t, b"kerberos", kl))
         }
-        Etype::Aes256CtsHmacSha384192 => {
-            let t = pbkdf2_hmac_sha384(password, salt, iter, kl)?;
-            Ok(dk_aes_aes(&t, b"kerberos", kl))
+        Etype::Aes128CtsHmacSha256128 | Etype::Aes256CtsHmacSha384192 => {
+            let hmac_fn: fn(&[u8], &[u8]) -> Vec<u8> = match etype {
+                Etype::Aes128CtsHmacSha256128 => hmac_sha256,
+                Etype::Aes256CtsHmacSha384192 => hmac_sha384,
+                _ => unreachable!(),
+            };
+            // saltp = enctype-name | 0x00 | salt
+            let name = etype.rfc8009_name();
+            let mut saltp = Vec::with_capacity(name.len() + 1 + salt.len());
+            saltp.extend_from_slice(name.as_bytes());
+            saltp.push(0x00);
+            saltp.extend_from_slice(salt);
+            let tkey = pbkdf2(password, &saltp, iter, kl, hmac_fn)?;
+            let kl_bits = (kl as u32) * 8;
+            Ok(kdf_hmac_sha2(etype, &tkey, b"kerberos", kl_bits))
         }
     }
 }
 
-/// PBKDF2-HMAC-SHA1 (RFC 2898)。
+/// PBKDF2-HMAC-SHA1 (RFC 2898).
 fn pbkdf2_hmac_sha1(password: &[u8], salt: &[u8], iter: u32, dk_len: usize) -> Result<Vec<u8>> {
     pbkdf2(password, salt, iter, dk_len, hmac_sha1)
 }
 
-/// PBKDF2-HMAC-SHA384。
-fn pbkdf2_hmac_sha384(password: &[u8], salt: &[u8], iter: u32, dk_len: usize) -> Result<Vec<u8>> {
-    pbkdf2(password, salt, iter, dk_len, hmac_sha384)
-}
-
-/// 通用 PBKDF2 实现。
+/// Generic PBKDF2 implementation.
 fn pbkdf2(
     password: &[u8],
     salt: &[u8],
@@ -212,7 +303,7 @@ fn pbkdf2(
     hmac: impl Fn(&[u8], &[u8]) -> Vec<u8>,
 ) -> Result<Vec<u8>> {
     let h_len = hmac(password, b"").len();
-    let l = (dk_len + h_len - 1) / h_len;
+    let l = dk_len.div_ceil(h_len);
     let mut dk = Vec::with_capacity(l * h_len);
     for i in 1..=l as u32 {
         let mut u = hmac(password, &[salt, &i.to_be_bytes()].concat());
@@ -235,73 +326,146 @@ fn cts_encrypt<C: BlockCipherEncrypt + BlockCipherDecrypt + AesKeyInit>(
     key: &[u8],
     iv: &[u8],
     data: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
+    const BS: usize = 16;
     if data.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    if data.len() <= 16 {
-        // Single block: CBC encrypt zero-padded block, output first data.len() bytes
-        let cipher = <C as AesKeyInit>::new(key.try_into().unwrap());
-        let mut block = [0u8; 16];
+    if data.len() <= BS {
+        // Single block: AES (ECB mode) per RFC 3962 §5.
+        let cipher = <C as AesKeyInit>::new_from_slice(key)
+            .map_err(|e| KerberosError::Crypto(format!("invalid key length: {e}")))?;
+        let mut block = [0u8; BS];
         block[..data.len()].copy_from_slice(data);
-        let mut prev = [0u8; 16];
-        prev.copy_from_slice(iv);
-        for i in 0..16 {
-            block[i] ^= prev[i];
-        }
-        cipher.decrypt_block((&mut block[..]).try_into().unwrap());
-        return block[..data.len()].to_vec();
+        cipher.encrypt_block(
+            (&mut block[..])
+                .try_into()
+                .map_err(|_| KerberosError::Crypto("internal: block size mismatch".into()))?,
+        );
+        return Ok(block[..data.len()].to_vec());
     }
-    // Multi-block: use cts crate (CS3 variant, RFC 3962)
-    let cipher = CbcCs3::<C>::new_from_slices(key, iv).expect("invalid key/iv length");
+    // For exact block-size multiples (> 1 block): CBC + swap last two blocks (RFC 3962 CS3).
+    if data.len().is_multiple_of(BS) {
+        let cipher = <C as AesKeyInit>::new_from_slice(key)
+            .map_err(|e| KerberosError::Crypto(format!("invalid key length: {e}")))?;
+        let n_blocks = data.len() / BS;
+        let mut out = vec![0u8; data.len()];
+        let mut prev = [0u8; BS];
+        prev.copy_from_slice(iv);
+        for blk in 0..n_blocks {
+            let mut buf = [0u8; BS];
+            let start = blk * BS;
+            buf.copy_from_slice(&data[start..start + BS]);
+            for j in 0..BS {
+                buf[j] ^= prev[j];
+            }
+            cipher.encrypt_block(
+                (&mut buf[..])
+                    .try_into()
+                    .map_err(|_| KerberosError::Crypto("internal: block size mismatch".into()))?,
+            );
+            out[start..start + BS].copy_from_slice(&buf);
+            prev = buf;
+        }
+        // CS3: swap last two blocks
+        let last_two_start = out.len() - 2 * BS;
+        let mut swapped = out[last_two_start + BS..].to_vec();
+        swapped.extend_from_slice(&out[last_two_start..last_two_start + BS]);
+        out[last_two_start..].copy_from_slice(&swapped);
+        return Ok(out);
+    }
+    // Non-block-aligned multi-block: use cts crate (CbcCs3, CS3 variant, RFC 3962)
+    let cipher = CbcCs3::<C>::new_from_slices(key, iv)
+        .map_err(|e| KerberosError::Crypto(format!("invalid key/iv length: {e}")))?;
     let mut out = vec![0u8; data.len()];
     cipher
         .encrypt_b2b(data, &mut out)
-        .expect("CTS encrypt: data length > block size");
-    out
+        .map_err(|e| KerberosError::Crypto(format!("CTS encrypt failed: {e:?}")))?;
+    Ok(out)
 }
 
 fn cts_decrypt<C: BlockCipherEncrypt + BlockCipherDecrypt + AesKeyInit>(
     key: &[u8],
     iv: &[u8],
     data: &[u8],
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
+    const BS: usize = 16;
     if data.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    if data.len() <= 16 {
-        let cipher = <C as AesKeyInit>::new(key.try_into().unwrap());
-        let mut block = [0u8; 16];
+    if data.len() <= BS {
+        // Single block: AES decrypt (ECB mode) per RFC 3962 §5.
+        let cipher = <C as AesKeyInit>::new_from_slice(key)
+            .map_err(|e| KerberosError::Crypto(format!("invalid key length: {e}")))?;
+        let mut block = [0u8; BS];
         block[..data.len()].copy_from_slice(data);
-        let mut prev = [0u8; 16];
-        prev.copy_from_slice(iv);
-        for i in 0..16 {
-            block[i] ^= prev[i];
-        }
-        cipher.decrypt_block((&mut block[..]).try_into().unwrap());
-        return block[..data.len()].to_vec();
+        cipher.decrypt_block(
+            (&mut block[..])
+                .try_into()
+                .map_err(|_| KerberosError::Crypto("internal: block size mismatch".into()))?,
+        );
+        return Ok(block[..data.len()].to_vec());
     }
-    // Multi-block: use cts crate (CS3 variant, RFC 3962)
-    let cipher = CbcCs3::<C>::new_from_slices(key, iv).expect("invalid key/iv length");
+    // For exact block-size multiples (> 1 block):
+    // undo the CS3 swap first (swap last two blocks back), then CBC decrypt
+    if data.len().is_multiple_of(BS) {
+        let cipher = <C as AesKeyInit>::new_from_slice(key)
+            .map_err(|e| KerberosError::Crypto(format!("invalid key length: {e}")))?;
+        let n_blocks = data.len() / BS;
+        // Undo CS3 swap: swap last two ciphertext blocks back
+        let mut swapped = data.to_vec();
+        let last_two_start = swapped.len() - 2 * BS;
+        let mut reordered = swapped[last_two_start + BS..].to_vec();
+        reordered.extend_from_slice(&swapped[last_two_start..last_two_start + BS]);
+        swapped[last_two_start..].copy_from_slice(&reordered);
+
+        // Standard CBC decrypt
+        let mut out = vec![0u8; data.len()];
+        let mut prev = [0u8; BS];
+        prev.copy_from_slice(iv);
+        for blk in 0..n_blocks {
+            let mut buf = [0u8; BS];
+            let start = blk * BS;
+            buf.copy_from_slice(&swapped[start..start + BS]);
+            cipher.decrypt_block(
+                (&mut buf[..])
+                    .try_into()
+                    .map_err(|_| KerberosError::Crypto("internal: block size mismatch".into()))?,
+            );
+            for j in 0..BS {
+                buf[j] ^= prev[j];
+            }
+            out[start..start + BS].copy_from_slice(&buf);
+            prev.copy_from_slice(&swapped[start..start + BS]);
+        }
+        return Ok(out);
+    }
+    // Non-block-aligned multi-block: use cts crate
+    let cipher = CbcCs3::<C>::new_from_slices(key, iv)
+        .map_err(|e| KerberosError::Crypto(format!("invalid key/iv length: {e}")))?;
     let mut buf = data.to_vec();
     cipher
         .decrypt(&mut buf)
-        .expect("CTS decrypt: data length > block size");
-    buf
+        .map_err(|e| KerberosError::Crypto(format!("CTS decrypt failed: {e:?}")))?;
+    Ok(buf)
 }
 
-pub fn cts_encrypt_for(etype: Etype, key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn cts_encrypt_for(etype: Etype, key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     match etype {
-        Etype::Aes128CtsHmacSha196 => cts_encrypt::<Aes128>(key, iv, data),
+        Etype::Aes128CtsHmacSha196 | Etype::Aes128CtsHmacSha256128 => {
+            cts_encrypt::<Aes128>(key, iv, data)
+        }
         Etype::Aes256CtsHmacSha196 | Etype::Aes256CtsHmacSha384192 => {
             cts_encrypt::<Aes256>(key, iv, data)
         }
     }
 }
 
-pub fn cts_decrypt_for(etype: Etype, key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn cts_decrypt_for(etype: Etype, key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     match etype {
-        Etype::Aes128CtsHmacSha196 => cts_decrypt::<Aes128>(key, iv, data),
+        Etype::Aes128CtsHmacSha196 | Etype::Aes128CtsHmacSha256128 => {
+            cts_decrypt::<Aes128>(key, iv, data)
+        }
         Etype::Aes256CtsHmacSha196 | Etype::Aes256CtsHmacSha384192 => {
             cts_decrypt::<Aes256>(key, iv, data)
         }
@@ -368,17 +532,28 @@ fn dk_aes_aes128(key: &[u8], constant: &[u8], out_len: usize) -> Vec<u8> {
     result
 }
 
+/// Derive a per-message key: dispatches to RFC 3961 DK or RFC 8009 KDF.
+///
+/// For RFC 3961 (etypes 17/18): output = key_len bytes (AES-based DR).
+/// For RFC 8009 (etypes 19/20): output length determined by suffix byte
+/// in the constant (last byte).
 pub fn dk_for(etype: Etype, key: &[u8], constant: &[u8]) -> Vec<u8> {
     let kl = etype.key_len();
     match etype {
         Etype::Aes128CtsHmacSha196 => dk_aes_aes128(key, constant, kl),
-        Etype::Aes256CtsHmacSha196 | Etype::Aes256CtsHmacSha384192 => dk_aes_aes(key, constant, kl),
+        Etype::Aes256CtsHmacSha196 => dk_aes_aes(key, constant, kl),
+        Etype::Aes128CtsHmacSha256128 | Etype::Aes256CtsHmacSha384192 => {
+            // Extract suffix from last byte of constant (usage|suffix format)
+            let suffix = *constant.last().unwrap_or(&0);
+            let out_bits = rfc8009_out_bits(etype, suffix);
+            dk_rfc8009(etype, key, constant, out_bits)
+        }
     }
 }
 
 /// RFC 3962 DK: n-fold(HMAC(key, constant), key_len * 8)
 ///
-/// Java JDK 的 Krb5 CipherHelper.dk() 使用此方式。
+/// Java JDK's Krb5 CipherHelper.dk() uses this approach.
 pub fn dk_rfc(etype: Etype, key: &[u8], constant: &[u8]) -> Vec<u8> {
     let out_bits = etype.key_len() * 8;
     let h = hmac_for(etype, key, constant);
@@ -388,6 +563,7 @@ pub fn dk_rfc(etype: Etype, key: &[u8], constant: &[u8]) -> Vec<u8> {
 pub fn hmac_for(etype: Etype, key: &[u8], data: &[u8]) -> Vec<u8> {
     match etype {
         Etype::Aes128CtsHmacSha196 | Etype::Aes256CtsHmacSha196 => hmac_sha1(key, data),
+        Etype::Aes128CtsHmacSha256128 => hmac_sha256(key, data),
         Etype::Aes256CtsHmacSha384192 => hmac_sha384(key, data),
     }
 }
@@ -413,6 +589,15 @@ fn random_16_bytes() -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Generate a random key of the appropriate length for the given `etype`.
+pub fn random_key(etype: Etype) -> Result<Vec<u8>> {
+    let len = etype.key_len();
+    let mut buf = vec![0u8; len];
+    getrandom::fill(&mut buf)
+        .map_err(|e| KerberosError::Crypto(format!("failed to generate random key: {e}")))?;
+    Ok(buf)
+}
+
 // ------------------------- EncryptedData 封装 (RFC 3962 §5 / RFC 3961 简化配置) -------------------------
 //
 // 正确顺序 (RFC 3962 §5):
@@ -421,25 +606,33 @@ fn random_16_bytes() -> Result<Vec<u8>> {
 //   3. MAC = HMAC(Ki, ciphertext)[:h]
 //   4. output = ciphertext || MAC
 
-/// Encrypt (MIT krb5 compatible):
-///   1. Ke = DK(key, usage | 0xAA), Ki = DK(key, usage | 0x55)
-///   2. HMAC = HMAC(Ki, confounder || plaintext)      ← over plaintext
-///   3. C = AES-CTS(Ke, confounder || plaintext + pad) ← encrypt after
-///   4. Output = C || HMAC[..h]
+/// Encrypt — dispatches to RFC 3962 profile (HMAC over plaintext) or
+/// RFC 8009 profile (HMAC over ciphertext) based on etype.
+///
+/// For etypes 17/18 (RFC 3962):
+///   1. HMAC = HMAC(Ki, confounder || plaintext)
+///   2. C = AES-CTS(Ke, confounder || plaintext)
+///   3. Output = C || HMAC[..h]
+///
+/// For etypes 19/20 (RFC 8009):
+///   1. C = AES-CTS(Ke, confounder || plaintext, IV=0)
+///   2. H = HMAC(Ki, IV || C)[:h]
+///   3. Output = C || H
 pub fn encrypt(etype: Etype, key: &[u8], usage: u32, plaintext: &[u8]) -> Result<Vec<u8>> {
+    if etype.is_rfc8009() {
+        return encrypt_rfc8009(etype, key, usage, plaintext);
+    }
     let confounder = random_16_bytes()?;
     let mut basic_plaintext = confounder;
-    basic_plaintext.extend_from_slice(plaintext); // 无 padding (AES-CTS 不须填充)
+    basic_plaintext.extend_from_slice(plaintext);
 
     let ke = dk_for(etype, key, &usage_constant(usage, 0xAA));
     let ki = dk_for(etype, key, &usage_constant(usage, 0x55));
 
-    // HMAC 对明文 (confounder || plaintext)
     let mac = hmac_for(etype, &ki, &basic_plaintext);
 
-    // 再加密
     let iv = vec![0u8; 16];
-    let cipher = cts_encrypt_for(etype, &ke, &iv, &basic_plaintext);
+    let cipher = cts_encrypt_for(etype, &ke, &iv, &basic_plaintext)?;
 
     let mut out = cipher;
     out.extend_from_slice(&mac[..etype.mac_len()]);
@@ -458,7 +651,7 @@ pub fn encrypt_rfc3962(etype: Etype, key: &[u8], usage: u32, plaintext: &[u8]) -
 
     // 先加密
     let iv = vec![0u8; 16];
-    let cipher = cts_encrypt_for(etype, &ke, &iv, &basic_plaintext);
+    let cipher = cts_encrypt_for(etype, &ke, &iv, &basic_plaintext)?;
 
     // 再对密文计算 MAC (RFC 3962 §5: HMAC of ciphertext)
     let mac = hmac_for(etype, &ki, &cipher);
@@ -487,7 +680,7 @@ pub fn decrypt_rfc3962(etype: Etype, key: &[u8], usage: u32, data: &[u8]) -> Res
     // 再解密
     let ke = dk_for(etype, key, &usage_constant(usage, 0xAA));
     let iv = vec![0u8; 16];
-    let basic_plaintext = cts_decrypt_for(etype, &ke, &iv, cipher);
+    let basic_plaintext = cts_decrypt_for(etype, &ke, &iv, cipher)?;
 
     if basic_plaintext.len() < 16 {
         return Err(KerberosError::Crypto("decrypt too short".into()));
@@ -495,22 +688,89 @@ pub fn decrypt_rfc3962(etype: Etype, key: &[u8], usage: u32, data: &[u8]) -> Res
     Ok(basic_plaintext[16..].to_vec())
 }
 
-/// 解密 (MIT krb5 兼容):
-///   1. 先解密得 confounder || plaintext
-///   2. 再验证 HMAC(Ki, confounder || plaintext)
+// ------------------------- RFC 8009 Encrypt/Decrypt (etypes 19/20) -------------------------
+//
+// RFC 8009 §5:
+//   N = random 128-bit confounder
+//   C = AES-CBC-CS3(Ke, N || plaintext, IV=0)
+//   H = HMAC(Ki, IV || C)[:h]
+//   ciphertext = C || H
+//
+// Decryption:
+//   (C, H) = ciphertext
+//   verify H == HMAC(Ki, IV || C)[:h]
+//   (N, P) = AES-CBC-CS3(Ke, C, IV=0)
+//   discard N, return P
+
+/// Encrypt using RFC 8009 profile (HMAC over ciphertext).
+pub fn encrypt_rfc8009(etype: Etype, key: &[u8], usage: u32, plaintext: &[u8]) -> Result<Vec<u8>> {
+    let confounder = random_16_bytes()?;
+    let mut data = confounder;
+    data.extend_from_slice(plaintext);
+
+    let ke = dk_for(etype, key, &usage_constant(usage, 0xAA));
+    let ki = dk_for(etype, key, &usage_constant(usage, 0x55));
+
+    let iv = vec![0u8; 16];
+    let cipher = cts_encrypt_for(etype, &ke, &iv, &data)?;
+
+    // HMAC(Ki, IV || C)[:h]
+    let mut mac_input = Vec::with_capacity(16 + cipher.len());
+    mac_input.extend_from_slice(&iv);
+    mac_input.extend_from_slice(&cipher);
+    let mac = hmac_for(etype, &ki, &mac_input);
+    let h = etype.mac_len();
+
+    let mut out = cipher;
+    out.extend_from_slice(&mac[..h]);
+    Ok(out)
+}
+
+/// Decrypt using RFC 8009 profile (HMAC verification before decryption).
+pub fn decrypt_rfc8009(etype: Etype, key: &[u8], usage: u32, data: &[u8]) -> Result<Vec<u8>> {
+    let h = etype.mac_len();
+    if data.len() < h + 16 + 1 {
+        return Err(KerberosError::Crypto("ciphertext too short".into()));
+    }
+    let (cipher, mac) = data.split_at(data.len() - h);
+
+    let ki = dk_for(etype, key, &usage_constant(usage, 0x55));
+    let iv = vec![0u8; 16];
+    let mut mac_input = Vec::with_capacity(16 + cipher.len());
+    mac_input.extend_from_slice(&iv);
+    mac_input.extend_from_slice(cipher);
+    let computed = hmac_for(etype, &ki, &mac_input);
+    if &computed[..h] != mac {
+        return Err(KerberosError::Crypto(
+            "RFC 8009 HMAC verification failed".into(),
+        ));
+    }
+
+    let ke = dk_for(etype, key, &usage_constant(usage, 0xAA));
+    let plain = cts_decrypt_for(etype, &ke, &iv, cipher)?;
+
+    if plain.len() < 16 {
+        return Err(KerberosError::Crypto("decrypt too short".into()));
+    }
+    Ok(plain[16..].to_vec())
+}
+
+/// Decrypt — dispatches to RFC 3962 profile (HMAC over plaintext) or
+/// RFC 8009 profile (HMAC over ciphertext, verify before decrypt) based on etype.
 pub fn decrypt(etype: Etype, key: &[u8], usage: u32, data: &[u8]) -> Result<Vec<u8>> {
+    if etype.is_rfc8009() {
+        return decrypt_rfc8009(etype, key, usage, data);
+    }
     let mac_len = etype.mac_len();
     if data.len() < mac_len + 16 {
         return Err(KerberosError::Crypto("ciphertext too short".into()));
     }
     let (cipher, mac) = data.split_at(data.len() - mac_len);
 
-    // 先解密
     let ke = dk_for(etype, key, &usage_constant(usage, 0xAA));
     let iv = vec![0u8; 16];
-    let basic_plaintext = cts_decrypt_for(etype, &ke, &iv, cipher);
+    let basic_plaintext = cts_decrypt_for(etype, &ke, &iv, cipher)?;
 
-    // 再验 HMAC (对明文)
     let ki = dk_for(etype, key, &usage_constant(usage, 0x55));
     let computed = hmac_for(etype, &ki, &basic_plaintext);
     if &computed[..mac_len] != mac {
@@ -841,5 +1101,307 @@ mod tests {
 
         let dec = decrypt(etype, &key, 2, &ct).unwrap();
         assert_eq!(dec, plaintext);
+    }
+
+    // ==================== HMAC / PBKDF2 known-answer tests (RFC 2202 / RFC 6070) ====================
+
+    /// HMAC-SHA1 known-answer test (RFC 2202, test case 1).
+    /// Key: 20 bytes of 0x0b. Data: "Hi There". Expected HMAC-SHA1 = b6173186...
+    #[test]
+    fn hmac_sha1_rfc2202() {
+        let mac = hmac_sha1(
+            b"\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b",
+            b"Hi There",
+        );
+        assert_eq!(
+            mac,
+            vec![
+                0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37,
+                0x8c, 0x8e, 0xf1, 0x46, 0xbe, 0x00
+            ]
+        );
+    }
+
+    /// PBKDF2-HMAC-SHA1 known-answer test (RFC 6070, c=4096).
+    #[test]
+    fn pbkdf2_hmac_sha1_rfc6070() {
+        let k = pbkdf2_hmac_sha1(b"password", b"salt", 4096, 20).unwrap();
+        assert_eq!(
+            k,
+            vec![
+                0x4b, 0x00, 0x79, 0x01, 0xb7, 0x65, 0x48, 0x9a, 0xbe, 0xad, 0x49, 0xd9, 0x26, 0xf7,
+                0x21, 0xd0, 0x65, 0xa4, 0x29, 0xc1
+            ]
+        );
+    }
+
+    // ==================== Known-answer vectors: string_to_key (RFC 3962 Appendix A) ====================
+
+    /// Known-answer test for `string_to_key` (etype 18) using the RFC 3962 Appendix B
+    /// vector for c=1200. Verifies PBKDF2-HMAC-SHA1 + DK("kerberos").
+    #[test]
+    fn string_to_key_aes256_known_vector() {
+        let k = string_to_key(
+            Etype::Aes256CtsHmacSha196,
+            b"password",
+            b"ATHENA.MIT.EDUraeburn",
+            1200,
+        )
+        .unwrap();
+        assert_eq!(
+            k,
+            vec![
+                0x55, 0xa6, 0xac, 0x74, 0x0a, 0xd1, 0x7b, 0x48, 0x46, 0x94, 0x10, 0x51, 0xe1, 0xe8,
+                0xb0, 0xa7, 0x54, 0x8d, 0x93, 0xb0, 0xab, 0x30, 0xa8, 0xbc, 0x3f, 0xf1, 0x62, 0x80,
+                0x38, 0x2b, 0x8c, 0x2a
+            ]
+        );
+    }
+
+    /// Known-answer test for `string_to_key` (etype 17) using the RFC 3962 Appendix B
+    /// vector for c=1200. Verifies PBKDF2-HMAC-SHA1 + DK("kerberos").
+    #[test]
+    fn string_to_key_aes128_known_vector() {
+        let k = string_to_key(
+            Etype::Aes128CtsHmacSha196,
+            b"password",
+            b"ATHENA.MIT.EDUraeburn",
+            1200,
+        )
+        .unwrap();
+        assert_eq!(
+            k,
+            vec![
+                0x4c, 0x01, 0xcd, 0x46, 0xd6, 0x32, 0xd0, 0x1e, 0x6d, 0xbe, 0x23, 0x0a, 0x01, 0xed,
+                0x64, 0x2a
+            ]
+        );
+    }
+
+    // ==================== encrypt_rfc3962 / decrypt_rfc3962 roundtrip ====================
+
+    /// RFC 3962 §5 profile (HMAC over ciphertext) roundtrip for RFC 3962 etypes.
+    #[test]
+    fn rfc3962_roundtrip_all_etypes() {
+        for etype in [Etype::Aes128CtsHmacSha196, Etype::Aes256CtsHmacSha196] {
+            let key = match etype {
+                Etype::Aes128CtsHmacSha196 => vec![0x11u8; 16],
+                Etype::Aes256CtsHmacSha196 => vec![0x42u8; 32],
+                _ => unreachable!(),
+            };
+            for pt in [
+                &b"short"[..],
+                &b"exactly sixteen b"[..],
+                &b"a longer plaintext payload for rfc3962 wrap"[..],
+            ] {
+                let ct = encrypt_rfc3962(etype, &key, 9, pt).unwrap();
+                let dec = decrypt_rfc3962(etype, &key, 9, &ct).unwrap();
+                assert_eq!(&dec, pt, "etype={:?} pt.len={}", etype, pt.len());
+            }
+        }
+    }
+
+    // ==================== RFC 8009 Appendix A: KAT Tests ====================
+
+    /// Hex helper for test vectors.
+    fn hx(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+    fn hxe(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}").to_string()).collect()
+    }
+
+    /// KDF-HMAC-SHA2: etype 19, Kc derivation (usage=2, suffix=0x99, 128 bits).
+    #[test]
+    fn rfc8009_kdf_etype19_kc() {
+        let key = hx("3705d96080c17728a0e800eab6e0d23c");
+        let label = usage_constant(2, 0x99);
+        let kc = kdf_hmac_sha2(Etype::Aes128CtsHmacSha256128, &key, &label, 128);
+        assert_eq!(hxe(&kc), "b31a018a48f54776f403e9a396325dc3");
+    }
+
+    #[test]
+    fn rfc8009_kdf_etype19_ke() {
+        let key = hx("3705d96080c17728a0e800eab6e0d23c");
+        let label = usage_constant(2, 0xAA);
+        let ke = kdf_hmac_sha2(Etype::Aes128CtsHmacSha256128, &key, &label, 128);
+        assert_eq!(hxe(&ke), "9b197dd1e8c5609d6e67c3e37c62c72e");
+    }
+
+    #[test]
+    fn rfc8009_kdf_etype19_ki() {
+        let key = hx("3705d96080c17728a0e800eab6e0d23c");
+        let label = usage_constant(2, 0x55);
+        let ki = kdf_hmac_sha2(Etype::Aes128CtsHmacSha256128, &key, &label, 128);
+        assert_eq!(hxe(&ki), "9fda0e56ab2d85e1569a688696c26a6c");
+    }
+
+    #[test]
+    fn rfc8009_kdf_etype20_kc() {
+        let key = hx("6d404d37faf79f9df0d33568d320669800eb4836472ea8a026d16b7182460c52");
+        let label = usage_constant(2, 0x99);
+        let kc = kdf_hmac_sha2(Etype::Aes256CtsHmacSha384192, &key, &label, 192);
+        assert_eq!(hxe(&kc), "ef5718be86cc84963d8bbb5031e9f5c4ba41f28faf69e73d");
+    }
+
+    #[test]
+    fn rfc8009_kdf_etype20_ke() {
+        let key = hx("6d404d37faf79f9df0d33568d320669800eb4836472ea8a026d16b7182460c52");
+        let label = usage_constant(2, 0xAA);
+        let ke = kdf_hmac_sha2(Etype::Aes256CtsHmacSha384192, &key, &label, 256);
+        assert_eq!(
+            hxe(&ke),
+            "56ab22bee63d82d7bc5227f6773f8ea7a5eb1c825160c38312980c442e5c7e49"
+        );
+    }
+
+    #[test]
+    fn rfc8009_kdf_etype20_ki() {
+        let key = hx("6d404d37faf79f9df0d33568d320669800eb4836472ea8a026d16b7182460c52");
+        let label = usage_constant(2, 0x55);
+        let ki = kdf_hmac_sha2(Etype::Aes256CtsHmacSha384192, &key, &label, 192);
+        assert_eq!(hxe(&ki), "69b16514e3cd8e56b82010d5c73012b622c4d00ffc23ed1f");
+    }
+
+    /// RFC 8009 encrypt/decrypt roundtrip for etypes 19/20.
+    #[test]
+    fn rfc8009_roundtrip() {
+        for etype in [Etype::Aes128CtsHmacSha256128, Etype::Aes256CtsHmacSha384192] {
+            let key = match etype {
+                Etype::Aes128CtsHmacSha256128 => vec![0x11u8; 16],
+                Etype::Aes256CtsHmacSha384192 => vec![0x42u8; 32],
+                _ => unreachable!(),
+            };
+            for pt in [
+                &b"short"[..],
+                &b"exactly sixteen b"[..],
+                &b"a longer plaintext payload"[..],
+            ] {
+                let ct = encrypt(etype, &key, 3, pt).unwrap();
+                let dec = decrypt(etype, &key, 3, &ct).unwrap();
+                assert_eq!(
+                    &dec,
+                    pt,
+                    "RFC 8009 roundtrip etype={etype:?} pt.len={}",
+                    pt.len()
+                );
+            }
+        }
+    }
+
+    /// RFC 8009 tampered ciphertext must fail.
+    #[test]
+    fn rfc8009_tamper_detected() {
+        for etype in [Etype::Aes128CtsHmacSha256128, Etype::Aes256CtsHmacSha384192] {
+            let key = match etype {
+                Etype::Aes128CtsHmacSha256128 => vec![0x11u8; 16],
+                Etype::Aes256CtsHmacSha384192 => vec![0x42u8; 32],
+                _ => unreachable!(),
+            };
+            let mut ct = encrypt(etype, &key, 3, b"secret payload").unwrap();
+            ct[0] ^= 0xff;
+            assert!(
+                decrypt(etype, &key, 3, &ct).is_err(),
+                "RFC 8009 tamper should fail {etype:?}"
+            );
+        }
+    }
+
+    /// A tampered ciphertext must fail verification under the RFC 3962 profile.
+    #[test]
+    fn rfc3962_tamper_detected() {
+        let etype = Etype::Aes256CtsHmacSha196;
+        let key = vec![0x42u8; 32];
+        let mut ct = encrypt_rfc3962(etype, &key, 9, b"secret payload").unwrap();
+        ct[0] ^= 0xff;
+        assert!(decrypt_rfc3962(etype, &key, 9, &ct).is_err());
+    }
+
+    // ==================== RFC 3962 Appendix B: AES-CTS Test Vectors ====================
+
+    /// RFC 3962 Appendix B — AES-128-CTS, key="chicken teriyaki", IV=0
+    /// Input: "I would like the " (17 bytes)
+    /// Expected output matches RFC 3962 §B test vector 1
+    #[test]
+    fn rfc3962_aes128_cts_17_bytes() {
+        let key = b"chicken teriyaki"; // 16 bytes, AES-128 key
+        let iv = vec![0u8; 16];
+        // "I would like the " = 17 bytes
+        let input = b"I would like the ";
+        let output = cts_encrypt::<Aes128>(key, &iv, input).unwrap();
+        let expected: Vec<u8> = vec![
+            0xc6, 0x35, 0x35, 0x68, 0xf2, 0xbf, 0x8c, 0xb4, 0xd8, 0xa5, 0x80, 0x36, 0x2d, 0xa7,
+            0xff, 0x7f, 0x97,
+        ];
+        assert_eq!(output, expected, "AES-128-CTS 17-byte mismatch");
+        // Roundtrip: decrypt should recover input
+        let dec = cts_decrypt::<Aes128>(key, &iv, &output).unwrap();
+        assert_eq!(dec, input, "AES-128-CTS 17-byte decrypt roundtrip");
+    }
+
+    /// RFC 3962 Appendix B — AES-128-CTS, key="chicken teriyaki", IV=0
+    /// Input: "I would like the General Gau's " (31 bytes)
+    #[test]
+    fn rfc3962_aes128_cts_31_bytes() {
+        let key = b"chicken teriyaki";
+        let iv = vec![0u8; 16];
+        // "I would like the General Gau's " = 31 bytes
+        let input = b"I would like the General Gau's ";
+        let output = cts_encrypt::<Aes128>(key, &iv, input).unwrap();
+        let expected: Vec<u8> = vec![
+            0xfc, 0x00, 0x78, 0x3e, 0x0e, 0xfd, 0xb2, 0xc1, 0xd4, 0x45, 0xd4, 0xc8, 0xef, 0xf7,
+            0xed, 0x22, 0x97, 0x68, 0x72, 0x68, 0xd6, 0xec, 0xcc, 0xc0, 0xc0, 0x7b, 0x25, 0xe2,
+            0x5e, 0xcf, 0xe5,
+        ];
+        assert_eq!(output, expected, "AES-128-CTS 31-byte mismatch");
+        let dec = cts_decrypt::<Aes128>(key, &iv, &output).unwrap();
+        assert_eq!(dec, input, "AES-128-CTS 31-byte decrypt roundtrip");
+    }
+
+    /// RFC 3962 Appendix B — AES-128-CTS, key="chicken teriyaki", IV=0
+    /// Input: "I would like the General Gau's C" (32 bytes, exact 2 blocks)
+    #[test]
+    fn rfc3962_aes128_cts_32_bytes() {
+        let key = b"chicken teriyaki";
+        let iv = vec![0u8; 16];
+        let input = b"I would like the General Gau's C";
+        let output = cts_encrypt::<Aes128>(key, &iv, input).unwrap();
+        let expected: Vec<u8> = vec![
+            0x39, 0x31, 0x25, 0x23, 0xa7, 0x86, 0x62, 0xd5, 0xbe, 0x7f, 0xcb, 0xcc, 0x98, 0xeb,
+            0xf5, 0xa8, 0x97, 0x68, 0x72, 0x68, 0xd6, 0xec, 0xcc, 0xc0, 0xc0, 0x7b, 0x25, 0xe2,
+            0x5e, 0xcf, 0xe5, 0x84,
+        ];
+        assert_eq!(
+            output, expected,
+            "AES-128-CTS 32-byte (exact 2 blocks) mismatch"
+        );
+        let dec = cts_decrypt::<Aes128>(key, &iv, &output).unwrap();
+        assert_eq!(dec, input, "AES-128-CTS 32-byte decrypt roundtrip");
+    }
+
+    /// RFC 3962 Appendix B — AES-128-CTS, key="chicken teriyaki", IV=0
+    /// 64 bytes input (exact 4 blocks)
+    #[test]
+    fn rfc3962_aes128_cts_64_bytes() {
+        let key = b"chicken teriyaki";
+        let iv = vec![0u8; 16];
+        let input = b"I would like the General Gau's Chicken, please, and wonton soup.";
+        let output = cts_encrypt::<Aes128>(key, &iv, input).unwrap();
+        let expected: Vec<u8> = vec![
+            0x97, 0x68, 0x72, 0x68, 0xd6, 0xec, 0xcc, 0xc0, 0xc0, 0x7b, 0x25, 0xe2, 0x5e, 0xcf,
+            0xe5, 0x84, 0x39, 0x31, 0x25, 0x23, 0xa7, 0x86, 0x62, 0xd5, 0xbe, 0x7f, 0xcb, 0xcc,
+            0x98, 0xeb, 0xf5, 0xa8, 0x48, 0x07, 0xef, 0xe8, 0x36, 0xee, 0x89, 0xa5, 0x26, 0x73,
+            0x0d, 0xbc, 0x2f, 0x7b, 0xc8, 0x40, 0x9d, 0xad, 0x8b, 0xbb, 0x96, 0xc4, 0xcd, 0xc0,
+            0x3b, 0xc1, 0x03, 0xe1, 0xa1, 0x94, 0xbb, 0xd8,
+        ];
+        assert_eq!(
+            output, expected,
+            "AES-128-CTS 64-byte (exact 4 blocks) mismatch"
+        );
+        let dec = cts_decrypt::<Aes128>(key, &iv, &output).unwrap();
+        assert_eq!(dec, input, "AES-128-CTS 64-byte decrypt roundtrip");
     }
 }
