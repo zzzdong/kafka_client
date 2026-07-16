@@ -24,7 +24,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kafka_client = "0.1"
+kafka_client = "0.5"
 ```
 
 ## Quick Start
