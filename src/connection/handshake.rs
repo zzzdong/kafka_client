@@ -206,7 +206,7 @@ impl Handshake {
             Some(v) if v >= 1 => Ok(()),
             Some(v) => Err(KafkaError::AuthenticationFailed(format!(
                 "GSSAPI requires SaslHandshake v1+ (KIP-152), \
-                 but broker only supports v{v}. Use Kafka 2.0+ broker."
+                 but broker only supports v{v}. Use Kafka 1.0.0+ broker."
             ))),
             None => Err(KafkaError::AuthenticationFailed(
                 "Broker does not support SaslHandshake API".into(),

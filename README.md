@@ -1,6 +1,6 @@
 # kafka_client
 
-A pure Rust Kafka client library built on Tokio async runtime. Supports SASL authentication (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512) and TLS encryption.
+A pure Rust Kafka client library built on Tokio async runtime. Supports SASL authentication (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, GSSAPI/Kerberos) and TLS encryption.
 
 [![Crates.io](https://img.shields.io/crates/v/kafka_client.svg)](https://crates.io/crates/kafka_client)
 [![Documentation](https://docs.rs/kafka_client/badge.svg)](https://docs.rs/kafka_client)
@@ -10,7 +10,7 @@ A pure Rust Kafka client library built on Tokio async runtime. Supports SASL aut
 
 - **Pure Rust** - No C bindings or external dependencies required
 - **Async/Await** - Built on Tokio for modern async Rust
-- **SASL Authentication** - Supports PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+- **SASL Authentication** - Supports PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, and Kerberos (via GSSAPI)
 - **TLS Encryption** - Secure connections with configurable TLS
 - **Layered Architecture** - Clean separation between transport, protocol, and API layers
 - **High-Level API** - Easy-to-use Producer, Consumer, and Admin interfaces
@@ -138,6 +138,29 @@ let client = Client::builder(vec!["127.0.0.1:9092".parse()?])
     .await?;
 ```
 
+### Kerberos (SASL/GSSAPI) Authentication
+
+Kafka calls this mechanism "GSSAPI" on the wire, but it is backed by Kerberos — the client acquires
+a service ticket from a KDC and exchanges it with the broker via the GSS-API framework.
+Uses a pure Rust Kerberos implementation — no system `libkrb5` needed.
+
+```rust
+use kafka_client::{Client, KerberosCredentials};
+
+let client = Client::builder(vec!["127.0.0.1:9096".parse()?])
+    .with_kerberos(
+        KerberosCredentials::new("client@EXAMPLE.COM")
+            .with_keytab("/path/to/client.keytab")
+    )
+    .with_kdc("kdc.example.com", 88)
+    .with_broker_hostname("kafka-broker.example.com")
+    .build()
+    .await?;
+```
+
+Supported Kerberos encryption types: AES-128/256-CTS-HMAC-SHA1-96 (RFC 3962) and
+AES-128/256-CTS-HMAC-SHA256/384 (RFC 8009).
+
 ### TLS Encryption
 
 ```rust
@@ -195,6 +218,7 @@ See the [examples](./examples/) directory for complete working examples:
 - `tls_connect.rs` - TLS encryption and TLS+SASL
 - `admin_operations.rs` - Topic management operations
 - `raw_connection.rs` - Low-level Connection API
+- `kerberos.rs` - Kerberos authentication via GSSAPI (requires KDC)
 
 Run an example:
 
@@ -221,8 +245,10 @@ cargo run --example tls_connect
 
 ## Requirements
 
-- Rust 1.85 or later
-- Kafka 0.10.0 or later (supports Kafka 3.x+)
+- Rust 1.92 or later
+- Kafka 1.0.0 or later (3-broker tests verified on Kafka 4.x)
+  - GSSAPI/Kerberos requires **SaslHandshake v1** (Kafka 1.0.0+).
+    Pre-1.0.0 "bare TCP" GSSAPI and SaslHandshake v0 are not supported.
 
 ## Testing
 
