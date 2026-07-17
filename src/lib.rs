@@ -1,9 +1,8 @@
 //! Kafka Rust Client
 //!
 //! A pure Rust Kafka client library based on Tokio async runtime.
-//! Supports SASL authentication (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
-//! and uses a layered architecture with low-level protocol API
-//! and high-level producer/consumer API.
+//! Supports SASL authentication (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, GSSAPI/Kerberos)
+//! and TLS encryption.
 //!
 //! # Quick Start
 //!
@@ -48,7 +47,6 @@ mod cluster;
 pub mod connection; // Public for advanced users who need low-level access
 mod consumer;
 mod error;
-
 mod producer;
 mod sasl;
 pub mod transport; // Public for advanced users who need low-level access
@@ -241,40 +239,110 @@ impl Client {
 }
 
 // ===========================================================================
-// ClientBuilder
+// ClientConfig — declarative configuration
+// ===========================================================================
+
+/// Declarative configuration for creating a [`Client`].
+///
+/// Alternative to the [`ClientBuilder`] — useful when config comes from
+/// a file, environment, or serialized source.
+///
+/// # Example
+/// ```ignore
+/// use kafka_client::{Client, ClientConfig};
+/// let client = Client::connect(ClientConfig {
+///     bootstrap_servers: vec!["localhost:9092".into()],
+///     client_id: "my-app".into(),
+///     ..Default::default()
+/// }).await?;
+/// ```
+pub struct ClientConfig {
+    /// Bootstrap server addresses (host:port strings).
+    pub bootstrap_servers: Vec<String>,
+    /// Security protocol. Defaults to `Plaintext` via `ClientBuilder`.
+    pub security_protocol: crate::transport::SecurityProtocol,
+    /// Client ID sent to Kafka brokers.
+    pub client_id: String,
+    /// SASL credentials (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512).
+    pub sasl: Option<crate::sasl::SaslCredentials>,
+    /// Kerberos credentials (principal + keytab).
+    pub kerberos: Option<krb5_gss::KerberosCredentials>,
+    /// KDC hostname (Kerberos only).
+    pub kdc_host: Option<String>,
+    /// KDC port (default 88).
+    pub kdc_port: u16,
+    /// Broker hostname for the Kerberos service principal.
+    pub broker_hostname: Option<String>,
+    /// Metadata cache TTL (default 5 minutes).
+    pub metadata_ttl: Duration,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            bootstrap_servers: Vec::new(),
+            security_protocol: crate::transport::SecurityProtocol::Plaintext,
+            client_id: NAME.to_string(),
+            sasl: None,
+            kerberos: None,
+            kdc_host: None,
+            kdc_port: 88,
+            broker_hostname: None,
+            metadata_ttl: Duration::from_secs(300),
+        }
+    }
+}
+
+impl ClientConfig {
+    /// Apply SASL credentials and set security protocol to `SaslPlaintext`.
+    pub fn with_sasl(
+        mut self,
+        mechanism: SaslMechanismType,
+        username: String,
+        password: String,
+    ) -> Self {
+        self.sasl = Some(SaslCredentials::new(mechanism, username, password));
+        self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
+        self
+    }
+}
+
+// ===========================================================================
+// ClientBuilder — chainable builder (wraps ClientConfig)
 // ===========================================================================
 
 /// Builder for constructing a [`Client`].
 ///
-/// Supports plaintext, TLS, SASL, and SASL+TLS configurations.
+/// Supports plaintext, TLS, SASL (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512),
+/// and Kerberos (SASL/GSSAPI) authentication.
+///
+/// # Example
+/// ```ignore
+/// let client = Client::builder(vec!["localhost:9092".into()])
+///     .with_kerberos(creds)
+///     .with_kdc("kdc.example.com", 88)
+///     .build()
+///     .await?;
+/// ```
 pub struct ClientBuilder {
-    bootstrap_servers: Vec<String>,
-    security_protocol: crate::transport::SecurityProtocol,
-    client_id: String,
-    sasl_credentials: Option<crate::sasl::SaslCredentials>,
-    kerberos_credentials: Option<krb5_gss::KerberosCredentials>,
-    metadata_ttl: Duration,
-    kdc_host: Option<String>,
-    kdc_port: u16,
-    /// Kerberos 服务 principal 的主机名 (如 `broker.example.com`)。默认使用 bootstrap IP。
-    broker_hostname: Option<String>,
+    config: ClientConfig,
 }
 
 impl ClientBuilder {
     /// Create a new builder with the given bootstrap servers.
-    ///
-    /// Accepts hostnames or IP addresses (e.g. `"localhost:9092"`).
     pub fn new(bootstrap_servers: Vec<String>) -> Self {
         Self {
-            bootstrap_servers,
-            security_protocol: crate::transport::SecurityProtocol::Plaintext,
-            client_id: NAME.to_string(),
-            sasl_credentials: None,
-            kerberos_credentials: None,
-            metadata_ttl: Duration::from_secs(300),
-            kdc_host: None,
-            kdc_port: 88,
-            broker_hostname: None,
+            config: ClientConfig {
+                bootstrap_servers,
+                security_protocol: crate::transport::SecurityProtocol::Plaintext,
+                client_id: NAME.to_string(),
+                sasl: None,
+                kerberos: None,
+                metadata_ttl: Duration::from_secs(300),
+                kdc_host: None,
+                kdc_port: 88,
+                broker_hostname: None,
+            },
         }
     }
 
@@ -282,13 +350,13 @@ impl ClientBuilder {
 
     /// Use plaintext (no encryption, no authentication).
     pub fn with_plaintext(mut self) -> Self {
-        self.security_protocol = crate::transport::SecurityProtocol::Plaintext;
+        self.config.security_protocol = crate::transport::SecurityProtocol::Plaintext;
         self
     }
 
     /// Use TLS encryption with the given domain.
     pub fn with_tls(mut self, domain: impl Into<String>) -> Self {
-        self.security_protocol =
+        self.config.security_protocol =
             crate::transport::SecurityProtocol::Ssl(crate::transport::TlsConfig {
                 domain: domain.into(),
                 ..Default::default()
@@ -298,7 +366,7 @@ impl ClientBuilder {
 
     /// Use TLS with full custom configuration.
     pub fn with_tls_config(mut self, tls_config: crate::transport::TlsConfig) -> Self {
-        self.security_protocol = crate::transport::SecurityProtocol::Ssl(tls_config);
+        self.config.security_protocol = crate::transport::SecurityProtocol::Ssl(tls_config);
         self
     }
 
@@ -306,23 +374,15 @@ impl ClientBuilder {
 
     /// Configure SASL authentication with a custom mechanism.
     ///
-    /// # Example
-    /// ```ignore
-    /// let client = Client::builder(vec![addr])
-    ///     .with_sasl(SaslMechanismType::ScramSha256, "user", "pass")
-    ///     .build()
-    ///     .await?;
-    /// ```
+    /// Shortcut for `.with_sasl_credentials(...)` that also sets `SaslPlaintext`.
     pub fn with_sasl(
         mut self,
-        mechanism: crate::sasl::SaslMechanismType,
+        mechanism: SaslMechanismType,
         username: impl Into<String>,
         password: impl Into<String>,
     ) -> Self {
-        self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
-        self.sasl_credentials = Some(crate::sasl::SaslCredentials::new(
-            mechanism, username, password,
-        ));
+        self.config.sasl = Some(SaslCredentials::new(mechanism, username, password));
+        self.config.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
         self
     }
 
@@ -330,14 +390,12 @@ impl ClientBuilder {
     pub fn with_sasl_tls(
         mut self,
         tls_config: crate::transport::TlsConfig,
-        mechanism: crate::sasl::SaslMechanismType,
+        mechanism: SaslMechanismType,
         username: impl Into<String>,
         password: impl Into<String>,
     ) -> Self {
-        self.security_protocol = crate::transport::SecurityProtocol::SaslSsl(tls_config);
-        self.sasl_credentials = Some(crate::sasl::SaslCredentials::new(
-            mechanism, username, password,
-        ));
+        self.config.sasl = Some(SaslCredentials::new(mechanism, username, password));
+        self.config.security_protocol = crate::transport::SecurityProtocol::SaslSsl(tls_config);
         self
     }
 
@@ -349,7 +407,7 @@ impl ClientBuilder {
         username: impl Into<String>,
         password: impl Into<String>,
     ) -> Self {
-        self.with_sasl(crate::sasl::SaslMechanismType::Plain, username, password)
+        self.with_sasl(SaslMechanismType::Plain, username, password)
     }
 
     /// SASL PLAIN with TLS (domain-based config).
@@ -363,43 +421,67 @@ impl ClientBuilder {
             domain: domain.into(),
             ..Default::default()
         };
-        self.with_sasl_tls(
-            tls_config,
-            crate::sasl::SaslMechanismType::Plain,
-            username,
-            password,
-        )
+        self.with_sasl_tls(tls_config, SaslMechanismType::Plain, username, password)
     }
 
-    /// Configure SASL/GSSAPI (Kerberos) authentication.
+    /// Set SASL credentials without modifying the security protocol.
     ///
-    /// Requires the `kerberos` feature. Example:
+    /// Use this when you need to set SASL + TLS separately:
     /// ```ignore
-    /// use kafka_client::KerberosCredentials;
-    /// let client = Client::builder(vec![addr])
-    ///     .with_kerberos(KerberosCredentials::new("client@EXAMPLE.COM").with_keytab("/path/kafka.keytab"))
+    /// Client::builder(servers)
+    ///     .with_tls(domain)
+    ///     .with_sasl_credentials(mech, user, pass)
     ///     .build()
-    ///     .await?;
     /// ```
-    pub fn with_kerberos(mut self, credentials: krb5_gss::KerberosCredentials) -> Self {
-        self.security_protocol = crate::transport::SecurityProtocol::SaslPlaintext;
-        self.kerberos_credentials = Some(credentials);
+    pub fn with_sasl_credentials(
+        mut self,
+        mechanism: SaslMechanismType,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.config.sasl = Some(SaslCredentials::new(mechanism, username, password));
         self
     }
 
-    /// 设置 KDC 地址。仅当 kerberos 认证启用时生效, 默认端口 88。
+    // --- Kerberos ---
+
+    /// Set Kerberos credentials without modifying the security protocol.
     ///
-    /// 若不设置, KDC 地址将从 realm 域名推断 (未实现) 或回退到 `localhost:88`。
-    pub fn with_kdc(mut self, host: impl Into<String>, port: u16) -> Self {
-        self.kdc_host = Some(host.into());
-        self.kdc_port = port;
+    /// Use together with [`with_tls`](Self::with_tls) for TLS-secured Kerberos:
+    /// ```ignore
+    /// Client::builder(servers)
+    ///     .with_tls("broker.example.com")
+    ///     .with_kerberos(creds)
+    ///     .with_kdc("kdc.example.com", 88)
+    ///     .build()
+    /// ```
+    /// Or use [`with_kerberos_tls`](Self::with_kerberos_tls) for a single call.
+    pub fn with_kerberos(mut self, credentials: krb5_gss::KerberosCredentials) -> Self {
+        self.config.kerberos = Some(credentials);
         self
     }
 
-    /// 设置 broker 主机名 (用于 Kerberos 服务 principal `service/hostname`)。
-    /// 仅当 kerberos 认证启用时生效。
+    /// Configure Kerberos + TLS in one call.
+    pub fn with_kerberos_tls(
+        mut self,
+        tls_config: crate::transport::TlsConfig,
+        credentials: krb5_gss::KerberosCredentials,
+    ) -> Self {
+        self.config.kerberos = Some(credentials);
+        self.config.security_protocol = crate::transport::SecurityProtocol::SaslSsl(tls_config);
+        self
+    }
+
+    /// Set the KDC address (host:port). Only effective when Kerberos is enabled.
+    pub fn with_kdc(mut self, host: impl Into<String>, port: u16) -> Self {
+        self.config.kdc_host = Some(host.into());
+        self.config.kdc_port = port;
+        self
+    }
+
+    /// Set the broker hostname used in the Kerberos service principal.
     pub fn with_broker_hostname(mut self, host: impl Into<String>) -> Self {
-        self.broker_hostname = Some(host.into());
+        self.config.broker_hostname = Some(host.into());
         self
     }
 
@@ -407,13 +489,13 @@ impl ClientBuilder {
 
     /// Set a custom client ID (sent to Kafka brokers).
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = client_id.into();
+        self.config.client_id = client_id.into();
         self
     }
 
     /// Override the metadata cache TTL. Default is 5 minutes.
     pub fn with_metadata_ttl(mut self, ttl: Duration) -> Self {
-        self.metadata_ttl = ttl;
+        self.config.metadata_ttl = ttl;
         self
     }
 
@@ -421,8 +503,15 @@ impl ClientBuilder {
 
     /// Connect to the cluster and build the [`Client`].
     pub async fn build(self) -> Result<Client> {
-        let mut resolved = Vec::with_capacity(self.bootstrap_servers.len());
-        for server in &self.bootstrap_servers {
+        Client::connect(self.config).await
+    }
+}
+
+impl Client {
+    /// Connect to a Kafka cluster from a [`ClientConfig`].
+    pub async fn connect(config: ClientConfig) -> Result<Self> {
+        let mut resolved = Vec::with_capacity(config.bootstrap_servers.len());
+        for server in &config.bootstrap_servers {
             match tokio::net::lookup_host(server).await {
                 Ok(mut addrs) => {
                     if let Some(addr) = addrs.next() {
@@ -443,19 +532,19 @@ impl ClientBuilder {
             }
         }
 
-        let config = crate::cluster::ClusterConfig {
+        let cluster_config = crate::cluster::ClusterConfig {
             bootstrap_servers: resolved,
-            security_protocol: self.security_protocol,
-            client_id: self.client_id,
-            metadata_ttl: self.metadata_ttl,
-            sasl: self.sasl_credentials,
-            kerberos: self.kerberos_credentials,
-            kdc_host: self.kdc_host,
-            kdc_port: self.kdc_port,
-            broker_hostname: self.broker_hostname,
+            security_protocol: config.security_protocol,
+            client_id: config.client_id,
+            metadata_ttl: config.metadata_ttl,
+            sasl: config.sasl,
+            kerberos: config.kerberos,
+            kdc_host: config.kdc_host,
+            kdc_port: config.kdc_port,
+            broker_hostname: config.broker_hostname,
         };
 
-        let cluster = ClusterClient::connect(config).await?;
+        let cluster = ClusterClient::connect(cluster_config).await?;
         Ok(Client {
             cluster: Arc::new(cluster),
         })
