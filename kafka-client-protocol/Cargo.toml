@@ -1,6 +1,6 @@
 [package]
 name = "kafka-client-protocol"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
@@ -11,6 +11,6 @@ license.workspace = true
 
 [dependencies]
 bytes = { workspace = true }
-kafka-client-protocol-core = { version = "0.2.0", path = "../kafka-client-protocol-core" }
+kafka-client-protocol-core = { version = "0.2.1", path = "../kafka-client-protocol-core" }
 kafka-client-protocol-derive = { workspace = true }
 uuid = { workspace = true }
