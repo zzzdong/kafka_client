@@ -27,13 +27,18 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::net;
+
 use crate::cluster::ClusterClient;
 use crate::error::{KafkaError, KafkaErrorCode, Result};
+
 use crate::protocol::{
     CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
     DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
-    ListGroupsRequest, ListGroupsResponse, MetadataRequest, MetadataResponse, OffsetCommitRequest,
-    OffsetCommitResponse,
+    FindCoordinatorRequest, FindCoordinatorResponse, ListGroupsRequest, ListGroupsResponse,
+    ListOffsetsPartition, ListOffsetsRequest, ListOffsetsResponse, ListOffsetsTopic,
+    MetadataRequest, MetadataResponse, OffsetCommitRequest, OffsetCommitResponse,
+    OffsetFetchRequest, OffsetFetchRequestGroup, OffsetFetchResponse,
     create_topics_request::{CreatableReplicaAssignment, CreatableTopic, CreatableTopicConfig},
     delete_topics_request::DeleteTopicState,
     offset_commit_request::{OffsetCommitRequestPartition, OffsetCommitRequestTopic},
@@ -186,6 +191,28 @@ pub struct AdminGroupMember {
     pub client_id: String,
     /// Client host.
     pub client_host: String,
+}
+
+/// A committed offset for a single topic-partition of a consumer group.
+///
+/// Returned by [`AdminClient::fetch_group_offsets`]. `log_end_offset` and
+/// `lag` are resolved from the partition's high-watermark; they are `-1`
+/// when the high-watermark could not be determined (e.g. the topic was
+/// deleted after the offset was committed).
+#[derive(Debug, Clone)]
+pub struct GroupOffset {
+    /// Topic name.
+    pub topic: String,
+    /// Partition index.
+    pub partition: i32,
+    /// Last committed offset for the partition.
+    pub committed_offset: i64,
+    /// High-watermark (log-end offset) of the partition.
+    pub log_end_offset: i64,
+    /// Lag = `log_end_offset - committed_offset` (clamped to `>= 0`).
+    pub lag: i64,
+    /// Partition metadata string committed alongside the offset.
+    pub metadata: String,
 }
 
 /// Consumer group detailed description.
@@ -539,6 +566,197 @@ impl AdminClient {
         };
         let _response: DeleteGroupsResponse = self.cluster.send_to_any_broker(&request).await?;
         Ok(())
+    }
+
+    /// Fetch the committed offsets of a consumer group across all topics.
+    ///
+    /// Returns one [`GroupOffset`] per topic-partition the group has committed
+    /// an offset for. The high-watermark (log-end offset) and therefore the
+    /// `lag` are resolved for each partition; they are set to `-1` when the
+    /// partition's log-end offset cannot be determined.
+    ///
+    /// The request is routed to the group coordinator (found via
+    /// `FindCoordinator`), which is where committed offsets are stored.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let offsets = admin.fetch_group_offsets("my-consumer-group").await?;
+    /// for o in &offsets {
+    ///     println!("{}:{} offset={} lag={}", o.topic, o.partition, o.committed_offset, o.lag);
+    /// }
+    /// ```
+    pub async fn fetch_group_offsets(&self, group_id: &str) -> Result<Vec<GroupOffset>> {
+        let coord = self.find_group_coordinator(group_id).await?;
+
+        let request = OffsetFetchRequest {
+            group_id: group_id.to_string(),
+            topics: None,
+            groups: vec![OffsetFetchRequestGroup {
+                group_id: group_id.to_string(),
+                member_id: None,
+                member_epoch: -1,
+                topics: None,
+            }],
+            require_stable: false,
+        };
+
+        let response: OffsetFetchResponse = self.cluster.send_to_broker(coord, &request).await?;
+
+        // Helper: collect (topic, partition_index, committed_offset, metadata) from any
+        // response layout so we only write the log-end-offset resolution once.
+        struct RawPartition {
+            topic: String,
+            partition_index: i32,
+            committed_offset: i64,
+            metadata: Option<String>,
+        }
+
+        let mut raw = Vec::<RawPartition>::new();
+
+        if !response.groups.is_empty() {
+            // Protocol version 8+ — response layout uses per-group wrappers.
+            for grp in response.groups {
+                if grp.group_id != group_id {
+                    continue;
+                }
+                if grp.error_code != 0 {
+                    return Err(KafkaError::NoCoordinator);
+                }
+                for t in grp.topics {
+                    let name = t.name;
+                    if name.is_empty() {
+                        continue;
+                    }
+                    for p in t.partitions {
+                        if p.error_code != 0 {
+                            continue;
+                        }
+                        raw.push(RawPartition {
+                            topic: name.clone(),
+                            partition_index: p.partition_index,
+                            committed_offset: p.committed_offset,
+                            metadata: p.metadata.clone(),
+                        });
+                    }
+                }
+            }
+        } else {
+            // Protocol version 0-7 — response layout uses flat topic list.
+            if response.error_code != 0 {
+                return Err(KafkaError::NoCoordinator);
+            }
+            for t in &response.topics {
+                let name = &t.name;
+                if name.is_empty() {
+                    continue;
+                }
+                for p in &t.partitions {
+                    if p.error_code != 0 {
+                        continue;
+                    }
+                    raw.push(RawPartition {
+                        topic: name.clone(),
+                        partition_index: p.partition_index,
+                        committed_offset: p.committed_offset,
+                        metadata: p.metadata.clone(),
+                    });
+                }
+            }
+        }
+
+        // Resolve log-end-offset and build the final GroupOffset for every partition.
+        let mut offsets = Vec::with_capacity(raw.len());
+        for rp in raw {
+            let log_end = self
+                .fetch_log_end_offset(&rp.topic, rp.partition_index)
+                .await
+                .unwrap_or(-1);
+            let lag = if log_end >= 0 && rp.committed_offset >= 0 {
+                (log_end - rp.committed_offset).max(0)
+            } else {
+                -1
+            };
+            offsets.push(GroupOffset {
+                topic: rp.topic,
+                partition: rp.partition_index,
+                committed_offset: rp.committed_offset,
+                log_end_offset: log_end,
+                lag,
+                metadata: rp.metadata.unwrap_or_default(),
+            });
+        }
+
+        Ok(offsets)
+    }
+
+    /// Resolve the socket address of a consumer group's coordinator.
+    async fn find_group_coordinator(&self, group_id: &str) -> Result<SocketAddr> {
+        let request = FindCoordinatorRequest {
+            key: group_id.to_string(),
+            key_type: 0,
+            coordinator_keys: vec![group_id.to_string()],
+        };
+        let response: FindCoordinatorResponse = self.cluster.send_to_any_broker(&request).await?;
+        if response.error_code != 0 {
+            return Err(KafkaError::NoCoordinator);
+        }
+        let (host, port) = if !response.host.is_empty() {
+            (response.host.clone(), response.port)
+        } else if let Some(coord) = response.coordinators.first() {
+            if coord.error_code != 0 {
+                return Err(KafkaError::NoCoordinator);
+            }
+            (coord.host.clone(), coord.port)
+        } else {
+            return Err(KafkaError::NoCoordinator);
+        };
+        net::lookup_host(format!("{}:{}", host, port))
+            .await
+            .map_err(|_| KafkaError::NoCoordinator)?
+            .next()
+            .ok_or(KafkaError::NoCoordinator)
+    }
+
+    /// Resolve the high-watermark (log-end offset) of a single partition via a
+    /// `ListOffsets` request (timestamp `-1`, meaning latest). Returns `-1`
+    /// when the leader cannot be determined or the request fails.
+    async fn fetch_log_end_offset(&self, topic: &str, partition: i32) -> Result<i64> {
+        let leader_addr = self
+            .cluster
+            .metadata()
+            .get_partition_leader(topic, partition)
+            .await
+            .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), partition))?;
+
+        let request = ListOffsetsRequest {
+            replica_id: -1,
+            isolation_level: 0,
+            topics: vec![ListOffsetsTopic {
+                name: topic.to_string(),
+                partitions: vec![ListOffsetsPartition {
+                    partition_index: partition,
+                    current_leader_epoch: -1,
+                    timestamp: -1,
+                }],
+            }],
+            timeout_ms: 5000,
+        };
+        let response: ListOffsetsResponse = self
+            .cluster
+            .send_to_broker::<ListOffsetsRequest, ListOffsetsResponse>(leader_addr, &request)
+            .await?;
+        for t in &response.topics {
+            if t.name == topic
+                && let Some(p) = t.partitions.iter().find(|p| p.partition_index == partition)
+            {
+                if p.error_code != 0 {
+                    break;
+                }
+                return Ok(p.offset);
+            }
+        }
+        Err(KafkaError::PartitionNotFound(topic.to_string(), partition))
     }
 
     /// Commit offsets for a consumer group.
