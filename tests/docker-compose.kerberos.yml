@@ -5,6 +5,14 @@ services:
       dockerfile: Dockerfile.kdc
     hostname: kdc.example.com
     container_name: kdc-kerberos
+    # Docker 的嵌入式 DNS 只解析容器名/网络别名, 不解析 `hostname:` 字段;
+    # podman (aardvark-dns) 会解析 hostname。显式加别名, 让 Kafka 容器能
+    # 解析 krb5.conf 里的 kdc.example.com (docker 下 broker 启动时的内部
+    # GSSAPI 登录需要访问 KDC)。
+    networks:
+      default:
+        aliases:
+          - kdc.example.com
     ports:
       - "8888:88"
     volumes:
@@ -61,4 +69,3 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-

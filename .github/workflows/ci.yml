@@ -294,6 +294,15 @@ jobs:
               echo "ready (~${i}s)"
               break
             fi
+            # Fallback: some SASL listeners are picky about the ApiVersions
+            # probe; accept the TCP port as ready and let the real GSSAPI
+            # handshake in the test validate the listener.
+            if docker exec kafka-kerberos-broker \
+              bash -c "echo > /dev/tcp/127.0.0.1/9096" 2>/dev/null; then
+              sleep 8
+              echo "ready (~${i}s, port)"
+              break
+            fi
             if [ "$i" -eq 120 ]; then
               echo "timeout"
               exit 1
