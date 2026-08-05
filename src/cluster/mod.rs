@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-use crate::error::{KafkaError, Result};
+use crate::error::{KafkaError, KafkaErrorCode, Result};
 use crate::sasl::SaslCredentials;
 use crate::transport::SecurityProtocol;
 use kafka_client_protocol::{self as protocol, Request, Response};
@@ -313,38 +313,52 @@ impl ClusterClient {
         use protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
         use protocol::describe_configs_response::DescribeConfigsResponse;
 
-        let request = DescribeConfigsRequest {
-            resources: vec![DescribeConfigsResource {
-                resource_type: 4,             // broker
-                resource_name: String::new(), // empty = target broker itself
-                configuration_keys: Some(vec![key.to_string()]),
-            }],
-            include_synonyms: false,
-            include_documentation: false,
-        };
+        // Kafka 4.x (KRaft) may expect the broker id as the resource name;
+        // try the empty name first, then fall back to a known broker id.
+        let mut resource_names: Vec<String> = vec![String::new()];
+        if let Some(broker) = self.metadata().get_all_brokers().await.into_iter().next() {
+            resource_names.push(broker.node_id.to_string());
+        }
 
-        let response: Result<DescribeConfigsResponse> = self.send_to_any_broker(&request).await;
-        match response {
-            Ok(resp) => {
-                for result in resp.results {
-                    if result.error_code == 0 {
-                        for config in result.configs {
-                            if config.name == key
-                                && let Some(ref val) = config.value
-                            {
-                                debug!("Broker config {} = {}", key, val);
-                                return val.parse::<usize>().ok();
+        for resource_name in resource_names {
+            let request = DescribeConfigsRequest {
+                resources: vec![DescribeConfigsResource {
+                    resource_type: 4, // broker
+                    resource_name,
+                    configuration_keys: Some(vec![key.to_string()]),
+                }],
+                include_synonyms: false,
+                include_documentation: false,
+            };
+
+            let response: Result<DescribeConfigsResponse> = self.send_to_any_broker(&request).await;
+            match response {
+                Ok(resp) => {
+                    for result in resp.results {
+                        if result.error_code == 0 {
+                            for config in result.configs {
+                                if config.name == key
+                                    && let Some(ref val) = config.value
+                                {
+                                    debug!("Broker config {} = {}", key, val);
+                                    return val.parse::<usize>().ok();
+                                }
                             }
+                        } else {
+                            warn!(
+                                "DescribeConfigs({}) for broker resource failed: {}",
+                                key,
+                                KafkaErrorCode::from_i16(result.error_code)
+                            );
                         }
                     }
                 }
-                None
-            }
-            Err(e) => {
-                warn!("Failed to query broker config '{}': {}", key, e);
-                None
+                Err(e) => {
+                    warn!("Failed to query broker config '{}': {}", key, e);
+                }
             }
         }
+        None
     }
 
     // ================================================================

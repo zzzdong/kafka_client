@@ -146,6 +146,20 @@ async fn test_try_poll_and_poll_timeout() {
             .expect("poll_timeout");
         assert!(!records.is_empty(), "poll_timeout should wait for data");
 
+        // Records may arrive in several fetches (produce_messages sends each
+        // message separately); consume everything before checking for "no
+        // more data".
+        let mut total = records.len();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while total < 3 && std::time::Instant::now() < deadline {
+            total += consumer
+                .poll_timeout(Duration::from_millis(3000))
+                .await
+                .unwrap()
+                .len();
+        }
+        assert_eq!(total, 3, "all produced records should be consumed");
+
         // No more data: poll_timeout returns empty after the timeout.
         let empty = consumer
             .poll_timeout(Duration::from_millis(3000))

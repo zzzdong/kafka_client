@@ -1198,20 +1198,32 @@ impl AdminClient {
                 });
         }
 
+        // OffsetCommit v10+ addresses topics by id; resolve the id from the
+        // metadata cache so the broker doesn't reject the request with
+        // UNKNOWN_TOPIC_ID.
+        let mut request_topics = Vec::with_capacity(topics.len());
+        for (name, partitions) in topics {
+            let topic_id = self
+                .cluster
+                .metadata()
+                .get_topic(&name)
+                .await
+                .map(|t| t.topic_id)
+                .unwrap_or_else(uuid::Uuid::nil);
+            request_topics.push(OffsetCommitRequestTopic {
+                name,
+                topic_id,
+                partitions,
+            });
+        }
+
         let request = OffsetCommitRequest {
             group_id: group_id.to_string(),
             generation_id_or_member_epoch: -1,
             member_id: String::new(),
             group_instance_id: None,
             retention_time_ms: -1,
-            topics: topics
-                .into_iter()
-                .map(|(name, partitions)| OffsetCommitRequestTopic {
-                    name,
-                    topic_id: uuid::Uuid::nil(),
-                    partitions,
-                })
-                .collect(),
+            topics: request_topics,
         };
 
         // OffsetCommit must be sent to the group's coordinator; a non-
