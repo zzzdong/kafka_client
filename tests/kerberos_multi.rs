@@ -5,13 +5,15 @@
 //! 用各自的 advertised host 认证, 而不是全局共享一个 hostname。
 //!
 //! 前提:
-//! - tests/docker-compose.kerberos-multi.yml 集群 (KDC 端口 8889)
-//! - 宿主机 /etc/hosts 把 broker1/2/3.example.com 解析到 127.0.0.1
+//! - tests/docker-compose.kerberos-multi.yml 集群
+//! - 通常通过该 compose 的 `test-runner` 服务运行 (容器网络内解析
+//!   broker1/2/3.example.com 与 kdc.example.com); 在宿主机直接运行则需要
+//!   /etc/hosts 把 broker 主机名解析到 127.0.0.1。
 //!
 //! 单独运行:
 //!   KAFKA_BOOTSTRAP_KERBEROS_MULTI=broker1.example.com:19096 \
 //!   KERBEROS_KEYTAB_MULTI=tests/fixtures/kerberos-multi/keytabs/client.keytab \
-//!   KERBEROS_KDC_PORT=8889 KAFKA_CLUSTER_SIZE=3 \
+//!   KERBEROS_KDC_HOST=localhost KERBEROS_KDC_PORT=8889 KAFKA_CLUSTER_SIZE=3 \
 //!     cargo test --test kerberos_multi --features integration_tests -- --nocapture
 
 #![cfg(feature = "integration_tests")]
@@ -28,18 +30,24 @@ const BROKER_HOSTS: [&str; 3] = [
     "broker3.example.com",
 ];
 
-/// 检查 broker 主机名在宿主机上可解析 (指向 127.0.0.1)。
+/// 检查 broker 主机名可解析 (容器网络内解析到 broker 容器 IP)。
 fn ensure_hosts_resolve() {
     for host in BROKER_HOSTS {
-        let mut resolved = format!("{host}:1")
+        format!("{host}:1")
             .to_socket_addrs()
-            .unwrap_or_else(|e| panic!("cannot resolve {host}: {e}"));
-        assert!(
-            resolved.any(|a| a.ip().is_loopback()),
-            "{host} does not resolve to 127.0.0.1 — add \
-             '127.0.0.1 broker1.example.com broker2.example.com broker3.example.com' \
-             to /etc/hosts (CI does this via sudo)"
-        );
+            .unwrap_or_else(|e| {
+                panic!(
+                    "cannot resolve {host}: {e} — run via the compose test-runner \
+                     service, or add the broker hostnames to /etc/hosts"
+                )
+            })
+            .next()
+            .unwrap_or_else(|| {
+                panic!(
+                    "cannot resolve {host}: run via the compose test-runner service, \
+                     or add the broker hostnames to /etc/hosts"
+                )
+            });
     }
 }
 
@@ -52,14 +60,20 @@ async fn test_kerberos_multi_broker_gssapi() {
         .unwrap_or_else(|_| "broker1.example.com:19096".to_string());
     let keytab_path = std::env::var("KERBEROS_KEYTAB_MULTI")
         .unwrap_or_else(|_| "tests/fixtures/kerberos-multi/keytabs/client.keytab".to_string());
+    let kdc_host = std::env::var("KERBEROS_KDC_HOST").unwrap_or_else(|_| "localhost".to_string());
     let kdc_port: u16 = std::env::var("KERBEROS_KDC_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(8889);
-    assert!(
-        std::path::Path::new(&keytab_path).exists(),
-        "Keytab not found at {keytab_path}. Is the KDC container running?"
-    );
+    // The KDC container exports the keytab shortly after starting; wait for
+    // it when running directly via `compose run` (no external wait step).
+    let keytab_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !std::path::Path::new(&keytab_path).exists() {
+        if std::time::Instant::now() > keytab_deadline {
+            panic!("Keytab not found at {keytab_path} after 30s. Is the KDC container running?");
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 
     let creds = KerberosCredentials::new("client@EXAMPLE.COM")
         .with_keytab(keytab_path)
@@ -67,26 +81,45 @@ async fn test_kerberos_multi_broker_gssapi() {
 
     // 故意设置一个全局 broker_hostname: 只有当"连接级主机名优先"的修复
     // 生效时, broker2/3 才能用各自 advertised host 认证通过。
-    let client = kafka_client::Client::builder(vec![bootstrap])
-        .with_kerberos(creds)
-        .with_broker_hostname("broker1.example.com")
-        .with_kdc("localhost", kdc_port)
-        .build()
-        .await
-        .expect("Kerberos multi-broker client failed to connect");
+    let client = 'retry: loop {
+        for attempt in 1..=20 {
+            match kafka_client::Client::builder(vec![bootstrap.clone()])
+                .with_kerberos(creds.clone())
+                .with_broker_hostname("broker1.example.com")
+                .with_kdc(kdc_host.clone(), kdc_port)
+                .build()
+                .await
+            {
+                Ok(c) => break 'retry c,
+                Err(e) => {
+                    eprintln!("  [attempt {attempt}/20] connect failed: {e}");
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+            }
+        }
+        panic!("Kerberos multi-broker client failed to connect after 20 attempts");
+    };
 
     // Metadata 刷新会连接所有 3 个 broker, 每个都用自己 advertised 的
     // hostname 作为服务 principal。
-    client
-        .refresh_metadata()
-        .await
-        .expect("metadata refresh over GSSAPI");
-    let brokers = client.metadata().get_all_brokers().await;
+    // broker 启动后是异步注册到 controller 的, 轮询直到 3 台全部出现。
+    let metadata_deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let brokers = loop {
+        client
+            .refresh_metadata()
+            .await
+            .expect("metadata refresh over GSSAPI");
+        let brokers = client.metadata().get_all_brokers().await;
+        if brokers.len() == 3 || std::time::Instant::now() > metadata_deadline {
+            break brokers;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
     assert_eq!(
         brokers.len(),
         3,
-        "expected 3 brokers in metadata, got {}",
-        brokers.len()
+        "expected 3 brokers in metadata after startup, got {}: {brokers:?}",
+        brokers.len(),
     );
     for b in &brokers {
         assert!(

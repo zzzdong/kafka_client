@@ -139,7 +139,7 @@ pub mod clusters {
             "kafka-kerberos-2",
             "kafka-kerberos-3",
         ],
-        internal_port: 9096,
+        internal_port: 19096,
         host_port: 19096,
         is_secure: true,
     };

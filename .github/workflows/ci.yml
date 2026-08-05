@@ -363,12 +363,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build tests
-        working-directory: .
-        run: cargo test --no-run --features integration_tests
-      - name: Add broker hostnames to /etc/hosts
+      - name: Install musl toolchain
         run: |
-          sudo bash -c 'echo "127.0.0.1 broker1.example.com broker2.example.com broker3.example.com" >> /etc/hosts'
+          sudo apt-get update && sudo apt-get install -y musl-tools cmake perl
+          rustup target add x86_64-unknown-linux-musl
+      - name: Build static test binary (musl)
+        working-directory: .
+        run: |
+          cargo test --no-run --target x86_64-unknown-linux-musl \
+            --features integration_tests --test kerberos_multi
+          mkdir -p target/test-bin
+          cp "$(ls target/x86_64-unknown-linux-musl/debug/deps/kerberos_multi-* | grep -v '\.d$' | head -1)" \
+             target/test-bin/kerberos_multi
       - name: Start KDC + Kerberos multi-broker cluster
         run: |
           docker compose -f docker-compose.kerberos-multi.yml up -d --build
@@ -377,12 +383,12 @@ jobs:
             for i in $(seq 1 120); do
               if docker exec "${c}" \
                 /opt/kafka/bin/kafka-broker-api-versions.sh \
-                --bootstrap-server 127.0.0.1:9096 &>/dev/null; then
+                --bootstrap-server 127.0.0.1:19096 &>/dev/null; then
                 echo "ready (~${i}s)"
                 break
               fi
               if docker exec "${c}" \
-                bash -c "echo > /dev/tcp/127.0.0.1/9096" 2>/dev/null; then
+                bash -c "echo > /dev/tcp/127.0.0.1/19096" 2>/dev/null; then
                 sleep 8
                 echo "ready (~${i}s, port)"
                 break
@@ -409,14 +415,9 @@ jobs:
           done
       - name: Run multi-broker Kerberos tests
         working-directory: .
-        run: cargo test --test kerberos_multi --features integration_tests -- --nocapture
-        env:
-          KAFKA_BOOTSTRAP_KERBEROS_MULTI: broker1.example.com:19096
-          KERBEROS_KEYTAB_MULTI: tests/fixtures/kerberos-multi/keytabs/client.keytab
-          KERBEROS_KDC_HOST: localhost
-          KERBEROS_KDC_PORT: "8889"
-          KAFKA_CLUSTER_SIZE: 3
-          RUST_TEST_THREADS: 1
+        # 测试在 compose 网络内的 test-runner 容器中编译运行, 容器网络
+        # 解析 broker1/2/3.example.com 与 kdc.example.com, 无需 /etc/hosts。
+        run: docker compose -f docker-compose.kerberos-multi.yml run --rm test-runner
       - name: Dump logs on failure
         if: failure()
         working-directory: tests

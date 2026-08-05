@@ -103,18 +103,6 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos.yml up -d
 echo "=== Starting KDC + Kerberos multi-broker (docker-compose.kerberos-multi.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml up -d --build
 
-# 多 broker Kerberos 测试要求 broker 主机名解析到 127.0.0.1
-echo "=== Ensuring broker hostnames resolve to localhost ==="
-HOSTS_LINE="127.0.0.1 broker1.example.com broker2.example.com broker3.example.com"
-if grep -q "broker1.example.com" /etc/hosts 2>/dev/null; then
-    echo "  already present in /etc/hosts"
-elif sudo -n bash -c "echo '${HOSTS_LINE}' >> /etc/hosts" 2>/dev/null; then
-    echo "  added to /etc/hosts via sudo"
-else
-    echo "  WARNING: cannot add broker hostnames to /etc/hosts —"
-    echo "           multi-broker Kerberos tests will be skipped"
-fi
-
 # ---------------------------------------------------------------------------
 # 2. Wait for brokers to be ready
 # ---------------------------------------------------------------------------
@@ -186,9 +174,10 @@ wait_broker "kafka-kerberos-broker" 9096 9096 120 || {
 
 echo "=== Waiting for Kerberos multi-broker cluster to be ready ==="
 for i in 1 2 3; do
-    wait_broker "kafka-kerberos-${i}" 9096 "$((19095 + i))" 120 || {
+    if ! wait_broker "kafka-kerberos-${i}" 19096 "$((19095 + i))" 120; then
         echo "WARNING: kafka-kerberos-${i} not ready — multi-broker Kerberos tests may be skipped"
-    }
+        ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml logs --tail=30 "kafka-kerberos-${i}" 2>/dev/null || true
+    fi
 done
 
 # ---------------------------------------------------------------------------
@@ -262,17 +251,42 @@ done
 
 echo ""
 echo "--- Kerberos multi-broker tests ---"
-if getent hosts broker1.example.com >/dev/null 2>&1; then
-    for test in "${KERBEROS_MULTI_TESTS[@]}"; do
-        KAFKA_BOOTSTRAP_KERBEROS_MULTI="broker1.example.com:19096" \
-        KERBEROS_KEYTAB_MULTI="${SCRIPT_DIR}/fixtures/kerberos-multi/keytabs/client.keytab" \
-        KERBEROS_KDC_HOST="localhost" \
-        KERBEROS_KDC_PORT="8889" \
-        KAFKA_CLUSTER_SIZE=3 \
-        run_tests "${test}" || TEST_EXIT_CODE=$?
-    done
+echo "  Building musl test binary (${MUSL_TARGET:-x86_64-unknown-linux-musl})..."
+cd "${PROJECT_ROOT}"
+MUSL_TARGET="${MUSL_TARGET:-x86_64-unknown-linux-musl}"
+SKIP_MUSL_BUILD=""
+if ! rustup target list --installed | grep -q "${MUSL_TARGET}"; then
+    rustup target add "${MUSL_TARGET}" 2>/dev/null || {
+        echo "  WARNING: cannot install musl target — multi-broker Kerberos tests will be skipped"
+        SKIP_MUSL_BUILD=1
+    }
+fi
+if [ -z "${SKIP_MUSL_BUILD:-}" ] \
+    && cargo test --no-run --target "${MUSL_TARGET}" \
+        --features integration_tests --test kerberos_multi 2>/dev/null; then
+    mkdir -p target/test-bin
+    BIN="$(ls target/${MUSL_TARGET}/debug/deps/kerberos_multi-* 2>/dev/null | grep -v '\.d$' | head -1)"
+    if [ -n "${BIN}" ]; then
+        cp "${BIN}" target/test-bin/kerberos_multi
+        echo "  musl test binary ready: target/test-bin/kerberos_multi"
+    else
+        echo "  WARNING: musl test binary not found — multi-broker Kerberos tests will be skipped"
+        SKIP_MUSL_BUILD=1
+    fi
 else
-    echo "  [SKIP] broker hostnames not resolvable — add them to /etc/hosts"
+    echo "  WARNING: musl build failed — multi-broker Kerberos tests will be skipped"
+    SKIP_MUSL_BUILD=1
+fi
+cd "${SCRIPT_DIR}"
+
+if [ -z "${SKIP_MUSL_BUILD:-}" ]; then
+    for test in "${KERBEROS_MULTI_TESTS[@]}"; do
+        echo "  [RUN] ${test} (in-container)"
+        # 测试在 compose 网络内的 test-runner 容器中运行, 容器网络解析
+        # broker1/2/3.example.com 与 kdc.example.com, 无需宿主机 /etc/hosts。
+        ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml run --rm test-runner \
+            || TEST_EXIT_CODE=$?
+    done
 fi
 
 # ---------------------------------------------------------------------------

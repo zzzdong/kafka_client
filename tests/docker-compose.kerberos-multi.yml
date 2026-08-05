@@ -6,18 +6,19 @@
 # advertised host 认证"(而非全局共享 hostname)。
 #
 # 端口: KDC 8889 (避开单节点 8888), brokers 19096/19097/19098
+# 注意: advertised 端口必须 == 容器监听端口 == 宿主机端口, 因为 KRaft
+# controller 仲裁和 broker 间通信使用 advertised 地址在容器网络内直连,
+# 宿主机端口映射 (NAT) 在容器网络内部并不存在。
 # keytab 目录独立: ./fixtures/kerberos-multi/keytabs
 #
-# 宿主机需要:
-#   127.0.0.1 broker1.example.com broker2.example.com broker3.example.com
+# 测试程序在 `test-runner` 容器内运行, 直接通过 compose 网络解析
+# broker1/2/3.example.com 与 kdc.example.com, 无需修改宿主机 /etc/hosts。
+# 二进制在宿主机用 musl target 静态编译后放到 target/test-bin/kerberos_multi。
 #
 # Usage:
 #   cd tests
 #   podman compose -f docker-compose.kerberos-multi.yml up -d --build
-#   KAFKA_BOOTSTRAP_KERBEROS_MULTI=broker1.example.com:19096 \
-#   KERBEROS_KEYTAB_MULTI=tests/fixtures/kerberos-multi/keytabs/client.keytab \
-#   KERBEROS_KDC_PORT=8889 KAFKA_CLUSTER_SIZE=3 \
-#     cargo test --test kerberos_multi --features integration_tests -- --nocapture
+#   podman compose -f docker-compose.kerberos-multi.yml run --rm test-runner
 #   podman compose -f docker-compose.kerberos-multi.yml down -v
 
 services:
@@ -53,7 +54,7 @@ services:
         aliases:
           - broker1.example.com
     ports:
-      - "19096:9096"
+      - "19096:19096"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
       - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
@@ -69,7 +70,7 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
       CLUSTER_ID: 'kafka-docker-kerberos-multi'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:19096,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker1.example.com:19096,CONTROLLER://broker1.example.com:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
@@ -95,7 +96,7 @@ services:
         aliases:
           - broker2.example.com
     ports:
-      - "19097:9096"
+      - "19097:19097"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
       - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
@@ -111,7 +112,7 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
       CLUSTER_ID: 'kafka-docker-kerberos-multi'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:19097,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker2.example.com:19097,CONTROLLER://broker2.example.com:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
@@ -137,7 +138,7 @@ services:
         aliases:
           - broker3.example.com
     ports:
-      - "19098:9096"
+      - "19098:19098"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
       - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
@@ -153,7 +154,7 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
       CLUSTER_ID: 'kafka-docker-kerberos-multi'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:19098,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker3.example.com:19098,CONTROLLER://broker3.example.com:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
@@ -166,3 +167,24 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+
+# 在容器网络内运行宿主机构建的静态 (musl) 测试二进制, 避免宿主机 DNS 问题。
+# 基础镜像复用 KDC 的 debian:trixie-slim (本地已有, 无需额外拉取)。
+  test-runner:
+    image: debian:trixie-slim
+    container_name: kerberos-multi-test-runner
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    volumes:
+      - ../target/test-bin:/tests-bin:ro
+      - ./fixtures/kerberos-multi/keytabs:/keytabs:ro
+    environment:
+      KAFKA_BOOTSTRAP_KERBEROS_MULTI: broker1.example.com:19096
+      KERBEROS_KEYTAB_MULTI: /keytabs/client.keytab
+      KERBEROS_KDC_HOST: kdc.example.com
+      KERBEROS_KDC_PORT: "88"
+      KAFKA_CLUSTER_SIZE: "3"
+      RUST_TEST_THREADS: "1"
+    command: ["/tests-bin/kerberos_multi", "--nocapture"]
