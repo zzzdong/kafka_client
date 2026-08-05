@@ -51,7 +51,6 @@ use crate::protocol::describe_acls_request::DescribeAclsRequest;
 use crate::protocol::describe_acls_response::DescribeAclsResponse;
 use crate::protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
 use crate::protocol::describe_configs_response::DescribeConfigsResponse;
-use kafka_client_protocol::{Request, Response};
 use crate::protocol::{
     CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
     DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
@@ -63,6 +62,7 @@ use crate::protocol::{
     delete_topics_request::DeleteTopicState,
     offset_commit_request::{OffsetCommitRequestPartition, OffsetCommitRequestTopic},
 };
+use kafka_client_protocol::{Request, Response};
 
 // ===========================================================================
 // Admin DTOs (lightweight, user-facing types)
@@ -1161,7 +1161,10 @@ impl AdminClient {
     /// Resolve the current controller's address from the metadata cache.
     async fn controller_addr(&self) -> Option<SocketAddr> {
         let controller_id = self.cluster.metadata().get_controller_id().await?;
-        self.cluster.metadata().get_broker_address(controller_id).await
+        self.cluster
+            .metadata()
+            .get_broker_address(controller_id)
+            .await
     }
 
     /// Send a request to the current controller, falling back to any broker
