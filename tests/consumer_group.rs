@@ -153,7 +153,11 @@ async fn test_consumer_group_sticky_assignment() {
     c1.subscribe(vec!["tc-sticky".to_string()]).await.unwrap();
     let a1 = wait_for_assignment(&c1, Duration::from_secs(30)).await;
     let a1_parts: HashSet<i32> = a1.values().flat_map(|v| v.iter()).copied().collect();
-    assert_eq!(a1_parts.len(), 4, "single consumer should own all partitions");
+    assert_eq!(
+        a1_parts.len(),
+        4,
+        "single consumer should own all partitions"
+    );
 
     // Consumer 2 joins: rebalance hands over exactly half, and the sticky
     // assignor keeps consumer 1 on its previous partitions as much as possible.
@@ -162,15 +166,15 @@ async fn test_consumer_group_sticky_assignment() {
     c2.subscribe(vec!["tc-sticky".to_string()]).await.unwrap();
     let a2 = wait_for_assignment(&c2, Duration::from_secs(30)).await;
     let a2_parts: HashSet<i32> = a2.values().flat_map(|v| v.iter()).copied().collect();
-    assert_eq!(a2_parts.len(), 2, "consumer 2 should get half the partitions");
+    assert_eq!(
+        a2_parts.len(),
+        2,
+        "consumer 2 should get half the partitions"
+    );
 
     sleep(Duration::from_secs(3)).await;
     let a1_after = c1.group().assignment().await;
-    let a1_after_parts: HashSet<i32> = a1_after
-        .values()
-        .flat_map(|v| v.iter())
-        .copied()
-        .collect();
+    let a1_after_parts: HashSet<i32> = a1_after.values().flat_map(|v| v.iter()).copied().collect();
     assert_eq!(a1_after_parts.len(), 2, "consumer 1 should keep half");
     let kept = a1_parts.intersection(&a1_after_parts).count();
     assert!(
@@ -182,5 +186,8 @@ async fn test_consumer_group_sticky_assignment() {
         "sticky assignments must not overlap"
     );
 
-    println!("  Sticky test PASSED: c1 keeps {kept} of its {}/4 partitions", a1_parts.len());
+    println!(
+        "  Sticky test PASSED: c1 keeps {kept} of its {}/4 partitions",
+        a1_parts.len()
+    );
 }

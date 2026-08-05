@@ -1,5 +1,5 @@
-use bytes::{Bytes, BytesMut};
 use bytes::Buf;
+use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
@@ -294,7 +294,8 @@ pub(crate) async fn compute_all_assignments(
             }
             // Sticky strategies are computed across all topics after this
             // loop (they need the members' previous assignments).
-            PartitionAssignmentStrategy::Sticky | PartitionAssignmentStrategy::CooperativeSticky => {}
+            PartitionAssignmentStrategy::Sticky
+            | PartitionAssignmentStrategy::CooperativeSticky => {}
         }
     }
 
@@ -492,9 +493,7 @@ mod tests {
     use super::*;
 
     fn parts(ps: &[(i32, &str)]) -> Vec<(String, i32)> {
-        ps.iter()
-            .map(|(p, t)| (t.to_string(), *p))
-            .collect()
+        ps.iter().map(|(p, t)| (t.to_string(), *p)).collect()
     }
 
     #[test]
@@ -521,7 +520,11 @@ mod tests {
         previous.insert("b".into(), parts(&[(2, "t"), (3, "t"), (4, "t")]));
 
         let assignment = sticky_assign(&members, &all, &previous);
-        assert_eq!(assignment["a"].len(), 2, "balanced assignment must not move partitions");
+        assert_eq!(
+            assignment["a"].len(),
+            2,
+            "balanced assignment must not move partitions"
+        );
         assert_eq!(assignment["b"].len(), 3);
         for (_, p) in &assignment["a"] {
             assert!(p == &0 || p == &1, "a should keep its previous partitions");
@@ -546,14 +549,15 @@ mod tests {
         let members = vec!["a".into()];
         let all = parts(&[(0, "t"), (1, "t")]);
         let mut previous = HashMap::new();
-        previous.insert(
-            "a".into(),
-            parts(&[(0, "t"), (99, "gone-topic")]),
-        );
+        previous.insert("a".into(), parts(&[(0, "t"), (99, "gone-topic")]));
         previous.insert("departed".into(), parts(&[(1, "t")]));
 
         let assignment = sticky_assign(&members, &all, &previous);
-        assert_eq!(assignment["a"].len(), 2, "gone-topic partition dropped, unowned t:1 assigned");
+        assert_eq!(
+            assignment["a"].len(),
+            2,
+            "gone-topic partition dropped, unowned t:1 assigned"
+        );
         assert!(
             assignment["a"].iter().all(|(t, _)| t == "t"),
             "only partitions of subscribed topics survive"

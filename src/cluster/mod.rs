@@ -354,7 +354,9 @@ impl ClusterClient {
                             continue;
                         }
                         for config in result.configs {
-                            if config.name == key && let Some(ref val) = config.value {
+                            if config.name == key
+                                && let Some(ref val) = config.value
+                            {
                                 debug!("Broker config {} = {}", key, val);
                                 return val.parse::<usize>().ok();
                             }

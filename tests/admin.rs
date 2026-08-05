@@ -14,8 +14,8 @@
 mod common;
 
 use common::{build_test_client, compose, run_with_timeout};
-use kafka_client::admin::{NewTopic, OffsetCommitSpec};
 use kafka_client::ConsumerConfig;
+use kafka_client::admin::{NewTopic, OffsetCommitSpec};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 async fn setup() {
@@ -39,10 +39,7 @@ async fn test_admin_topic_and_cluster_operations() {
 
         // Cluster inspection.
         let cluster = admin.describe_cluster().await.expect("describe_cluster");
-        assert!(
-            !cluster.brokers.is_empty(),
-            "expected at least one broker"
-        );
+        assert!(!cluster.brokers.is_empty(), "expected at least one broker");
         assert!(
             cluster.brokers.iter().all(|b| b.host != ""),
             "broker host should be reported"
@@ -77,7 +74,10 @@ async fn test_admin_topic_and_cluster_operations() {
             admin.get_broker_config("max.message.bytes").await
         );
         assert!(
-            admin.get_broker_config("no.such.config.key").await.is_none(),
+            admin
+                .get_broker_config("no.such.config.key")
+                .await
+                .is_none(),
             "unknown config key should return None"
         );
 
@@ -115,7 +115,10 @@ async fn test_admin_topic_and_cluster_operations() {
         assert_eq!(descriptions.len(), 1);
         assert_eq!(descriptions[0].partitions.len(), 3);
         assert!(
-            descriptions[0].partitions.iter().all(|p| p.replicas.len() >= 1),
+            descriptions[0]
+                .partitions
+                .iter()
+                .all(|p| p.replicas.len() >= 1),
             "each partition should report replicas"
         );
 
@@ -168,9 +171,9 @@ async fn test_admin_commit_and_fetch_offsets_roundtrip() {
             .await
             .expect("fetch_group_offsets");
         assert!(
-            offsets.iter().any(|o| {
-                o.topic == topic && o.partition == 0 && o.committed_offset == 42
-            }),
+            offsets
+                .iter()
+                .any(|o| { o.topic == topic && o.partition == 0 && o.committed_offset == 42 }),
             "committed offsets should be visible: {offsets:?}"
         );
 
@@ -193,14 +196,7 @@ async fn test_admin_group_lifecycle() {
         common::produce_messages(&client, &topic, 5).await;
 
         // Create the group with a real consumer and committed offsets.
-        common::consume_all_timeout(
-            &client,
-            &group,
-            &topic,
-            5,
-            Duration::from_secs(20),
-        )
-        .await;
+        common::consume_all_timeout(&client, &group, &topic, 5, Duration::from_secs(20)).await;
 
         // Ensure the group has committed offsets (auto-commit may not have
         // fired yet after a fast consume) by committing explicitly.
@@ -242,7 +238,11 @@ async fn test_admin_group_lifecycle() {
             .fetch_group_offsets(&group)
             .await
             .expect("fetch_group_offsets");
-        assert_eq!(offsets.len(), 1, "one partition should have committed offsets");
+        assert_eq!(
+            offsets.len(),
+            1,
+            "one partition should have committed offsets"
+        );
 
         // delete_group after the consumer left.
         // The consumer left via LeaveGroup; the coordinator may need a moment
@@ -295,9 +295,9 @@ async fn test_admin_config_alter_and_describe() {
             .await
             .expect("describe_configs");
         assert!(
-            entries.iter().any(|c| {
-                c.name == "retention.ms" && c.value.as_deref() == Some("3600000")
-            }),
+            entries
+                .iter()
+                .any(|c| { c.name == "retention.ms" && c.value.as_deref() == Some("3600000") }),
             "altered config should be visible: {entries:?}"
         );
 
@@ -329,8 +329,7 @@ async fn test_admin_delete_records() {
         );
 
         // Records before the deletion point must be gone.
-        let mut consumer = client
-            .consumer(ConsumerConfig::new().with_earliest());
+        let mut consumer = client.consumer(ConsumerConfig::new().with_earliest());
         consumer.assign(topic.clone(), vec![0]).await.unwrap();
         let records = consumer
             .poll_timeout(Duration::from_secs(5))

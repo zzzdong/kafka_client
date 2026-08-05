@@ -20,8 +20,8 @@ use kafka_client::{Client, KafkaErrorCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 async fn acl_client() -> Client {
-    let bootstrap = std::env::var("KAFKA_BOOTSTRAP_ACL")
-        .unwrap_or_else(|_| "127.0.0.1:9098".to_string());
+    let bootstrap =
+        std::env::var("KAFKA_BOOTSTRAP_ACL").unwrap_or_else(|_| "127.0.0.1:9098".to_string());
     Client::builder(vec![bootstrap])
         .with_client_id("acl-test")
         .build()

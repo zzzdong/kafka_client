@@ -40,7 +40,10 @@ async fn test_direct_assign_and_seek() {
         common::produce_messages(&client, &topic, 6).await;
 
         let mut consumer = client.consumer(ConsumerConfig::new().with_earliest());
-        consumer.assign(topic.clone(), vec![0, 1]).await.expect("assign");
+        consumer
+            .assign(topic.clone(), vec![0, 1])
+            .await
+            .expect("assign");
 
         let mut all = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -52,7 +55,11 @@ async fn test_direct_assign_and_seek() {
                     .unwrap(),
             );
         }
-        assert_eq!(all.len(), 6, "direct-mode consumer should read all messages");
+        assert_eq!(
+            all.len(),
+            6,
+            "direct-mode consumer should read all messages"
+        );
         let mut parts: Vec<_> = all.iter().map(|r| r.partition).collect();
         parts.sort();
         parts.dedup();
@@ -93,13 +100,15 @@ async fn test_max_poll_records() {
         common::wait_for_topic_ready(&client, &topic, 1).await;
         common::produce_messages(&client, &topic, 5).await;
 
-        let mut consumer = client
-            .consumer(
-                ConsumerConfig::new()
-                    .with_earliest()
-                    .with_max_poll_records(2),
-            );
-        consumer.assign(topic.clone(), vec![0]).await.expect("assign");
+        let mut consumer = client.consumer(
+            ConsumerConfig::new()
+                .with_earliest()
+                .with_max_poll_records(2),
+        );
+        consumer
+            .assign(topic.clone(), vec![0])
+            .await
+            .expect("assign");
 
         let mut all = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -128,9 +137,11 @@ async fn test_try_poll_and_poll_timeout() {
         common::wait_for_topic_ready(&client, &topic, 1).await;
         common::produce_messages(&client, &topic, 3).await;
 
-        let mut consumer = client
-            .consumer(ConsumerConfig::new().with_earliest());
-        consumer.assign(topic.clone(), vec![0]).await.expect("assign");
+        let mut consumer = client.consumer(ConsumerConfig::new().with_earliest());
+        consumer
+            .assign(topic.clone(), vec![0])
+            .await
+            .expect("assign");
 
         // Nothing buffered yet: try_poll returns immediately and empty,
         // while poll_timeout blocks until data arrives.
@@ -165,7 +176,10 @@ async fn test_try_poll_and_poll_timeout() {
             .poll_timeout(Duration::from_millis(3000))
             .await
             .expect("poll_timeout empty");
-        assert!(empty.is_empty(), "poll_timeout should time out with no data");
+        assert!(
+            empty.is_empty(),
+            "poll_timeout should time out with no data"
+        );
 
         client.close().await.unwrap();
     })

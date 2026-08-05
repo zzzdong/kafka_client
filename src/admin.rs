@@ -24,8 +24,8 @@
 //! println!("{} brokers, controller: {:?}", cluster.brokers.len(), cluster.controller_id);
 //! ```
 
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,17 +35,6 @@ use tokio::net;
 use crate::cluster::ClusterClient;
 use crate::error::{KafkaError, KafkaErrorCode, Result};
 
-use crate::protocol::{
-    CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
-    DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
-    FindCoordinatorRequest, FindCoordinatorResponse, ListGroupsRequest, ListGroupsResponse,
-    ListOffsetsPartition, ListOffsetsRequest, ListOffsetsResponse, ListOffsetsTopic,
-    MetadataRequest, MetadataResponse, OffsetCommitRequest, OffsetCommitResponse,
-    OffsetFetchRequest, OffsetFetchRequestGroup, OffsetFetchResponse,
-    create_topics_request::{CreatableReplicaAssignment, CreatableTopic, CreatableTopicConfig},
-    delete_topics_request::DeleteTopicState,
-    offset_commit_request::{OffsetCommitRequestPartition, OffsetCommitRequestTopic},
-};
 use crate::protocol::alter_configs_request::{
     AlterConfigsRequest, AlterConfigsResource, AlterableConfig,
 };
@@ -62,6 +51,17 @@ use crate::protocol::describe_acls_request::DescribeAclsRequest;
 use crate::protocol::describe_acls_response::DescribeAclsResponse;
 use crate::protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
 use crate::protocol::describe_configs_response::DescribeConfigsResponse;
+use crate::protocol::{
+    CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
+    DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
+    FindCoordinatorRequest, FindCoordinatorResponse, ListGroupsRequest, ListGroupsResponse,
+    ListOffsetsPartition, ListOffsetsRequest, ListOffsetsResponse, ListOffsetsTopic,
+    MetadataRequest, MetadataResponse, OffsetCommitRequest, OffsetCommitResponse,
+    OffsetFetchRequest, OffsetFetchRequestGroup, OffsetFetchResponse,
+    create_topics_request::{CreatableReplicaAssignment, CreatableTopic, CreatableTopicConfig},
+    delete_topics_request::DeleteTopicState,
+    offset_commit_request::{OffsetCommitRequestPartition, OffsetCommitRequestTopic},
+};
 
 // ===========================================================================
 // Admin DTOs (lightweight, user-facing types)
@@ -1508,7 +1508,10 @@ impl AdminClient {
                 .get_partition_leader(topic, *partition)
                 .await
                 .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), *partition))?;
-            by_leader.entry(leader).or_default().push((*partition, *offset));
+            by_leader
+                .entry(leader)
+                .or_default()
+                .push((*partition, *offset));
         }
 
         let mut results = Vec::new();

@@ -53,7 +53,10 @@ fn describe_configs_response_v4_roundtrip() {
     let mut bytes = buf.freeze();
     let decoded = DescribeConfigsResponse::flexible_decode(&mut bytes, 4).unwrap();
 
-    assert_eq!(resp, decoded, "v4 flexible roundtrip must preserve all fields");
+    assert_eq!(
+        resp, decoded,
+        "v4 flexible roundtrip must preserve all fields"
+    );
     assert_eq!(decoded.results.len(), 1);
     assert_eq!(
         decoded.results[0].configs.len(),

@@ -141,8 +141,12 @@ mod tests {
     fn decode_multiple_frames_in_one_buffer() {
         let mut codec = KafkaCodec::new();
         let mut buf = BytesMut::new();
-        codec.encode(KafkaFrame::new(Bytes::from_static(&[1])), &mut buf).unwrap();
-        codec.encode(KafkaFrame::new(Bytes::from_static(&[2, 3])), &mut buf).unwrap();
+        codec
+            .encode(KafkaFrame::new(Bytes::from_static(&[1])), &mut buf)
+            .unwrap();
+        codec
+            .encode(KafkaFrame::new(Bytes::from_static(&[2, 3])), &mut buf)
+            .unwrap();
 
         let first = codec.decode(&mut buf).unwrap().expect("first frame");
         let second = codec.decode(&mut buf).unwrap().expect("second frame");
@@ -175,7 +179,9 @@ mod tests {
         let mut codec = KafkaCodec::new();
         let mut buf = BytesMut::new();
         let too_big = Bytes::from(vec![0u8; i32::MAX as usize + 1]);
-        let err = codec.encode(KafkaFrame::new(too_big), &mut buf).unwrap_err();
+        let err = codec
+            .encode(KafkaFrame::new(too_big), &mut buf)
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 

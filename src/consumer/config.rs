@@ -240,7 +240,9 @@ mod tests {
 
     #[test]
     fn with_group_id_enables_group_mode() {
-        let config = ConsumerConfig::new().with_group_id("my-group").with_earliest();
+        let config = ConsumerConfig::new()
+            .with_group_id("my-group")
+            .with_earliest();
         assert_eq!(config.group_id.as_deref(), Some("my-group"));
         assert_eq!(config.auto_offset_reset, AutoOffsetReset::Earliest);
     }

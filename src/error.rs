@@ -217,9 +217,21 @@ mod tests {
 
     #[test]
     fn display_for_common_errors() {
-        assert!(KafkaError::RequestTimeout.to_string().contains("Request timeout"));
-        assert!(KafkaError::NoCoordinator.to_string().contains("No coordinator"));
-        assert!(KafkaError::ConnectionClosed.to_string().contains("Connection closed"));
+        assert!(
+            KafkaError::RequestTimeout
+                .to_string()
+                .contains("Request timeout")
+        );
+        assert!(
+            KafkaError::NoCoordinator
+                .to_string()
+                .contains("No coordinator")
+        );
+        assert!(
+            KafkaError::ConnectionClosed
+                .to_string()
+                .contains("Connection closed")
+        );
         assert!(
             KafkaError::TransactionError(KafkaErrorCode::PRODUCER_FENCED)
                 .to_string()

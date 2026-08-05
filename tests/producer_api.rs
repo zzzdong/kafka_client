@@ -76,7 +76,10 @@ async fn test_send_direct() {
             .await;
         for i in 0..5 {
             let meta = producer
-                .send_direct(ProducerRecord::new(topic.clone(), format!("direct-{i}").into()))
+                .send_direct(ProducerRecord::new(
+                    topic.clone(),
+                    format!("direct-{i}").into(),
+                ))
                 .await
                 .expect("send_direct");
             assert!(meta.offset >= 0, "direct send should return a valid offset");
@@ -115,7 +118,10 @@ async fn test_flush_and_close() {
             .await;
         for i in 0..3 {
             producer
-                .send(ProducerRecord::new(topic.clone(), format!("flush-{i}").into()))
+                .send(ProducerRecord::new(
+                    topic.clone(),
+                    format!("flush-{i}").into(),
+                ))
                 .await
                 .expect("send");
         }

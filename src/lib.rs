@@ -612,8 +612,11 @@ mod tests {
     fn builder_defaults_match_config() {
         let builder = ClientBuilder::new(vec!["localhost:9092".into()]);
         assert_eq!(builder.config.request_timeout, Duration::from_secs(60));
-        assert!(builder.config.bootstrap_servers.contains(
-            &"localhost:9092".to_string()
-        ));
+        assert!(
+            builder
+                .config
+                .bootstrap_servers
+                .contains(&"localhost:9092".to_string())
+        );
     }
 }

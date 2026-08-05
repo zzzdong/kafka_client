@@ -92,21 +92,13 @@ enum ProducerCommand {
     },
     /// Initialize the transactional producer (find the transaction
     /// coordinator and obtain a producer id/epoch).
-    InitTransactions {
-        reply: oneshot::Sender<Result<()>>,
-    },
+    InitTransactions { reply: oneshot::Sender<Result<()>> },
     /// Begin a new transaction.
-    BeginTransaction {
-        reply: oneshot::Sender<Result<()>>,
-    },
+    BeginTransaction { reply: oneshot::Sender<Result<()>> },
     /// Commit the current transaction (EndTxn commit).
-    CommitTransaction {
-        reply: oneshot::Sender<Result<()>>,
-    },
+    CommitTransaction { reply: oneshot::Sender<Result<()>> },
     /// Abort the current transaction (EndTxn abort).
-    AbortTransaction {
-        reply: oneshot::Sender<Result<()>>,
-    },
+    AbortTransaction { reply: oneshot::Sender<Result<()>> },
     /// Commit consumer offsets as part of the current transaction
     /// (TxnOffsetCommit, the consume-process-produce EOS bridge).
     SendOffsetsToTransaction {
@@ -485,9 +477,7 @@ impl ProducerState {
         }
         let txn_id = self.config.transactional_id.clone();
         let coordinator = if txn_id.is_some() {
-            Some(
-                find_coordinator(&self.cluster, txn_id.as_deref().unwrap(), 1).await?,
-            )
+            Some(find_coordinator(&self.cluster, txn_id.as_deref().unwrap(), 1).await?)
         } else {
             None
         };
@@ -658,7 +648,10 @@ impl ProducerState {
                         self.txn_start_sequences.clear();
                         self.txn_state = TxnState::Ready;
                         self.txn_partitions.clear();
-                        debug!("Transaction {}", if committed { "committed" } else { "aborted" });
+                        debug!(
+                            "Transaction {}",
+                            if committed { "committed" } else { "aborted" }
+                        );
                         return Ok(());
                     }
                     let err = KafkaError::TransactionError(code);
@@ -698,9 +691,7 @@ impl ProducerState {
                 }
             }
         }
-        Err(last_error.unwrap_or(KafkaError::TransactionError(KafkaErrorCode::from_i16(
-            -1,
-        ))))
+        Err(last_error.unwrap_or(KafkaError::TransactionError(KafkaErrorCode::from_i16(-1))))
     }
 
     /// Lazily register partitions with the transaction coordinator before
@@ -708,7 +699,9 @@ impl ProducerState {
     async fn add_partitions_to_txn(&mut self, partitions: &[(String, i32)]) -> Result<()> {
         let pending: Vec<(String, i32)> = partitions
             .iter()
-            .filter(|(topic, partition)| !self.txn_partitions.contains(&(topic.clone(), *partition)))
+            .filter(|(topic, partition)| {
+                !self.txn_partitions.contains(&(topic.clone(), *partition))
+            })
             .cloned()
             .collect();
         if pending.is_empty() {
@@ -832,8 +825,9 @@ impl ProducerState {
                                 self.txn_coordinator = None;
                                 match self.ensure_producer_id().await {
                                     Ok(()) => {
-                                        coordinator =
-                                            self.txn_coordinator.ok_or(KafkaError::NoCoordinator)?;
+                                        coordinator = self
+                                            .txn_coordinator
+                                            .ok_or(KafkaError::NoCoordinator)?;
                                         last_error = Some(err);
                                         tokio::time::sleep(backoff).await;
                                         backoff = backoff.mul_f32(2.0).min(Duration::from_secs(5));
@@ -865,9 +859,7 @@ impl ProducerState {
                 }
             }
         }
-        Err(last_error.unwrap_or(KafkaError::TransactionError(KafkaErrorCode::from_i16(
-            -1,
-        ))))
+        Err(last_error.unwrap_or(KafkaError::TransactionError(KafkaErrorCode::from_i16(-1))))
     }
 
     /// Commit consumer offsets as part of the current transaction
@@ -896,14 +888,14 @@ impl ProducerState {
                 name,
                 partitions: partitions
                     .into_iter()
-                    .map(|(partition_index, committed_offset)| {
-                        TxnOffsetCommitRequestPartition {
+                    .map(
+                        |(partition_index, committed_offset)| TxnOffsetCommitRequestPartition {
                             partition_index,
                             committed_offset,
                             committed_leader_epoch: -1,
                             committed_metadata: None,
-                        }
-                    })
+                        },
+                    )
                     .collect(),
             })
             .collect();
@@ -926,8 +918,10 @@ impl ProducerState {
                 group_instance_id: None,
                 topics: topics.clone(),
             };
-            let response: Result<TxnOffsetCommitResponse> =
-                self.cluster.send_to_broker(group_coordinator, &request).await;
+            let response: Result<TxnOffsetCommitResponse> = self
+                .cluster
+                .send_to_broker(group_coordinator, &request)
+                .await;
             match response {
                 Ok(resp) => {
                     let mut first_error = None;
@@ -970,9 +964,7 @@ impl ProducerState {
                 }
             }
         }
-        Err(last_error.unwrap_or(KafkaError::OffsetCommitError(KafkaErrorCode::from_i16(
-            -1,
-        ))))
+        Err(last_error.unwrap_or(KafkaError::OffsetCommitError(KafkaErrorCode::from_i16(-1))))
     }
 
     /// On fatal transaction errors the current PID/epoch can no longer be
@@ -1646,8 +1638,8 @@ impl ProducerState {
         let batch = ProducerState::build_record_batch_inner(&[&record])?;
         let topic = record.topic.clone();
 
-        let deadline = tokio::time::Instant::now()
-            + Duration::from_millis(config.delivery_timeout_ms);
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(config.delivery_timeout_ms);
         let mut last_error = None;
         for attempt in 0..config.retries {
             if tokio::time::Instant::now() >= deadline {
@@ -2206,7 +2198,10 @@ mod tests {
     #[test]
     fn producer_config_defaults_to_idempotent() {
         let config = ProducerConfig::new();
-        assert!(config.enable_idempotence, "idempotence should be on by default");
+        assert!(
+            config.enable_idempotence,
+            "idempotence should be on by default"
+        );
         assert_eq!(config.acks, -1, "idempotence requires acks=-1");
         assert_eq!(config.retries, i32::MAX as u32);
         assert_eq!(config.transactional_id, None);

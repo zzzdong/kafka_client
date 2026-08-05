@@ -40,11 +40,12 @@ async fn test_transactional_produce_commit() {
         common::wait_for_topic_ready(&client, &topic, 3).await;
 
         let producer = client
-            .producer(
-                ProducerConfig::new().with_transactional_id(unique("txn-producer")),
-            )
+            .producer(ProducerConfig::new().with_transactional_id(unique("txn-producer")))
             .await;
-        producer.init_transactions().await.expect("init_transactions");
+        producer
+            .init_transactions()
+            .await
+            .expect("init_transactions");
 
         producer
             .begin_transaction()
@@ -92,9 +93,7 @@ async fn test_transactional_abort_recovers() {
         common::wait_for_topic_ready(&client, &topic, 1).await;
 
         let producer = client
-            .producer(
-                ProducerConfig::new().with_transactional_id(unique("txn-abort-producer")),
-            )
+            .producer(ProducerConfig::new().with_transactional_id(unique("txn-abort-producer")))
             .await;
         producer.init_transactions().await.unwrap();
 
@@ -104,7 +103,10 @@ async fn test_transactional_abort_recovers() {
             .send(ProducerRecord::new(topic.clone(), "aborted-msg".into()))
             .await
             .unwrap();
-        producer.abort_transaction().await.expect("abort_transaction");
+        producer
+            .abort_transaction()
+            .await
+            .expect("abort_transaction");
 
         // The state machine must recover: begin + commit a new transaction.
         producer
@@ -164,17 +166,21 @@ async fn test_transactional_offset_commit() {
         common::produce_messages(&client, &topic, 3).await;
 
         let producer = client
-            .producer(
-                ProducerConfig::new().with_transactional_id(unique("txn-offset-producer")),
-            )
+            .producer(ProducerConfig::new().with_transactional_id(unique("txn-offset-producer")))
             .await;
         producer.init_transactions().await.unwrap();
 
         // Join the group with a real consumer to obtain a valid generation
         // and member id (the consume-process-produce EOS pattern).
-        let mut consumer = client
-            .consumer(ConsumerConfig::new().with_group_id(group.clone()).with_earliest());
-        consumer.subscribe(vec![topic.clone()]).await.expect("subscribe");
+        let mut consumer = client.consumer(
+            ConsumerConfig::new()
+                .with_group_id(group.clone())
+                .with_earliest(),
+        );
+        consumer
+            .subscribe(vec![topic.clone()])
+            .await
+            .expect("subscribe");
         consumer
             .poll_timeout(Duration::from_secs(10))
             .await
@@ -215,9 +221,9 @@ async fn test_transactional_offset_commit() {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         assert!(
-            fetched.iter().any(|o| {
-                o.topic == topic && o.partition == 0 && o.committed_offset == 3
-            }),
+            fetched
+                .iter()
+                .any(|o| { o.topic == topic && o.partition == 0 && o.committed_offset == 3 }),
             "transactionally committed offsets should be visible: {fetched:?}"
         );
 
