@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bytes",
  "kafka-client-protocol-core",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bytes",
  "crc32c",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "kafka_client"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "arc-swap",
  "base64",

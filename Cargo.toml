@@ -1,6 +1,6 @@
 [package]
 name = "kafka_client"
-version = "0.6.0"
+version = "0.6.1"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
@@ -51,7 +51,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # 协议
-kafka-client-protocol = { version = "0.2.1", path = "kafka-client-protocol" }
+kafka-client-protocol = { version = "0.2.2", path = "kafka-client-protocol" }
 # Kerberos / SASL GSSAPI
 krb5-gss = { version = "0.1.1", path = "krb5-gss" }
 

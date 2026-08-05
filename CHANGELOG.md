@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.6.0] - 2026-08-04
+## [0.6.1] - 2026-08-05
+
+> `kafka-client-protocol` and `kafka-client-protocol-core` are bumped to
+> 0.2.2 for this release (adds `RecordBatch::is_control_batch`).
 
 ### Fixed
 

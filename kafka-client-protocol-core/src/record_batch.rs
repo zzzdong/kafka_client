@@ -63,6 +63,18 @@ impl Default for RecordBatch {
     }
 }
 
+/// Record batch attribute bits (per the Kafka record batch specification).
+pub mod attributes {
+    /// Compression codec mask (bits 0-2).
+    pub const COMPRESSION_MASK: i16 = 0x07;
+    /// Timestamp type bit (bit 3).
+    pub const TIMESTAMP_TYPE: i16 = 0x08;
+    /// Transactional bit (bit 4) — the batch belongs to a transaction.
+    pub const TRANSACTIONAL: i16 = 0x10;
+    /// Control batch bit (bit 5) — transaction markers carry no user data.
+    pub const CONTROL_BATCH: i16 = 0x20;
+}
+
 impl RecordBatch {
     /// Returns `true` if this is a control batch (transaction marker).
     ///
@@ -71,7 +83,7 @@ impl RecordBatch {
     /// fetch position.
     pub fn is_control_batch(&self) -> bool {
         // Attribute bit 5 marks control batches (Kafka record batch spec).
-        self.attributes & 0x20 != 0
+        self.attributes & attributes::CONTROL_BATCH != 0
     }
 }
 
