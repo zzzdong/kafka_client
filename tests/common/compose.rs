@@ -126,6 +126,23 @@ pub mod clusters {
         host_port: 9098,
         is_secure: false,
     };
+
+    pub const KERBEROS_MULTI: Cluster = Cluster {
+        name: "kerberos-multi",
+        compose_file: "docker-compose.kerberos-multi.yml",
+        env_var: "KAFKA_BOOTSTRAP_KERBEROS_MULTI",
+        default_bootstrap: "broker1.example.com:19096",
+        default_size: 3,
+        containers: &[
+            "kdc-kerberos-multi",
+            "kafka-kerberos-1",
+            "kafka-kerberos-2",
+            "kafka-kerberos-3",
+        ],
+        internal_port: 9096,
+        host_port: 19096,
+        is_secure: true,
+    };
 }
 
 // ============================================================================

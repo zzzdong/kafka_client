@@ -1,0 +1,168 @@
+# Kerberos/GSSAPI 多 broker 集群 (3 节点 KRaft)。
+#
+# 每台 broker 广告不同的主机名 (broker1/2/3.example.com), 对应独立的
+# 服务 principal (kafka/brokerN.example.com)。客户端通过 /etc/hosts 把
+# 这些主机名解析到 127.0.0.1, 从而验证"每个 broker 连接用自己的
+# advertised host 认证"(而非全局共享 hostname)。
+#
+# 端口: KDC 8889 (避开单节点 8888), brokers 19096/19097/19098
+# keytab 目录独立: ./fixtures/kerberos-multi/keytabs
+#
+# 宿主机需要:
+#   127.0.0.1 broker1.example.com broker2.example.com broker3.example.com
+#
+# Usage:
+#   cd tests
+#   podman compose -f docker-compose.kerberos-multi.yml up -d --build
+#   KAFKA_BOOTSTRAP_KERBEROS_MULTI=broker1.example.com:19096 \
+#   KERBEROS_KEYTAB_MULTI=tests/fixtures/kerberos-multi/keytabs/client.keytab \
+#   KERBEROS_KDC_PORT=8889 KAFKA_CLUSTER_SIZE=3 \
+#     cargo test --test kerberos_multi --features integration_tests -- --nocapture
+#   podman compose -f docker-compose.kerberos-multi.yml down -v
+
+services:
+  kdc:
+    build:
+      context: ./fixtures/kerberos
+      dockerfile: Dockerfile.kdc
+    hostname: kdc.example.com
+    container_name: kdc-kerberos-multi
+    networks:
+      default:
+        aliases:
+          - kdc.example.com
+    ports:
+      - "8889:88"
+    volumes:
+      - ./fixtures/kerberos-multi/keytabs:/etc/keytabs
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c 'echo > /dev/tcp/localhost/88' 2>/dev/null"]
+      interval: 3s
+      retries: 20
+      start_period: 15s
+
+  kafka1:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
+    hostname: broker1.example.com
+    container_name: kafka-kerberos-1
+    depends_on:
+      kdc:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - broker1.example.com
+    ports:
+      - "19096:9096"
+    volumes:
+      - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
+      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/kafka_jaas1.conf:/etc/kafka/kafka_server_jaas.conf:ro
+    environment:
+      KAFKA_OPTS: >-
+        -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+        -Djava.security.krb5.conf=/etc/krb5.conf
+        -Dsun.security.krb5.debug=true
+        -Djavax.security.auth.useSubjectCredsOnly=true
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
+      CLUSTER_ID: 'kafka-docker-kerberos-multi'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker1.example.com:19096,CONTROLLER://broker1.example.com:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+      KAFKA_SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES: DEFAULT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+
+  kafka2:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
+    hostname: broker2.example.com
+    container_name: kafka-kerberos-2
+    depends_on:
+      kdc:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - broker2.example.com
+    ports:
+      - "19097:9096"
+    volumes:
+      - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
+      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/kafka_jaas2.conf:/etc/kafka/kafka_server_jaas.conf:ro
+    environment:
+      KAFKA_OPTS: >-
+        -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+        -Djava.security.krb5.conf=/etc/krb5.conf
+        -Dsun.security.krb5.debug=true
+        -Djavax.security.auth.useSubjectCredsOnly=true
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_NODE_ID: 2
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
+      CLUSTER_ID: 'kafka-docker-kerberos-multi'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker2.example.com:19097,CONTROLLER://broker2.example.com:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+      KAFKA_SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES: DEFAULT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+
+  kafka3:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
+    hostname: broker3.example.com
+    container_name: kafka-kerberos-3
+    depends_on:
+      kdc:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - broker3.example.com
+    ports:
+      - "19098:9096"
+    volumes:
+      - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
+      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/kafka_jaas3.conf:/etc/kafka/kafka_server_jaas.conf:ro
+    environment:
+      KAFKA_OPTS: >-
+        -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+        -Djava.security.krb5.conf=/etc/krb5.conf
+        -Dsun.security.krb5.debug=true
+        -Djavax.security.auth.useSubjectCredsOnly=true
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_NODE_ID: 3
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1.example.com:9093,2@broker2.example.com:9093,3@broker3.example.com:9093'
+      CLUSTER_ID: 'kafka-docker-kerberos-multi'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9096,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://broker3.example.com:19098,CONTROLLER://broker3.example.com:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: GSSAPI
+      KAFKA_SASL_KERBEROS_SERVICE_NAME: kafka
+      KAFKA_SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES: DEFAULT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'

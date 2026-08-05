@@ -31,6 +31,10 @@ on:
         description: Integration (Kerberos)
         type: boolean
         default: false
+      run_integration_kerberos_multi:
+        description: Integration (Kerberos multi-broker)
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -342,3 +346,82 @@ jobs:
         if: always()
         working-directory: tests
         run: docker compose -f docker-compose.kerberos.yml down -v
+
+  # ────────────────────────────────────────────────────────────
+  # Integration tests – Kerberos / GSSAPI multi-broker
+  # Each broker advertises its own hostname (broker1/2/3.example.com) with
+  # its own service principal; verifies per-broker hostname resolution.
+  # ────────────────────────────────────────────────────────────
+  integration-kerberos-multi:
+    name: Integration (Kerberos multi-broker)
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || github.event.inputs.run_integration_kerberos_multi == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tests
+        working-directory: .
+        run: cargo test --no-run --features integration_tests
+      - name: Add broker hostnames to /etc/hosts
+        run: |
+          sudo bash -c 'echo "127.0.0.1 broker1.example.com broker2.example.com broker3.example.com" >> /etc/hosts'
+      - name: Start KDC + Kerberos multi-broker cluster
+        run: |
+          docker compose -f docker-compose.kerberos-multi.yml up -d --build
+          for c in kafka-kerberos-1 kafka-kerberos-2 kafka-kerberos-3; do
+            echo -n "  ${c}... "
+            for i in $(seq 1 120); do
+              if docker exec "${c}" \
+                /opt/kafka/bin/kafka-broker-api-versions.sh \
+                --bootstrap-server 127.0.0.1:9096 &>/dev/null; then
+                echo "ready (~${i}s)"
+                break
+              fi
+              if docker exec "${c}" \
+                bash -c "echo > /dev/tcp/127.0.0.1/9096" 2>/dev/null; then
+                sleep 8
+                echo "ready (~${i}s, port)"
+                break
+              fi
+              if [ "$i" -eq 120 ]; then
+                echo "timeout"
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+      - name: Wait for keytab
+        run: |
+          for i in $(seq 1 30); do
+            if [ -f fixtures/kerberos-multi/keytabs/client.keytab ]; then
+              echo "keytab ready (~${i}s)"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "keytab timeout"
+              exit 1
+            fi
+            sleep 2
+          done
+      - name: Run multi-broker Kerberos tests
+        working-directory: .
+        run: cargo test --test kerberos_multi --features integration_tests -- --nocapture
+        env:
+          KAFKA_BOOTSTRAP_KERBEROS_MULTI: broker1.example.com:19096
+          KERBEROS_KEYTAB_MULTI: tests/fixtures/kerberos-multi/keytabs/client.keytab
+          KERBEROS_KDC_HOST: localhost
+          KERBEROS_KDC_PORT: "8889"
+          KAFKA_CLUSTER_SIZE: 3
+          RUST_TEST_THREADS: 1
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: tests
+        run: docker compose -f docker-compose.kerberos-multi.yml logs
+      - name: Stop cluster
+        if: always()
+        working-directory: tests
+        run: docker compose -f docker-compose.kerberos-multi.yml down -v

@@ -126,3 +126,10 @@
     (`SECURITY_DISABLED`); `tests/run-all-tests.sh` starts/stops it.
   - `tests/run-all-tests.sh` now includes `admin`, `producer_api`,
     `consumer_api` and `transactions`.
+  - New Kerberos multi-broker integration test (`tests/kerberos_multi.rs` +
+    `tests/docker-compose.kerberos-multi.yml`): three brokers each advertise
+    a distinct hostname with its own `kafka/<host>` service principal; the
+    client intentionally sets a global `with_broker_hostname` and must still
+    authenticate to all brokers via their per-broker advertised host. The
+    runner needs `broker1/2/3.example.com` to resolve to 127.0.0.1
+    (`/etc/hosts`; the CI job adds it with sudo).

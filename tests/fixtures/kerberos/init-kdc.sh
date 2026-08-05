@@ -10,6 +10,10 @@ if [ ! -f /etc/krb5kdc/principal ]; then
     kadmin.local -q "addprinc -randkey kafka/broker.example.com@EXAMPLE.COM"
     kadmin.local -q "addprinc -randkey kafka/localhost@EXAMPLE.COM"
     kadmin.local -q "addprinc -randkey kafka/127.0.0.1@EXAMPLE.COM"
+    # 多 broker 集群: 每台 broker 一个独立的服务 principal
+    kadmin.local -q "addprinc -randkey kafka/broker1.example.com@EXAMPLE.COM"
+    kadmin.local -q "addprinc -randkey kafka/broker2.example.com@EXAMPLE.COM"
+    kadmin.local -q "addprinc -randkey kafka/broker3.example.com@EXAMPLE.COM"
     kadmin.local -q "addprinc -randkey client@EXAMPLE.COM"
 fi
 
@@ -22,6 +26,9 @@ kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/broker.example.com@EXA
 # broker 的 JAAS principal 是 kafka/localhost@EXAMPLE.COM, 也需导出
 kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/localhost@EXAMPLE.COM"
 kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/127.0.0.1@EXAMPLE.COM"
+kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/broker1.example.com@EXAMPLE.COM"
+kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/broker2.example.com@EXAMPLE.COM"
+kadmin.local -q "ktadd -k /etc/keytabs/kafka.keytab kafka/broker3.example.com@EXAMPLE.COM"
 kadmin.local -q "ktadd -k /etc/keytabs/client.keytab client@EXAMPLE.COM"
 chmod 644 /etc/keytabs/*.keytab
 kadmin.local -q "listprincs"

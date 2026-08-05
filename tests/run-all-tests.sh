@@ -46,6 +46,7 @@ SASL_TESTS=("auth")
 TLS_TESTS=("tls")
 ACL_TESTS=("acl")
 KERBEROS_TESTS=("kerberos" "kerberos_service_ticket")
+KERBEROS_MULTI_TESTS=("kerberos_multi")
 
 # 如果未设置 KAFKA_BOOTSTRAP，设为默认的 3-broker 地址
 DEFAULT_BOOTSTRAP="127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097"
@@ -79,6 +80,8 @@ ${COMPOSE_CMD} -f docker-compose.acl.yml down -v 2>/dev/null || podman rm -f kaf
 # Clean up kerberos keytabs before starting fresh
 rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
 ${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
+${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml down -v 2>/dev/null || true
+rm -rf "${SCRIPT_DIR}/fixtures/kerberos-multi/keytabs"
 
 echo "=== Starting 3-broker cluster (docker-compose.yml) ==="
 echo "    CLI: ${CLI}, Image: ${KAFKA_IMAGE}"
@@ -96,6 +99,21 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.acl.yml up -d
 echo "=== Starting KDC + Kerberos Kafka (docker-compose.kerberos.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos.yml up -d --build
 # KDC 初始化后生成 keytabs, Kafka 通过 depends_on:condition:service_healthy 自动启动
+
+echo "=== Starting KDC + Kerberos multi-broker (docker-compose.kerberos-multi.yml) ==="
+KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml up -d --build
+
+# 多 broker Kerberos 测试要求 broker 主机名解析到 127.0.0.1
+echo "=== Ensuring broker hostnames resolve to localhost ==="
+HOSTS_LINE="127.0.0.1 broker1.example.com broker2.example.com broker3.example.com"
+if grep -q "broker1.example.com" /etc/hosts 2>/dev/null; then
+    echo "  already present in /etc/hosts"
+elif sudo -n bash -c "echo '${HOSTS_LINE}' >> /etc/hosts" 2>/dev/null; then
+    echo "  added to /etc/hosts via sudo"
+else
+    echo "  WARNING: cannot add broker hostnames to /etc/hosts —"
+    echo "           multi-broker Kerberos tests will be skipped"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Wait for brokers to be ready
@@ -166,6 +184,13 @@ wait_broker "kafka-kerberos-broker" 9096 9096 120 || {
     echo "WARNING: Kerberos broker not ready — Kerberos tests may be skipped"
 }
 
+echo "=== Waiting for Kerberos multi-broker cluster to be ready ==="
+for i in 1 2 3; do
+    wait_broker "kafka-kerberos-${i}" 9096 "$((19095 + i))" 120 || {
+        echo "WARNING: kafka-kerberos-${i} not ready — multi-broker Kerberos tests may be skipped"
+    }
+done
+
 # ---------------------------------------------------------------------------
 # 3. Run all integration tests
 # ---------------------------------------------------------------------------
@@ -235,6 +260,21 @@ for test in "${KERBEROS_TESTS[@]}"; do
     run_tests "${test}" || TEST_EXIT_CODE=$?
 done
 
+echo ""
+echo "--- Kerberos multi-broker tests ---"
+if getent hosts broker1.example.com >/dev/null 2>&1; then
+    for test in "${KERBEROS_MULTI_TESTS[@]}"; do
+        KAFKA_BOOTSTRAP_KERBEROS_MULTI="broker1.example.com:19096" \
+        KERBEROS_KEYTAB_MULTI="${SCRIPT_DIR}/fixtures/kerberos-multi/keytabs/client.keytab" \
+        KERBEROS_KDC_HOST="localhost" \
+        KERBEROS_KDC_PORT="8889" \
+        KAFKA_CLUSTER_SIZE=3 \
+        run_tests "${test}" || TEST_EXIT_CODE=$?
+    done
+else
+    echo "  [SKIP] broker hostnames not resolvable — add them to /etc/hosts"
+fi
+
 # ---------------------------------------------------------------------------
 # 4. Cleanup
 # ---------------------------------------------------------------------------
@@ -248,6 +288,8 @@ if [ -z "${SKIP_CLEANUP:-}" ]; then
     ${COMPOSE_CMD} -f docker-compose.acl.yml down -v 2>/dev/null || podman rm -f kafka-acl-broker 2>/dev/null || true
     rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
     ${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
+    rm -rf "${SCRIPT_DIR}/fixtures/kerberos-multi/keytabs"
+    ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml down -v 2>/dev/null || true
 else
     echo "  SKIP_CLEANUP set — leaving clusters running"
 fi
