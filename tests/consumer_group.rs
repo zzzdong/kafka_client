@@ -15,7 +15,8 @@ mod common;
 
 use common::compose;
 use common::{build_test_client, consumer_config};
-use kafka_client::AutoOffsetReset;
+use kafka_client::{AutoOffsetReset, ConsumerConfig, PartitionAssignmentStrategy};
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -129,4 +130,57 @@ async fn test_consumer_group_rebalance() {
         "  Rebalance test PASSED: c1={} partitions, c2={} partitions, no overlap",
         total1_after, total2
     );
+}
+
+#[tokio::test]
+async fn test_consumer_group_sticky_assignment() {
+    setup().await;
+    let client = build_test_client().await;
+
+    common::create_topic(&client, "tc-sticky", 4).await;
+    let group_id = "cg-sticky-test";
+
+    let sticky_config = || {
+        ConsumerConfig::new()
+            .with_group_id(group_id)
+            .with_auto_offset_reset(AutoOffsetReset::Earliest)
+            .with_assignment_strategy(PartitionAssignmentStrategy::Sticky)
+    };
+
+    // Consumer 1 alone owns all partitions.
+    let c1_client = build_test_client().await;
+    let mut c1 = c1_client.consumer(sticky_config());
+    c1.subscribe(vec!["tc-sticky".to_string()]).await.unwrap();
+    let a1 = wait_for_assignment(&c1, Duration::from_secs(30)).await;
+    let a1_parts: HashSet<i32> = a1.values().flat_map(|v| v.iter()).copied().collect();
+    assert_eq!(a1_parts.len(), 4, "single consumer should own all partitions");
+
+    // Consumer 2 joins: rebalance hands over exactly half, and the sticky
+    // assignor keeps consumer 1 on its previous partitions as much as possible.
+    let c2_client = build_test_client().await;
+    let mut c2 = c2_client.consumer(sticky_config());
+    c2.subscribe(vec!["tc-sticky".to_string()]).await.unwrap();
+    let a2 = wait_for_assignment(&c2, Duration::from_secs(30)).await;
+    let a2_parts: HashSet<i32> = a2.values().flat_map(|v| v.iter()).copied().collect();
+    assert_eq!(a2_parts.len(), 2, "consumer 2 should get half the partitions");
+
+    sleep(Duration::from_secs(3)).await;
+    let a1_after = c1.group().assignment().await;
+    let a1_after_parts: HashSet<i32> = a1_after
+        .values()
+        .flat_map(|v| v.iter())
+        .copied()
+        .collect();
+    assert_eq!(a1_after_parts.len(), 2, "consumer 1 should keep half");
+    let kept = a1_parts.intersection(&a1_after_parts).count();
+    assert!(
+        kept >= 1,
+        "sticky assignment should preserve at least one of consumer 1's partitions (kept {kept})"
+    );
+    assert!(
+        a1_after_parts.is_disjoint(&a2_parts),
+        "sticky assignments must not overlap"
+    );
+
+    println!("  Sticky test PASSED: c1 keeps {kept} of its {}/4 partitions", a1_parts.len());
 }

@@ -36,6 +36,17 @@
 - Consumer now skips control batches (transaction abort/commit markers)
   instead of surfacing them as empty records; the fetch position still
   advances past the markers.
+- Consumer group rebalancing:
+  - New `PartitionAssignmentStrategy::Sticky` — a real sticky assignor that
+    balances partitions while minimizing movement; each member carries its
+    previous assignment in the subscription `user_data` so the leader can
+    preserve ownership across rebalances.
+  - `CooperativeSticky` now uses the same sticky balancing (still on the
+    classic JoinGroup/SyncGroup protocol; the incremental KIP-429 phases are
+    not implemented).
+  - Rebalance race handling: fetch results for partitions reassigned away
+    are ignored, offset commits only cover currently assigned partitions,
+    and stale cursors/offsets are pruned when a new assignment arrives.
 - Idempotent producer: a failed batch rolls the partition sequence number
   back so subsequent sends reuse it (deduplicated by the broker), instead of
   leaving a permanent sequence gap.
@@ -82,6 +93,14 @@
   generation and member id needed for transactional offset commits.
 - New errors: `KafkaError::TransactionError`, `KafkaError::
   InvalidTransactionState`.
+- Admin coverage:
+  - ACLs: `create_acls` / `describe_acls` / `delete_acls` with typed
+    `AclBinding` / `AclBindingFilter` (`AclResourceType`, `AclOperation`,
+    `AclPermissionType`, `AclPatternType`).
+  - Configuration: `alter_configs` / `alter_topic_configs` /
+    `describe_configs`; `KafkaError::AdminError` for broker-reported errors.
+  - `delete_records` (routed to partition leaders) and
+    `reset_group_offsets`.
 - Integration tests for transactions (`tests/transactions.rs`); the
   `producer_acks` tests now explicitly disable idempotence for `acks=0/1`.
 - **Expanded test coverage**:

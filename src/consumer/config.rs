@@ -268,11 +268,14 @@ pub enum PartitionAssignmentStrategy {
     /// Round-robin assignment — partitions are distributed evenly across
     /// members in cyclic order.
     RoundRobin,
+    /// Sticky assignment — partitions are balanced while minimizing movement
+    /// from each member's previous assignment across rebalances.
+    Sticky,
     /// Cooperative sticky assignment (simplified).
     ///
-    /// This is a **simplified** implementation that distributes partitions
-    /// using a round-robin-like algorithm. A full CooperativeSticky
-    /// implementation would need to track each member's previous assignment
-    /// across rebalances and minimize partition movement.
+    /// Uses the same sticky balancing as [`Sticky`](Self::Sticky) with the
+    /// classic JoinGroup/SyncGroup protocol. The incremental (KIP-429)
+    /// two-phase rebalance protocol is not implemented, so members still
+    /// stop consuming during the rebalance.
     CooperativeSticky,
 }

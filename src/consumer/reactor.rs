@@ -353,7 +353,10 @@ impl ConsumerOrchestrator {
                         }
                         self.pending_subscribe_deadline = None;
                         if let Some(ref gc) = self.group_coordinator {
-                            let _ = gc.cmd_tx.send(GroupCommand::Join { topics });
+                            let _ = gc.cmd_tx.send(GroupCommand::Join {
+                                topics,
+                                previous_assignment: self.assigned_partitions.clone(),
+                            });
                         }
                         // Wait for the first partition assignment before
                         // resolving subscribe(). This satisfies the public API
@@ -512,6 +515,39 @@ impl ConsumerOrchestrator {
                 self.group_member_id = member_id;
                 self.group_generation_id = generation_id;
 
+                // Drop state for partitions we no longer own: stale fetch
+                // results / cursors / offsets must not leak into commits for
+                // the new assignment.
+                let assigned = self.assigned_partitions.clone();
+                self.offsets.retain(|topic, parts| {
+                    if let Some(ps) = assigned.get(topic) {
+                        parts.retain(|p, _| ps.contains(p));
+                        !parts.is_empty()
+                    } else {
+                        false
+                    }
+                });
+                self.consumed_offsets.retain(|topic, parts| {
+                    if let Some(ps) = assigned.get(topic) {
+                        parts.retain(|p, _| ps.contains(p));
+                        !parts.is_empty()
+                    } else {
+                        false
+                    }
+                });
+                self.next_in_line_records.retain(|(topic, partition), _| {
+                    assigned
+                        .get(topic)
+                        .map(|ps| ps.contains(partition))
+                        .unwrap_or(false)
+                });
+                self.pending_fetches.retain(|(topic, partition)| {
+                    assigned
+                        .get(topic)
+                        .map(|ps| ps.contains(partition))
+                        .unwrap_or(false)
+                });
+
                 // Initialize offsets for newly assigned partitions
                 let init_result = self.init_offsets_for_group().await;
                 if let Err(ref e) = init_result {
@@ -536,6 +572,9 @@ impl ConsumerOrchestrator {
                 if let Err(e) = self.do_commit().await {
                     warn!("Failed to commit offsets before rebalance: {}", e);
                 }
+                // Carry the current assignment to the leader so sticky
+                // balancing can minimize movement across the rebalance.
+                let previous_assignment = self.assigned_partitions.clone();
                 self.group_active = false;
                 self.next_in_line_records.clear();
                 self.pending_fetches.clear();
@@ -544,7 +583,10 @@ impl ConsumerOrchestrator {
                 // Re-trigger join via GroupCoordinator
                 if let Some(ref gc) = self.group_coordinator {
                     let topics = self.subscribed_topics.clone();
-                    let _ = gc.cmd_tx.send(GroupCommand::Join { topics });
+                    let _ = gc.cmd_tx.send(GroupCommand::Join {
+                        topics,
+                        previous_assignment,
+                    });
                 }
             }
             GroupEvent::FatalError(e) => {
@@ -882,6 +924,23 @@ impl ConsumerOrchestrator {
         let tp = (result.topic.clone(), result.partition);
         self.pending_fetches.remove(&tp);
 
+        // A fetch result may arrive for a partition that was reassigned away
+        // during a rebalance; ignore it so stale cursors/offsets are never
+        // committed for partitions we no longer own.
+        if self.mode == ConsumerMode::Group
+            && !self
+                .assigned_partitions
+                .get(&result.topic)
+                .map(|ps| ps.contains(&result.partition))
+                .unwrap_or(false)
+        {
+            debug!(
+                "Ignoring fetch result for unassigned {}/{}",
+                result.topic, result.partition
+            );
+            return;
+        }
+
         match KafkaErrorCode::from_i16(result.error_code) {
             KafkaErrorCode::NONE => {
                 if let Some(batch) = result.records
@@ -1062,10 +1121,28 @@ impl ConsumerOrchestrator {
         }
         let group_id = self.config.group_id.as_deref().unwrap();
 
+        // Only commit offsets for partitions we currently own; partitions
+        // reassigned away during a rebalance must not be committed here.
+        let assigned = &self.assigned_partitions;
         let topic_partitions: HashMap<String, Vec<(i32, i64)>> = commit_offsets
             .iter()
-            .map(|(t, m)| (t.clone(), m.iter().map(|(p, o)| (*p, *o)).collect()))
+            .filter_map(|(t, m)| {
+                let ps = assigned.get(t)?;
+                let filtered: Vec<(i32, i64)> = m
+                    .iter()
+                    .filter(|(p, _)| ps.contains(p))
+                    .map(|(p, o)| (*p, *o))
+                    .collect();
+                if filtered.is_empty() {
+                    None
+                } else {
+                    Some((t.clone(), filtered))
+                }
+            })
             .collect();
+        if topic_partitions.is_empty() {
+            return Ok(());
+        }
 
         let mut topic_ids = Vec::with_capacity(topic_partitions.len());
         for topic in topic_partitions.keys() {

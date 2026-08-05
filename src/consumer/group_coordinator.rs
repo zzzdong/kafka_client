@@ -32,7 +32,12 @@ use kafka_client_protocol::{KafkaErrorCode, Message};
 
 pub(crate) enum GroupCommand {
     /// Join the group with the given topics (starts join+sync protocol).
-    Join { topics: Vec<String> },
+    Join {
+        topics: Vec<String>,
+        /// The member's current assignment, carried to the leader so sticky
+        /// balancing can minimize partition movement.
+        previous_assignment: HashMap<String, Vec<i32>>,
+    },
     /// Leave the group (stop heartbeat, orchestrator handles the Leave RPC).
     Leave,
     /// Shut down the coordinator task.
@@ -90,6 +95,7 @@ pub(crate) fn spawn_group_coordinator(
             protocol_name: None,
             coordinator: None,
             subscribed_topics: Vec::new(),
+            previous_assignment: HashMap::new(),
         };
         gc.run().await;
     });
@@ -121,6 +127,7 @@ struct GroupCoordinator {
     protocol_name: Option<String>,
     coordinator: Option<SocketAddr>,
     subscribed_topics: Vec<String>,
+    previous_assignment: HashMap<String, Vec<i32>>,
 }
 
 impl GroupCoordinator {
@@ -134,8 +141,12 @@ impl GroupCoordinator {
                     tokio::select! {
                         cmd = self.cmd_rx.recv() => {
                             match cmd {
-                                Some(GroupCommand::Join { topics }) => {
+                                Some(GroupCommand::Join {
+                                    topics,
+                                    previous_assignment,
+                                }) => {
                                     self.subscribed_topics = topics;
+                                    self.previous_assignment = previous_assignment;
                                     self.join_with_retry().await;
                                 }
                                 Some(GroupCommand::Leave) => {
@@ -155,8 +166,12 @@ impl GroupCoordinator {
                         }
                         cmd = self.cmd_rx.recv() => {
                             match cmd {
-                                Some(GroupCommand::Join { topics }) => {
+                                Some(GroupCommand::Join {
+                                    topics,
+                                    previous_assignment,
+                                }) => {
                                     self.subscribed_topics = topics;
+                                    self.previous_assignment = previous_assignment;
                                     self.join_with_retry().await;
                                 }
                                 Some(GroupCommand::Leave) => {
@@ -254,13 +269,15 @@ impl GroupCoordinator {
             }
         };
 
-        let protocol_metadata = build_protocol_metadata(&self.subscribed_topics);
+        let protocol_metadata =
+            build_protocol_metadata(&self.subscribed_topics, &self.previous_assignment);
 
         let mut retry_member_id = std::mem::take(&mut self.member_id);
         for _ in 0..10 {
             let name = match self.config.partition_assignment_strategy {
                 PartitionAssignmentStrategy::Range => "range",
                 PartitionAssignmentStrategy::RoundRobin => "roundrobin",
+                PartitionAssignmentStrategy::Sticky => "sticky",
                 PartitionAssignmentStrategy::CooperativeSticky => "cooperative-sticky",
             }
             .to_string();
@@ -476,6 +493,7 @@ impl GroupCoordinator {
         self.leader.clear();
         self.protocol_name = None;
         self.coordinator = None;
+        self.previous_assignment.clear();
         self.state = GroupState::Idle;
     }
 }

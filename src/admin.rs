@@ -25,6 +25,7 @@
 //! ```
 
 use std::net::SocketAddr;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,6 +46,22 @@ use crate::protocol::{
     delete_topics_request::DeleteTopicState,
     offset_commit_request::{OffsetCommitRequestPartition, OffsetCommitRequestTopic},
 };
+use crate::protocol::alter_configs_request::{
+    AlterConfigsRequest, AlterConfigsResource, AlterableConfig,
+};
+use crate::protocol::alter_configs_response::AlterConfigsResponse;
+use crate::protocol::create_acls_request::{AclCreation, CreateAclsRequest};
+use crate::protocol::create_acls_response::CreateAclsResponse;
+use crate::protocol::delete_acls_request::{DeleteAclsFilter, DeleteAclsRequest};
+use crate::protocol::delete_acls_response::DeleteAclsResponse;
+use crate::protocol::delete_records_request::{
+    DeleteRecordsPartition, DeleteRecordsRequest, DeleteRecordsTopic,
+};
+use crate::protocol::delete_records_response::DeleteRecordsResponse;
+use crate::protocol::describe_acls_request::DescribeAclsRequest;
+use crate::protocol::describe_acls_response::DescribeAclsResponse;
+use crate::protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
+use crate::protocol::describe_configs_response::DescribeConfigsResponse;
 
 // ===========================================================================
 // Admin DTOs (lightweight, user-facing types)
@@ -243,6 +260,250 @@ pub struct OffsetCommitSpec {
     pub offset: i64,
     /// Optional metadata string.
     pub metadata: Option<String>,
+}
+
+// ===========================================================================
+// ACL types (Kafka AclBinding / AclBindingFilter)
+// ===========================================================================
+
+/// Kafka ACL resource types (numeric values match the wire protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AclResourceType {
+    Unknown,
+    Any,
+    Topic,
+    Group,
+    Cluster,
+    TransactionalId,
+    DelegationToken,
+    User,
+}
+
+impl AclResourceType {
+    pub fn as_i8(self) -> i8 {
+        match self {
+            AclResourceType::Unknown => 0,
+            AclResourceType::Any => 1,
+            AclResourceType::Topic => 2,
+            AclResourceType::Group => 3,
+            AclResourceType::Cluster => 4,
+            AclResourceType::TransactionalId => 5,
+            AclResourceType::DelegationToken => 6,
+            AclResourceType::User => 7,
+        }
+    }
+
+    pub fn from_i8(v: i8) -> Self {
+        match v {
+            1 => AclResourceType::Any,
+            2 => AclResourceType::Topic,
+            3 => AclResourceType::Group,
+            4 => AclResourceType::Cluster,
+            5 => AclResourceType::TransactionalId,
+            6 => AclResourceType::DelegationToken,
+            7 => AclResourceType::User,
+            _ => AclResourceType::Unknown,
+        }
+    }
+}
+
+/// Kafka ACL operations (numeric values match the wire protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AclOperation {
+    Unknown,
+    Any,
+    All,
+    Read,
+    Write,
+    Create,
+    Delete,
+    Alter,
+    Describe,
+    ClusterAction,
+    DescribeConfigs,
+    AlterConfigs,
+    IdempotentWrite,
+}
+
+impl AclOperation {
+    pub fn as_i8(self) -> i8 {
+        match self {
+            AclOperation::Unknown => 0,
+            AclOperation::Any => 1,
+            AclOperation::All => 2,
+            AclOperation::Read => 3,
+            AclOperation::Write => 4,
+            AclOperation::Create => 5,
+            AclOperation::Delete => 6,
+            AclOperation::Alter => 7,
+            AclOperation::Describe => 8,
+            AclOperation::ClusterAction => 9,
+            AclOperation::DescribeConfigs => 10,
+            AclOperation::AlterConfigs => 11,
+            AclOperation::IdempotentWrite => 12,
+        }
+    }
+
+    pub fn from_i8(v: i8) -> Self {
+        match v {
+            1 => AclOperation::Any,
+            2 => AclOperation::All,
+            3 => AclOperation::Read,
+            4 => AclOperation::Write,
+            5 => AclOperation::Create,
+            6 => AclOperation::Delete,
+            7 => AclOperation::Alter,
+            8 => AclOperation::Describe,
+            9 => AclOperation::ClusterAction,
+            10 => AclOperation::DescribeConfigs,
+            11 => AclOperation::AlterConfigs,
+            12 => AclOperation::IdempotentWrite,
+            _ => AclOperation::Unknown,
+        }
+    }
+}
+
+/// Kafka ACL permission types (numeric values match the wire protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AclPermissionType {
+    Unknown,
+    Any,
+    Deny,
+    Allow,
+}
+
+impl AclPermissionType {
+    pub fn as_i8(self) -> i8 {
+        match self {
+            AclPermissionType::Unknown => 0,
+            AclPermissionType::Any => 1,
+            AclPermissionType::Deny => 2,
+            AclPermissionType::Allow => 3,
+        }
+    }
+
+    pub fn from_i8(v: i8) -> Self {
+        match v {
+            1 => AclPermissionType::Any,
+            2 => AclPermissionType::Deny,
+            3 => AclPermissionType::Allow,
+            _ => AclPermissionType::Unknown,
+        }
+    }
+}
+
+/// Kafka ACL resource pattern types (numeric values match the wire protocol).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AclPatternType {
+    Unknown,
+    Any,
+    Match,
+    Literal,
+    Prefixed,
+}
+
+impl AclPatternType {
+    pub fn as_i8(self) -> i8 {
+        match self {
+            AclPatternType::Unknown => 0,
+            AclPatternType::Any => 1,
+            AclPatternType::Match => 2,
+            AclPatternType::Literal => 3,
+            AclPatternType::Prefixed => 4,
+        }
+    }
+
+    pub fn from_i8(v: i8) -> Self {
+        match v {
+            1 => AclPatternType::Any,
+            2 => AclPatternType::Match,
+            3 => AclPatternType::Literal,
+            4 => AclPatternType::Prefixed,
+            _ => AclPatternType::Unknown,
+        }
+    }
+}
+
+/// A concrete ACL binding: who (principal) may do what (operation) on a
+/// resource from which host.
+#[derive(Debug, Clone)]
+pub struct AclBinding {
+    pub resource_type: AclResourceType,
+    pub resource_name: String,
+    pub pattern_type: AclPatternType,
+    pub principal: String,
+    pub host: String,
+    pub operation: AclOperation,
+    pub permission_type: AclPermissionType,
+}
+
+impl AclBinding {
+    /// Create a literal-pattern ACL binding.
+    pub fn new(
+        resource_type: AclResourceType,
+        resource_name: impl Into<String>,
+        principal: impl Into<String>,
+        host: impl Into<String>,
+        operation: AclOperation,
+        permission_type: AclPermissionType,
+    ) -> Self {
+        Self {
+            resource_type,
+            resource_name: resource_name.into(),
+            pattern_type: AclPatternType::Literal,
+            principal: principal.into(),
+            host: host.into(),
+            operation,
+            permission_type,
+        }
+    }
+
+    pub fn with_pattern_type(mut self, pattern_type: AclPatternType) -> Self {
+        self.pattern_type = pattern_type;
+        self
+    }
+}
+
+/// A filter for describing/deleting ACLs. `None` fields match anything.
+#[derive(Debug, Clone, Default)]
+pub struct AclBindingFilter {
+    pub resource_type: Option<AclResourceType>,
+    pub resource_name: Option<String>,
+    pub pattern_type: Option<AclPatternType>,
+    pub principal: Option<String>,
+    pub host: Option<String>,
+    pub operation: Option<AclOperation>,
+    pub permission_type: Option<AclPermissionType>,
+}
+
+/// Result of creating an ACL.
+#[derive(Debug, Clone)]
+pub struct AclCreationResult {
+    pub error_code: KafkaErrorCode,
+    pub error_message: Option<String>,
+}
+
+/// Result of deleting ACLs matching a filter.
+#[derive(Debug, Clone)]
+pub struct AclDeleteResult {
+    pub error_code: KafkaErrorCode,
+    pub error_message: Option<String>,
+    pub matching_acls: Vec<AclBinding>,
+}
+
+/// A broker/topic configuration entry.
+#[derive(Debug, Clone)]
+pub struct ConfigEntry {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+/// Per-partition result of `delete_records`.
+#[derive(Debug, Clone)]
+pub struct DeleteRecordsResult {
+    pub partition: i32,
+    pub low_watermark: i64,
+    pub error_code: KafkaErrorCode,
 }
 
 // ===========================================================================
@@ -995,5 +1256,297 @@ impl AdminClient {
     /// ```
     pub async fn get_broker_config(&self, key: &str) -> Option<usize> {
         self.cluster.query_broker_config(key).await
+    }
+
+    // ------------------------------------------------------------------
+    // ACL management
+    // ------------------------------------------------------------------
+
+    /// Create one or more ACL bindings.
+    pub async fn create_acls(&self, acls: &[AclBinding]) -> Result<Vec<AclCreationResult>> {
+        let request = CreateAclsRequest {
+            creations: acls
+                .iter()
+                .map(|a| AclCreation {
+                    resource_type: a.resource_type.as_i8(),
+                    resource_name: a.resource_name.clone(),
+                    resource_pattern_type: a.pattern_type.as_i8(),
+                    principal: a.principal.clone(),
+                    host: a.host.clone(),
+                    operation: a.operation.as_i8(),
+                    permission_type: a.permission_type.as_i8(),
+                })
+                .collect(),
+        };
+        let response: CreateAclsResponse = self.cluster.send_to_any_broker(&request).await?;
+        Ok(response
+            .results
+            .into_iter()
+            .map(|r| AclCreationResult {
+                error_code: KafkaErrorCode::from_i16(r.error_code),
+                error_message: r.error_message,
+            })
+            .collect())
+    }
+
+    /// Describe ACLs matching a filter (an empty filter matches everything).
+    pub async fn describe_acls(&self, filter: &AclBindingFilter) -> Result<Vec<AclBinding>> {
+        let request = DescribeAclsRequest {
+            resource_type_filter: filter
+                .resource_type
+                .map(|t| t.as_i8())
+                .unwrap_or(AclResourceType::Any.as_i8()),
+            resource_name_filter: filter.resource_name.clone(),
+            pattern_type_filter: filter
+                .pattern_type
+                .map(|p| p.as_i8())
+                .unwrap_or(AclPatternType::Any.as_i8()),
+            principal_filter: filter.principal.clone(),
+            host_filter: filter.host.clone(),
+            operation: filter
+                .operation
+                .map(|o| o.as_i8())
+                .unwrap_or(AclOperation::Any.as_i8()),
+            permission_type: filter
+                .permission_type
+                .map(|p| p.as_i8())
+                .unwrap_or(AclPermissionType::Any.as_i8()),
+        };
+        let response: DescribeAclsResponse = self.cluster.send_to_any_broker(&request).await?;
+        if response.error_code != 0 {
+            return Err(KafkaError::AdminError {
+                operation: "describe_acls".into(),
+                code: KafkaErrorCode::from_i16(response.error_code),
+                message: response.error_message.unwrap_or_default(),
+            });
+        }
+
+        let mut bindings = Vec::new();
+        for res in response.resources {
+            let resource_type = AclResourceType::from_i8(res.resource_type);
+            let resource_name = res.resource_name.clone();
+            let pattern_type = AclPatternType::from_i8(res.pattern_type);
+            for acl in res.acls {
+                bindings.push(AclBinding {
+                    resource_type,
+                    resource_name: resource_name.clone(),
+                    pattern_type,
+                    principal: acl.principal,
+                    host: acl.host,
+                    operation: AclOperation::from_i8(acl.operation),
+                    permission_type: AclPermissionType::from_i8(acl.permission_type),
+                });
+            }
+        }
+        Ok(bindings)
+    }
+
+    /// Delete ACLs matching the given filters.
+    pub async fn delete_acls(&self, filters: &[AclBindingFilter]) -> Result<Vec<AclDeleteResult>> {
+        let request = DeleteAclsRequest {
+            filters: filters
+                .iter()
+                .map(|f| DeleteAclsFilter {
+                    resource_type_filter: f
+                        .resource_type
+                        .map(|t| t.as_i8())
+                        .unwrap_or(AclResourceType::Any.as_i8()),
+                    resource_name_filter: f.resource_name.clone(),
+                    pattern_type_filter: f
+                        .pattern_type
+                        .map(|p| p.as_i8())
+                        .unwrap_or(AclPatternType::Any.as_i8()),
+                    principal_filter: f.principal.clone(),
+                    host_filter: f.host.clone(),
+                    operation: f
+                        .operation
+                        .map(|o| o.as_i8())
+                        .unwrap_or(AclOperation::Any.as_i8()),
+                    permission_type: f
+                        .permission_type
+                        .map(|p| p.as_i8())
+                        .unwrap_or(AclPermissionType::Any.as_i8()),
+                })
+                .collect(),
+        };
+        let response: DeleteAclsResponse = self.cluster.send_to_any_broker(&request).await?;
+        Ok(response
+            .filter_results
+            .into_iter()
+            .map(|r| AclDeleteResult {
+                error_code: KafkaErrorCode::from_i16(r.error_code),
+                error_message: r.error_message,
+                matching_acls: r
+                    .matching_acls
+                    .into_iter()
+                    .map(|m| AclBinding {
+                        resource_type: AclResourceType::from_i8(m.resource_type),
+                        resource_name: m.resource_name,
+                        pattern_type: AclPatternType::from_i8(m.pattern_type),
+                        principal: m.principal,
+                        host: m.host,
+                        operation: AclOperation::from_i8(m.operation),
+                        permission_type: AclPermissionType::from_i8(m.permission_type),
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    // ------------------------------------------------------------------
+    // Configuration management
+    // ------------------------------------------------------------------
+
+    /// Alter the configuration of a broker/topic resource.
+    ///
+    /// `resource_type` is one of `2` (topic), `4` (broker), `3` (group), etc.
+    pub async fn alter_configs(
+        &self,
+        resource_type: i8,
+        resource_name: &str,
+        configs: &[(String, String)],
+    ) -> Result<()> {
+        let request = AlterConfigsRequest {
+            resources: vec![AlterConfigsResource {
+                resource_type,
+                resource_name: resource_name.to_string(),
+                configs: configs
+                    .iter()
+                    .map(|(name, value)| AlterableConfig {
+                        name: name.clone(),
+                        value: Some(value.clone()),
+                    })
+                    .collect(),
+            }],
+            validate_only: false,
+        };
+        let response: AlterConfigsResponse = self.cluster.send_to_any_broker(&request).await?;
+        for r in response.responses {
+            if r.error_code != 0 {
+                return Err(KafkaError::AdminError {
+                    operation: format!("alter_configs({resource_name})"),
+                    code: KafkaErrorCode::from_i16(r.error_code),
+                    message: r.error_message.unwrap_or_default(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience: alter a topic's configuration (e.g. `retention.ms`).
+    pub async fn alter_topic_configs(
+        &self,
+        topic: &str,
+        configs: &[(String, String)],
+    ) -> Result<()> {
+        self.alter_configs(2, topic, configs).await
+    }
+
+    /// Describe the configuration entries of a broker/topic resource.
+    pub async fn describe_configs(
+        &self,
+        resource_type: i8,
+        resource_name: &str,
+    ) -> Result<Vec<ConfigEntry>> {
+        let request = DescribeConfigsRequest {
+            resources: vec![DescribeConfigsResource {
+                resource_type,
+                resource_name: resource_name.to_string(),
+                configuration_keys: None,
+            }],
+            include_synonyms: false,
+            include_documentation: false,
+        };
+        let response: DescribeConfigsResponse = self.cluster.send_to_any_broker(&request).await?;
+        let mut entries = Vec::new();
+        for r in response.results {
+            if r.error_code != 0 {
+                return Err(KafkaError::AdminError {
+                    operation: format!("describe_configs({resource_name})"),
+                    code: KafkaErrorCode::from_i16(r.error_code),
+                    message: r.error_message.unwrap_or_default(),
+                });
+            }
+            for c in r.configs {
+                entries.push(ConfigEntry {
+                    name: c.name,
+                    value: c.value,
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    // ------------------------------------------------------------------
+    // Records & offsets management
+    // ------------------------------------------------------------------
+
+    /// Delete records before the given offsets (sent to each partition
+    /// leader). Returns the resulting low watermark per partition.
+    pub async fn delete_records(
+        &self,
+        topic: &str,
+        partitions: &[(i32, i64)],
+    ) -> Result<Vec<DeleteRecordsResult>> {
+        let mut by_leader: HashMap<SocketAddr, Vec<(i32, i64)>> = HashMap::new();
+        for (partition, offset) in partitions {
+            let leader = self
+                .cluster
+                .metadata()
+                .get_partition_leader(topic, *partition)
+                .await
+                .ok_or_else(|| KafkaError::PartitionNotFound(topic.to_string(), *partition))?;
+            by_leader.entry(leader).or_default().push((*partition, *offset));
+        }
+
+        let mut results = Vec::new();
+        for (leader, parts) in by_leader {
+            let request = DeleteRecordsRequest {
+                topics: vec![DeleteRecordsTopic {
+                    name: topic.to_string(),
+                    partitions: parts
+                        .iter()
+                        .map(|(partition_index, offset)| DeleteRecordsPartition {
+                            partition_index: *partition_index,
+                            offset: *offset,
+                        })
+                        .collect(),
+                }],
+                timeout_ms: 30_000,
+            };
+            let response: DeleteRecordsResponse =
+                self.cluster.send_to_broker(leader, &request).await?;
+            for t in response.topics {
+                for p in t.partitions {
+                    results.push(DeleteRecordsResult {
+                        partition: p.partition_index,
+                        low_watermark: p.low_watermark,
+                        error_code: KafkaErrorCode::from_i16(p.error_code),
+                    });
+                }
+            }
+        }
+        results.sort_by_key(|r| r.partition);
+        Ok(results)
+    }
+
+    /// Reset a consumer group's committed offsets (simple commit with
+    /// generation `-1`). Pass offsets resolved via `fetch_log_end_offset` /
+    /// list-offsets for "earliest"/"latest" semantics.
+    pub async fn reset_group_offsets(
+        &self,
+        group_id: &str,
+        offsets: &[(String, i32, i64)],
+    ) -> Result<()> {
+        let specs: Vec<OffsetCommitSpec> = offsets
+            .iter()
+            .map(|(topic, partition, offset)| OffsetCommitSpec {
+                topic: topic.clone(),
+                partition: *partition,
+                offset: *offset,
+                metadata: None,
+            })
+            .collect();
+        self.commit_offsets(group_id, &specs).await
     }
 }

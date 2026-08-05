@@ -90,6 +90,16 @@ pub enum KafkaError {
         error: KafkaErrorCode,
     },
 
+    #[error("Admin operation '{operation}' failed: {code}{message}")]
+    AdminError {
+        /// The admin operation that failed.
+        operation: String,
+        /// The broker-reported error code.
+        code: KafkaErrorCode,
+        /// Optional broker error message (prefixed with ": " when present).
+        message: String,
+    },
+
     #[error("No offset stored")]
     NoOffsetStored,
 

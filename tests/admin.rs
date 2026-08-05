@@ -14,7 +14,11 @@
 mod common;
 
 use common::{build_test_client, compose, run_with_timeout};
-use kafka_client::admin::{NewTopic, OffsetCommitSpec};
+use kafka_client::admin::{
+    AclBinding, AclBindingFilter, AclOperation, AclPermissionType, AclResourceType, NewTopic,
+    OffsetCommitSpec,
+};
+use kafka_client::ConsumerConfig;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 async fn setup() {
@@ -243,6 +247,167 @@ async fn test_admin_group_lifecycle() {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+
+        client.close().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_admin_acl_lifecycle() {
+    run_with_timeout(async {
+        setup().await;
+        let client = build_test_client().await;
+        let admin = client.admin();
+        let topic = unique("admin-acl");
+        common::create_topic(&client, &topic, 1).await;
+
+        let binding = AclBinding::new(
+            AclResourceType::Topic,
+            topic.clone(),
+            "User:alice",
+            "*",
+            AclOperation::Read,
+            AclPermissionType::Allow,
+        );
+        let results = admin
+            .create_acls(&[binding.clone()])
+            .await
+            .expect("create_acls");
+        assert!(
+            results.iter().all(|r| r.error_code.is_ok()),
+            "create_acls results: {results:?}"
+        );
+
+        let filter = AclBindingFilter {
+            resource_type: Some(AclResourceType::Topic),
+            resource_name: Some(topic.clone()),
+            ..Default::default()
+        };
+        let found = admin.describe_acls(&filter).await.expect("describe_acls");
+        assert!(
+            found
+                .iter()
+                .any(|a| a.principal == "User:alice" && a.operation == AclOperation::Read),
+            "created ACL should be describable: {found:?}"
+        );
+
+        let deleted = admin
+            .delete_acls(&[filter.clone()])
+            .await
+            .expect("delete_acls");
+        assert!(deleted.iter().all(|d| d.error_code.is_ok()));
+        let after = admin
+            .describe_acls(&filter)
+            .await
+            .expect("describe_acls after delete");
+        assert!(
+            !after.iter().any(|a| a.principal == "User:alice"),
+            "deleted ACL should be gone"
+        );
+
+        client.close().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_admin_config_alter_and_describe() {
+    run_with_timeout(async {
+        setup().await;
+        let client = build_test_client().await;
+        let admin = client.admin();
+        let topic = unique("admin-config");
+        common::create_topic(&client, &topic, 1).await;
+        common::wait_for_topic_ready(&client, &topic, 1).await;
+
+        admin
+            .alter_topic_configs(&topic, &[("retention.ms".into(), "3600000".into())])
+            .await
+            .expect("alter_topic_configs");
+
+        let entries = admin
+            .describe_configs(2, &topic)
+            .await
+            .expect("describe_configs");
+        assert!(
+            entries.iter().any(|c| {
+                c.name == "retention.ms" && c.value.as_deref() == Some("3600000")
+            }),
+            "altered config should be visible: {entries:?}"
+        );
+
+        client.close().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_admin_delete_records() {
+    run_with_timeout(async {
+        setup().await;
+        let client = build_test_client().await;
+        let admin = client.admin();
+        let topic = unique("admin-delete-records");
+        common::create_topic(&client, &topic, 1).await;
+        common::wait_for_topic_ready(&client, &topic, 1).await;
+        common::produce_messages(&client, &topic, 5).await;
+
+        let results = admin
+            .delete_records(&topic, &[(0, -1)])
+            .await
+            .expect("delete_records");
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].error_code.is_ok(),
+            "delete_records error: {}",
+            results[0].error_code
+        );
+
+        // Records before the deletion point must be gone.
+        let mut consumer = client
+            .consumer(ConsumerConfig::new().with_earliest());
+        consumer.assign(topic.clone(), vec![0]).await.unwrap();
+        let records = consumer
+            .poll_timeout(Duration::from_secs(5))
+            .await
+            .expect("poll after delete");
+        assert!(
+            records.is_empty(),
+            "deleted records should not be consumable (got {})",
+            records.len()
+        );
+
+        client.close().await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_admin_reset_group_offsets() {
+    run_with_timeout(async {
+        setup().await;
+        let client = build_test_client().await;
+        let admin = client.admin();
+        let group = unique("admin-cg-reset");
+        let topic = unique("admin-reset-topic");
+        common::create_topic(&client, &topic, 1).await;
+        common::wait_for_topic_ready(&client, &topic, 1).await;
+
+        admin
+            .reset_group_offsets(&group, &[(topic.clone(), 0, 7)])
+            .await
+            .expect("reset_group_offsets");
+        let offsets = admin
+            .fetch_group_offsets(&group)
+            .await
+            .expect("fetch_group_offsets");
+        assert!(
+            offsets
+                .iter()
+                .any(|o| o.topic == topic && o.partition == 0 && o.committed_offset == 7),
+            "reset offsets should be visible: {offsets:?}"
+        );
 
         client.close().await.unwrap();
     })
