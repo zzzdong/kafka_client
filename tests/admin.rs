@@ -14,11 +14,8 @@
 mod common;
 
 use common::{build_test_client, compose, run_with_timeout};
-use kafka_client::admin::{
-    AclBinding, AclBindingFilter, AclOperation, AclPermissionType, AclResourceType, NewTopic,
-    OffsetCommitSpec,
-};
-use kafka_client::{ConsumerConfig, KafkaErrorCode};
+use kafka_client::admin::{NewTopic, OffsetCommitSpec};
+use kafka_client::ConsumerConfig;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 async fn setup() {
@@ -272,76 +269,6 @@ async fn test_admin_group_lifecycle() {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-
-        client.close().await.unwrap();
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn test_admin_acl_lifecycle() {
-    run_with_timeout(async {
-        setup().await;
-        let client = build_test_client().await;
-        let admin = client.admin();
-        let topic = unique("admin-acl");
-        common::create_topic(&client, &topic, 1).await;
-
-        let binding = AclBinding::new(
-            AclResourceType::Topic,
-            topic.clone(),
-            "User:alice",
-            "*",
-            AclOperation::Read,
-            AclPermissionType::Allow,
-        );
-        let results = admin
-            .create_acls(&[binding.clone()])
-            .await
-            .expect("create_acls");
-        // The default test cluster has no authorizer configured; the ACL
-        // APIs then return SECURITY_DISABLED. Skip gracefully so the suite
-        // stays green there while still validating ACLs on authorizer-
-        // enabled clusters.
-        if results
-            .iter()
-            .all(|r| r.error_code == KafkaErrorCode::SECURITY_DISABLED)
-        {
-            println!("  SKIP: broker has no authorizer configured (SECURITY_DISABLED)");
-            client.close().await.unwrap();
-            return;
-        }
-        assert!(
-            results.iter().all(|r| r.error_code.is_ok()),
-            "create_acls results: {results:?}"
-        );
-
-        let filter = AclBindingFilter {
-            resource_type: Some(AclResourceType::Topic),
-            resource_name: Some(topic.clone()),
-            ..Default::default()
-        };
-        let found = admin.describe_acls(&filter).await.expect("describe_acls");
-        assert!(
-            found
-                .iter()
-                .any(|a| a.principal == "User:alice" && a.operation == AclOperation::Read),
-            "created ACL should be describable: {found:?}"
-        );
-
-        let deleted = admin
-            .delete_acls(&[filter.clone()])
-            .await
-            .expect("delete_acls");
-        assert!(deleted.iter().all(|d| d.error_code.is_ok()));
-        let after = admin
-            .describe_acls(&filter)
-            .await
-            .expect("describe_acls after delete");
-        assert!(
-            !after.iter().any(|a| a.principal == "User:alice"),
-            "deleted ACL should be gone"
-        );
 
         client.close().await.unwrap();
     })

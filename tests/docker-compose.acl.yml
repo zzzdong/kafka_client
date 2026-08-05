@@ -1,0 +1,36 @@
+# ACL-enabled 单节点 KRaft Kafka（StandardAuthorizer）。
+#
+# 匿名连接 (User:ANONYMOUS) 配置为 super user，因此 ACL 管理 API
+# (CreateAcls/DescribeAcls/DeleteAcls) 可以完整验证。
+#
+# Usage:
+#   cd tests
+#   podman compose -f docker-compose.acl.yml up -d
+#   KAFKA_BOOTSTRAP_ACL=127.0.0.1:9098 KAFKA_CLUSTER_SIZE=1 \
+#     cargo test --test acl --features integration_tests -- --nocapture
+#   podman compose -f docker-compose.acl.yml down -v
+
+services:
+  broker:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.3.0}
+    hostname: broker
+    container_name: kafka-acl-broker
+    ports:
+      - '9098:9098'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT_HOST://localhost:9098,PLAINTEXT://broker:19098'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_LISTENERS: 'CONTROLLER://:29093,PLAINTEXT_HOST://:9098,PLAINTEXT://:19098'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      CLUSTER_ID: 'kafka-docker-acl'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_AUTHORIZER_CLASS_NAME: 'org.apache.kafka.metadata.authorizer.StandardAuthorizer'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS'

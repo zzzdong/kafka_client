@@ -114,6 +114,18 @@ pub mod clusters {
         host_port: 9096,
         is_secure: true,
     };
+
+    pub const ACL: Cluster = Cluster {
+        name: "acl",
+        compose_file: "docker-compose.acl.yml",
+        env_var: "KAFKA_BOOTSTRAP_ACL",
+        default_bootstrap: "127.0.0.1:9098",
+        default_size: 1,
+        containers: &["kafka-acl-broker"],
+        internal_port: 9098,
+        host_port: 9098,
+        is_secure: false,
+    };
 }
 
 // ============================================================================

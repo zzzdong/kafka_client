@@ -44,6 +44,7 @@ THREE_BROKER_TESTS=(
 
 SASL_TESTS=("auth")
 TLS_TESTS=("tls")
+ACL_TESTS=("acl")
 KERBEROS_TESTS=("kerberos" "kerberos_service_ticket")
 
 # 如果未设置 KAFKA_BOOTSTRAP，设为默认的 3-broker 地址
@@ -74,6 +75,7 @@ echo "=== Stopping any leftover Kafka test containers ==="
 ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
 ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
 ${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
+${COMPOSE_CMD} -f docker-compose.acl.yml down -v 2>/dev/null || podman rm -f kafka-acl-broker 2>/dev/null || true
 # Clean up kerberos keytabs before starting fresh
 rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
 ${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
@@ -87,6 +89,9 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.sasl.yml up -d
 
 echo "=== Starting TLS broker (docker-compose.tls.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.tls.yml up -d
+
+echo "=== Starting ACL broker (docker-compose.acl.yml) ==="
+KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.acl.yml up -d
 
 echo "=== Starting KDC + Kerberos Kafka (docker-compose.kerberos.yml) ==="
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos.yml up -d --build
@@ -151,6 +156,11 @@ wait_broker "kafka-tls-broker" 9093 9093 || {
     echo "WARNING: TLS broker not ready — TLS tests may be skipped"
 }
 
+echo "=== Waiting for ACL broker to be ready ==="
+wait_broker "kafka-acl-broker" 9098 9098 120 || {
+    echo "WARNING: ACL broker not ready — ACL tests may be skipped"
+}
+
 echo "=== Waiting for Kerberos Kafka broker to be ready ==="
 wait_broker "kafka-kerberos-broker" 9096 9096 120 || {
     echo "WARNING: Kerberos broker not ready — Kerberos tests may be skipped"
@@ -206,6 +216,14 @@ for test in "${TLS_TESTS[@]}"; do
 done
 
 echo ""
+echo "--- ACL tests ---"
+for test in "${ACL_TESTS[@]}"; do
+    KAFKA_BOOTSTRAP_ACL="127.0.0.1:9098" \
+    KAFKA_CLUSTER_SIZE=1 \
+    run_tests "${test}" || TEST_EXIT_CODE=$?
+done
+
+echo ""
 echo "--- Kerberos tests ---"
 for test in "${KERBEROS_TESTS[@]}"; do
     # Kerberos 连接的是单节点 broker (port 9096)，而非 3-broker 集群
@@ -227,6 +245,7 @@ if [ -z "${SKIP_CLEANUP:-}" ]; then
     ${COMPOSE_CMD} -f docker-compose.yml down -v 2>/dev/null || podman rm -f kafka-1 kafka-2 kafka-3 2>/dev/null || true
     ${COMPOSE_CMD} -f docker-compose.sasl.yml down -v 2>/dev/null || podman rm -f kafka-sasl-broker 2>/dev/null || true
     ${COMPOSE_CMD} -f docker-compose.tls.yml down -v 2>/dev/null || podman rm -f kafka-tls-broker 2>/dev/null || true
+    ${COMPOSE_CMD} -f docker-compose.acl.yml down -v 2>/dev/null || podman rm -f kafka-acl-broker 2>/dev/null || true
     rm -rf "${SCRIPT_DIR}/fixtures/kerberos/keytabs"
     ${COMPOSE_CMD} -f docker-compose.kerberos.yml down -v 2>/dev/null || true
 else
