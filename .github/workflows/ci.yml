@@ -373,14 +373,17 @@ jobs:
         run: |
           docker compose -f docker-compose.kerberos-multi.yml up -d --build
           # SASL/GSSAPI listeners reject the unauthenticated ApiVersions probe,
-          # so wait on the TCP port only. Each broker publishes its own host
-          # port (19096/19097/19098); probe them from the runner in parallel
-          # (background subshells) so all three become ready together.
+          # so wait on the TCP port only. Probe from *inside* each container via
+          # `docker exec` (the broker binds 0.0.0.0:<port> there), which avoids
+          # any host-port publishing quirks. Each broker uses its own port
+          # (19096/19097/19098); run the three probes in parallel so they become
+          # ready together.
           for pair in kafka-kerberos-1:19096 kafka-kerberos-2:19097 kafka-kerberos-3:19098; do
             c="${pair%%:*}"; p="${pair##*:}"
             (
               for i in $(seq 1 120); do
-                if bash -c "echo > /dev/tcp/127.0.0.1:${p}" 2>/dev/null; then
+                if docker exec "${c}" \
+                  bash -c "echo > /dev/tcp/127.0.0.1:${p}" 2>/dev/null; then
                   echo "  ${c} (port ${p}) ready (~${i}s)"
                   exit 0
                 fi
@@ -410,9 +413,9 @@ jobs:
             sleep 2
           done
       - name: Run multi-broker Kerberos tests
-        working-directory: .
+        working-directory: tests
         # 测试在 compose 网络内的 test-runner 容器中编译运行, 容器网络
-        # 解析 broker1/2/3.example.com 与 kdc.example.com, 无需 /etc/hosts。
+        # 解析 broker1/2/3.example.com 与 kdc-multi.example.com, 无需 /etc/hosts。
         run: docker compose -f docker-compose.kerberos-multi.yml run --rm test-runner
       - name: Dump logs on failure
         if: failure()
