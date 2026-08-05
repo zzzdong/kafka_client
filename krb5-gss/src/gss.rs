@@ -42,7 +42,9 @@ use crate::kerberos::asn1::{
 };
 use crate::kerberos::client::{AcquiredTicket, KerberosClient};
 use crate::kerberos::crypto::{self, Etype};
-use crate::kerberos::messages::{KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REQ_AUTH};
+use crate::kerberos::messages::{
+    KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REP_ENC_PART_RFC4120, KEY_USAGE_AP_REQ_AUTH,
+};
 use crate::kerberos::transport::KdcTransport;
 use crate::kerberos::util::utc_now_with_micros;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -694,28 +696,50 @@ pub fn verify_ap_rep_token(
     // [APPLICATION 0] { OID, AP-REP }
     let inner = unwrap_gss_token(token)?;
     let enc_part = decode_ap_rep(&inner)?;
-    // Java acceptor 使用标准 RFC 3962 加密 (HMAC over plaintext),
-    // 与 MIT krb5 库一致.
-    let plain = crypto::decrypt(
-        expected_etype,
-        decrypt_key,
-        KEY_USAGE_AP_REP_ENC_PART,
-        &enc_part.cipher,
-    )?;
-    let part = decode_enc_ap_rep_part(&plain)?;
-    if part.ctime != expected_ctime {
-        return Err(KerberosError::Gss(format!(
-            "AP-REP ctime mismatch: expected {expected_ctime}, got {}",
-            part.ctime
-        )));
+    //
+    // SunJGSS (real Kafka brokers) encrypts the AP-REP enc-part with key
+    // usage 12 and an HMAC computed over the plaintext — the same convention
+    // as this crate's `decrypt` — and prefixes the EncAPRepPart DER with a
+    // 2-byte TLV (0x7b 0x24) right after the confounder. Try usage 12 first
+    // (verified against Kafka), then 15 as a fallback for RFC 4120
+    // conformant implementations, and accept the DER at offset 0 (self-test
+    // vectors) or offset 2 (SunJGSS).
+    let mut last_err = None;
+    for usage in [KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REP_ENC_PART_RFC4120] {
+        let plain = match crypto::decrypt(expected_etype, decrypt_key, usage, &enc_part.cipher) {
+            Ok(p) => p,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+        for offset in [0usize, 2] {
+            if plain.len() <= offset {
+                continue;
+            }
+            match decode_enc_ap_rep_part(&plain[offset..]) {
+                Ok(part) => {
+                    if part.ctime != expected_ctime {
+                        return Err(KerberosError::Gss(format!(
+                            "AP-REP ctime mismatch: expected {expected_ctime}, got {}",
+                            part.ctime
+                        )));
+                    }
+                    if part.cusec != expected_cusec {
+                        return Err(KerberosError::Gss(format!(
+                            "AP-REP cusec mismatch: expected {expected_cusec}, got {}",
+                            part.cusec
+                        )));
+                    }
+                    return Ok(part);
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                }
+            }
+        }
     }
-    if part.cusec != expected_cusec {
-        return Err(KerberosError::Gss(format!(
-            "AP-REP cusec mismatch: expected {expected_cusec}, got {}",
-            part.cusec
-        )));
-    }
-    Ok(part)
+    Err(last_err.unwrap_or_else(|| KerberosError::Asn1("AP-REP encrypted part is empty".into())))
 }
 
 /// Extract AP-REQ from a GSS InitialContextToken, returning (Ticket, encrypted Authenticator).
@@ -1327,13 +1351,26 @@ mod tests {
     }
 
     /// 模拟 acceptor AP-REP (GSS InitialContextToken 格式：含 OID 包装)。
-    fn simulate_server_ap_rep(etype: Etype, key: &[u8], ctime: &str, cusec: i32) -> Vec<u8> {
+    ///
+    /// `sun_jgss_prefix` 为 true 时, 在 EncAPRepPart DER 前插入真实 SunJGSS
+    /// 的 2 字节前缀 (0x7b 0x24), 用于覆盖 Kafka 互操作场景。
+    fn simulate_server_ap_rep(
+        etype: Etype,
+        key: &[u8],
+        ctime: &str,
+        cusec: i32,
+        sun_jgss_prefix: bool,
+    ) -> Vec<u8> {
         let mut part = Vec::new();
         part.extend(tlv_ctx(0, &tlv_gt(ctime)));
         part.extend(ctx_int(1, cusec));
         let enc_part_plain = tlv_seq(&part);
-        let enc_cipher =
-            crypto::encrypt(etype, key, KEY_USAGE_AP_REP_ENC_PART, &enc_part_plain).unwrap();
+        let mut plain = Vec::new();
+        if sun_jgss_prefix {
+            plain.extend_from_slice(&[0x7b, 0x24]);
+        }
+        plain.extend_from_slice(&enc_part_plain);
+        let enc_cipher = crypto::encrypt(etype, key, KEY_USAGE_AP_REP_ENC_PART, &plain).unwrap();
         let mut ap_rep = Vec::new();
         ap_rep.extend(ctx_int(0, 5));
         ap_rep.extend(ctx_int(1, 15));
@@ -1362,7 +1399,11 @@ mod tests {
         let (etype, key) = fake_session();
         let ctime = "20260713".to_string() + "101112Z";
         let cusec = 654321;
-        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec);
+        // 无前缀 (本 crate 自测布局)
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, false);
+        verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec).unwrap();
+        // SunJGSS 前缀布局 (真实 Kafka broker)
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
         verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec).unwrap();
         assert!(verify_ap_rep_token(&server_token, etype, &key, "20260713", cusec).is_err());
     }
@@ -1449,7 +1490,8 @@ mod tests {
         let plain =
             crypto::decrypt(etype, &session_key, KEY_USAGE_AP_REQ_AUTH, &enc_auth.cipher).unwrap();
         let auth = decode_authenticator(&plain).unwrap();
-        let server_token = simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec);
+        let server_token =
+            simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec, true);
 
         // 3. handle_challenge(AP-REP) → Some(empty) → 表示需要发送空 token 进入 WRAP 轮
         let round2_resp = ctx.handle_challenge(&server_token).unwrap();
@@ -1625,7 +1667,8 @@ mod tests {
         let plain =
             crypto::decrypt(etype, &session_key, KEY_USAGE_AP_REQ_AUTH, &enc_auth.cipher).unwrap();
         let auth = decode_authenticator(&plain).unwrap();
-        let server_token = simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec);
+        let server_token =
+            simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec, true);
 
         // 3. step(Some(AP-REP)) → 空 token (进入 WRAP 轮)
         let r2 = ctx
@@ -1715,7 +1758,8 @@ mod tests {
         let plain =
             crypto::decrypt(etype, &session_key, KEY_USAGE_AP_REQ_AUTH, &enc_auth.cipher).unwrap();
         let auth = decode_authenticator(&plain).unwrap();
-        let server_token = simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec);
+        let server_token =
+            simulate_server_ap_rep(etype, &session_key, &auth.ctime, auth.cusec, true);
         ctx.handle_challenge(&server_token).unwrap();
         let acceptor_wrap = simulate_server_wrap(etype, &session_key);
         ctx.handle_challenge(&acceptor_wrap).unwrap();

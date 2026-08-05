@@ -70,6 +70,15 @@ impl SaslCredentials {
         &self.password
     }
 
+    /// Set the authorisation identity (SASL PLAIN only).
+    ///
+    /// When `None` (the default), the authorisation identity is empty and the
+    /// broker authorises the connection under the username.
+    pub fn with_authzid(mut self, authzid: impl Into<String>) -> Self {
+        self.authzid = Some(authzid.into());
+        self
+    }
+
     /// Authorisation identity (None = same as username).
     pub fn authzid(&self) -> Option<&str> {
         self.authzid.as_deref()

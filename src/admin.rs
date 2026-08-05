@@ -26,7 +26,9 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures::future::join_all;
 use tokio::net;
 
 use crate::cluster::ClusterClient;
@@ -180,6 +182,8 @@ pub struct AdminGroup {
     pub group_id: String,
     /// Protocol type (e.g. "consumer").
     pub protocol_type: String,
+    /// Group state (e.g. "Stable", "Empty"), when reported by the broker.
+    pub state: String,
 }
 
 /// Consumer group member.
@@ -285,8 +289,9 @@ impl AdminClient {
                     .as_ref()
                     .map(|a| {
                         a.iter()
-                            .map(|ids| CreatableReplicaAssignment {
-                                partition_index: -1,
+                            .enumerate()
+                            .map(|(idx, ids)| CreatableReplicaAssignment {
+                                partition_index: idx as i32,
                                 broker_ids: ids.clone(),
                             })
                             .collect()
@@ -498,16 +503,78 @@ impl AdminClient {
             types_filter: vec![],
         };
 
-        let response: ListGroupsResponse = self.cluster.send_to_any_broker(&request).await?;
-        let groups = response
-            .groups
-            .into_iter()
-            .map(|g| AdminGroup {
-                group_id: g.group_id,
-                protocol_type: g.protocol_type,
+        // ListGroups only returns the groups *coordinated by the broker that
+        // answers the request*, so we must query every broker and merge the
+        // results to get a complete cluster-wide view.
+        self.cluster.refresh_metadata().await?;
+
+        let mut groups: Vec<AdminGroup> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        let addrs: Vec<SocketAddr> = self.cluster.all_broker_addresses();
+        // Query every broker in parallel; ListGroups only returns groups
+        // coordinated by the broker that answers.
+        let futures: Vec<_> = addrs
+            .iter()
+            .map(|addr| {
+                let addr = *addr;
+                let value = request.clone();
+                async move {
+                    (
+                        addr,
+                        self.cluster
+                            .send_to_broker::<ListGroupsRequest, ListGroupsResponse>(addr, &value)
+                            .await,
+                    )
+                }
             })
             .collect();
 
+        for (addr, outcome) in join_all(futures).await {
+            match outcome {
+                Ok(response) => {
+                    if response.error_code != 0 {
+                        tracing::warn!(
+                            "ListGroups on broker {} failed: {}",
+                            addr,
+                            KafkaErrorCode::from_i16(response.error_code)
+                        );
+                        errors.push(format!("{}: {}", addr, response.error_code));
+                        continue;
+                    }
+                    for g in response.groups {
+                        if seen.insert(g.group_id.clone()) {
+                            groups.push(AdminGroup {
+                                group_id: g.group_id,
+                                protocol_type: g.protocol_type,
+                                state: g.group_state,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("ListGroups on broker {} failed: {}", addr, e);
+                    errors.push(format!("{}: {}", addr, e));
+                }
+            }
+        }
+
+        if groups.is_empty() && !errors.is_empty() {
+            return Err(KafkaError::Io(errors.join("; ")));
+        }
+        if !errors.is_empty() {
+            // Partial failure: some brokers did not answer. The caller still
+            // gets the groups we did collect, but the result is incomplete.
+            tracing::warn!(
+                "list_groups: {} of {} brokers failed, result may be incomplete: {}",
+                errors.len(),
+                addrs.len(),
+                errors.join("; ")
+            );
+        }
+
+        groups.sort_by(|a, b| a.group_id.cmp(&b.group_id));
         Ok(groups)
     }
 
@@ -520,17 +587,51 @@ impl AdminClient {
     ) -> Result<Vec<AdminGroupDescription>> {
         let ids: Vec<String> = group_ids.iter().map(|s| s.as_ref().to_string()).collect();
 
-        let request = DescribeGroupsRequest {
-            groups: ids.clone(),
-            include_authorized_operations: false,
-        };
+        // DescribeGroups only returns member/state info for groups this
+        // broker coordinates. Group the requested ids by their coordinator
+        // (found via FindCoordinator) and send one request per coordinator.
+        let coord_futures: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                let id = id.clone();
+                async move { (id.clone(), self.find_group_coordinator(&id).await) }
+            })
+            .collect();
+        let coord_results = join_all(coord_futures).await;
 
-        let response: DescribeGroupsResponse = self.cluster.send_to_any_broker(&request).await?;
+        let mut by_coordinator: std::collections::HashMap<SocketAddr, Vec<String>> =
+            std::collections::HashMap::new();
+        for (id, res) in coord_results {
+            let coord = res?;
+            by_coordinator.entry(coord).or_default().push(id);
+        }
 
-        let descriptions = response
-            .groups
+        let describe_futures: Vec<_> = by_coordinator
             .into_iter()
-            .map(|g| {
+            .map(|(coord, coord_groups)| async move {
+                let request = DescribeGroupsRequest {
+                    groups: coord_groups,
+                    include_authorized_operations: false,
+                };
+
+                let response: DescribeGroupsResponse =
+                    self.cluster.send_to_broker(coord, &request).await?;
+                Ok::<_, KafkaError>(response)
+            })
+            .collect();
+        let describe_results = join_all(describe_futures).await;
+
+        let mut descriptions = Vec::new();
+        for result in describe_results {
+            let response = result?;
+            for g in response.groups {
+                if g.error_code != 0 {
+                    return Err(KafkaError::GroupError {
+                        group_id: g.group_id.clone(),
+                        error: KafkaErrorCode::from_i16(g.error_code),
+                    });
+                }
+
                 let members = g
                     .members
                     .into_iter()
@@ -541,15 +642,16 @@ impl AdminClient {
                     })
                     .collect();
 
-                AdminGroupDescription {
+                descriptions.push(AdminGroupDescription {
                     group_id: g.group_id,
                     state: g.group_state,
                     protocol_type: g.protocol_type,
                     members,
-                }
-            })
-            .collect();
+                });
+            }
+        }
 
+        descriptions.sort_by(|a, b| a.group_id.cmp(&b.group_id));
         Ok(descriptions)
     }
 
@@ -564,7 +666,17 @@ impl AdminClient {
         let request = DeleteGroupsRequest {
             groups_names: vec![group_id.to_string()],
         };
-        let _response: DeleteGroupsResponse = self.cluster.send_to_any_broker(&request).await?;
+        let coord = self.find_group_coordinator(group_id).await?;
+        let response: DeleteGroupsResponse = self.cluster.send_to_broker(coord, &request).await?;
+
+        for r in response.results {
+            if r.error_code != 0 {
+                return Err(KafkaError::GroupError {
+                    group_id: r.group_id,
+                    error: KafkaErrorCode::from_i16(r.error_code),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -621,7 +733,10 @@ impl AdminClient {
                     continue;
                 }
                 if grp.error_code != 0 {
-                    return Err(KafkaError::NoCoordinator);
+                    return Err(KafkaError::GroupError {
+                        group_id: group_id.to_string(),
+                        error: KafkaErrorCode::from_i16(grp.error_code),
+                    });
                 }
                 for t in grp.topics {
                     let name = t.name;
@@ -644,7 +759,10 @@ impl AdminClient {
         } else {
             // Protocol version 0-7 — response layout uses flat topic list.
             if response.error_code != 0 {
-                return Err(KafkaError::NoCoordinator);
+                return Err(KafkaError::GroupError {
+                    group_id: group_id.to_string(),
+                    error: KafkaErrorCode::from_i16(response.error_code),
+                });
             }
             for t in &response.topics {
                 let name = &t.name;
@@ -697,25 +815,47 @@ impl AdminClient {
             key_type: 0,
             coordinator_keys: vec![group_id.to_string()],
         };
-        let response: FindCoordinatorResponse = self.cluster.send_to_any_broker(&request).await?;
-        if response.error_code != 0 {
-            return Err(KafkaError::NoCoordinator);
-        }
-        let (host, port) = if !response.host.is_empty() {
-            (response.host.clone(), response.port)
-        } else if let Some(coord) = response.coordinators.first() {
-            if coord.error_code != 0 {
+
+        const MAX_ATTEMPTS: u32 = 10;
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let response: FindCoordinatorResponse =
+                self.cluster.send_to_any_broker(&request).await?;
+
+            // error_code 15 = GROUP_COORDINATOR_NOT_AVAILABLE (retryable),
+            // e.g. while __consumer_offsets is being created/reassigned.
+            let retryable = response.error_code == 15
+                || response
+                    .coordinators
+                    .first()
+                    .map(|c| c.error_code == 15)
+                    .unwrap_or(false);
+
+            if retryable && attempt < MAX_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+
+            if response.error_code != 0 {
                 return Err(KafkaError::NoCoordinator);
             }
-            (coord.host.clone(), coord.port)
-        } else {
-            return Err(KafkaError::NoCoordinator);
-        };
-        net::lookup_host(format!("{}:{}", host, port))
-            .await
-            .map_err(|_| KafkaError::NoCoordinator)?
-            .next()
-            .ok_or(KafkaError::NoCoordinator)
+            let (host, port) = if !response.host.is_empty() {
+                (response.host.clone(), response.port)
+            } else if let Some(coord) = response.coordinators.first() {
+                if coord.error_code != 0 {
+                    return Err(KafkaError::NoCoordinator);
+                }
+                (coord.host.clone(), coord.port)
+            } else {
+                return Err(KafkaError::NoCoordinator);
+            };
+            return net::lookup_host(format!("{}:{}", host, port))
+                .await
+                .map_err(|_| KafkaError::NoCoordinator)?
+                .next()
+                .ok_or(KafkaError::NoCoordinator);
+        }
     }
 
     /// Resolve the high-watermark (log-end offset) of a single partition via a
@@ -804,7 +944,20 @@ impl AdminClient {
                 .collect(),
         };
 
-        let _response: OffsetCommitResponse = self.cluster.send_to_any_broker(&request).await?;
+        // OffsetCommit must be sent to the group's coordinator; a non-
+        // coordinator broker replies with NOT_COORDINATOR for every partition.
+        let coord = self.find_group_coordinator(group_id).await?;
+        let response: OffsetCommitResponse = self.cluster.send_to_broker(coord, &request).await?;
+
+        for t in &response.topics {
+            for p in &t.partitions {
+                if p.error_code != 0 {
+                    return Err(KafkaError::OffsetCommitError(KafkaErrorCode::from_i16(
+                        p.error_code,
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 

@@ -26,12 +26,13 @@ pub use versions::NegotiatedVersions;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::Framed;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::error::{KafkaError, Result};
 use crate::transport::{NetworkStream, TcpNetworkStream, TlsNetworkStream};
@@ -69,6 +70,7 @@ pub struct ConnectionHandle {
     negotiated: Arc<NegotiatedVersions>,
     next_correlation_id: Arc<AtomicI32>,
     client_id: Option<String>,
+    request_timeout: Duration,
 }
 
 impl ConnectionHandle {
@@ -76,12 +78,14 @@ impl ConnectionHandle {
         cmd_tx: mpsc::UnboundedSender<Command>,
         negotiated: Arc<NegotiatedVersions>,
         client_id: Option<String>,
+        request_timeout: Duration,
     ) -> Self {
         Self {
             cmd_tx,
             negotiated,
             next_correlation_id: Arc::new(AtomicI32::new(rand::random())),
             client_id,
+            request_timeout,
         }
     }
 
@@ -121,8 +125,9 @@ impl ConnectionHandle {
             })
             .map_err(|_| KafkaError::ConnectionClosed)?;
 
-        let response_data = response_rx
+        let response_data = tokio::time::timeout(self.request_timeout, response_rx)
             .await
+            .map_err(|_| KafkaError::RequestTimeout)?
             .map_err(|_| KafkaError::ConnectionClosed)??;
 
         let (header, response) = Resp::decode_frame(response_data, version)?;
@@ -212,7 +217,16 @@ impl ConnectionReactor {
                 frame = self.framed.next() => {
                     match frame {
                         Some(Ok(KafkaFrame { data })) => {
-                            let corr_id = extract_correlation_id(&data);
+                            let Some(corr_id) = extract_correlation_id(&data) else {
+                                warn!(
+                                    "Received response frame too short to contain a correlation id ({} bytes), closing connection",
+                                    data.len()
+                                );
+                                self.fail_pending(KafkaError::Protocol(
+                                    "Response frame too short to contain a correlation id".into(),
+                                ));
+                                return;
+                            };
                             if let Some(tx) = self.pending.remove(&corr_id) {
                                 let _ = tx.send(Ok(data));
                             } else {
@@ -250,13 +264,14 @@ fn spawn_reactor(
     framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
     negotiated: Arc<NegotiatedVersions>,
     client_id: Option<String>,
+    request_timeout: Duration,
 ) -> ConnectionHandle {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let mut reactor = ConnectionReactor::new(framed, cmd_rx);
     tokio::spawn(async move {
         reactor.run().await;
     });
-    ConnectionHandle::new(cmd_tx, negotiated, client_id)
+    ConnectionHandle::new(cmd_tx, negotiated, client_id, request_timeout)
 }
 
 // ---------------------------------------------------------------------------
@@ -271,17 +286,20 @@ pub struct SequentialConnection {
     framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
     client_id: Option<String>,
     negotiated: NegotiatedVersions,
+    request_timeout: Duration,
 }
 
 impl SequentialConnection {
     pub fn new(
         framed: Framed<Box<dyn NetworkStream>, KafkaCodec>,
         client_id: Option<String>,
+        request_timeout: Duration,
     ) -> Self {
         SequentialConnection {
             framed,
             client_id,
             negotiated: NegotiatedVersions::new(),
+            request_timeout,
         }
     }
 
@@ -306,10 +324,9 @@ impl SequentialConnection {
         self.framed.send(KafkaFrame::new(request_data)).await?;
         self.framed.flush().await?;
 
-        let frame = self
-            .framed
-            .next()
+        let frame = tokio::time::timeout(self.request_timeout, self.framed.next())
             .await
+            .map_err(|_| KafkaError::RequestTimeout)?
             .ok_or(KafkaError::ConnectionClosed)??;
 
         debug!(
@@ -339,7 +356,12 @@ impl SequentialConnection {
 
     /// Convert to a pipelining handle backed by a reactor task.
     pub fn into_pipeline(self) -> ConnectionHandle {
-        spawn_reactor(self.framed, Arc::new(self.negotiated), self.client_id)
+        spawn_reactor(
+            self.framed,
+            Arc::new(self.negotiated),
+            self.client_id,
+            self.request_timeout,
+        )
     }
 }
 
@@ -368,6 +390,8 @@ pub struct Builder {
     kdc_host: Option<String>,
     /// KDC 端口。默认 88。
     kdc_port: u16,
+    /// 单请求超时。
+    request_timeout: Duration,
 }
 
 impl Builder {
@@ -388,6 +412,7 @@ impl Builder {
             broker_hostname: None,
             kdc_host: None,
             kdc_port: 88,
+            request_timeout: Duration::from_secs(60),
         }
     }
 
@@ -429,6 +454,15 @@ impl Builder {
         self
     }
 
+    /// Set the maximum time a single request may wait for a response.
+    ///
+    /// Defaults to 60 seconds. Must be larger than any fetch `max_wait`,
+    /// since a fetch may legitimately block on the broker for that long.
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
     /// Build the connection: TCP → TLS → handshake → SASL → reactor handle.
     ///
     /// # Errors
@@ -465,7 +499,7 @@ impl Builder {
         let framed = Framed::new(stream, KafkaCodec::new());
 
         // 3. Sequential handshake (ApiVersions negotiation)
-        let mut seq_conn = SequentialConnection::new(framed, self.client_id);
+        let mut seq_conn = SequentialConnection::new(framed, self.client_id, self.request_timeout);
 
         let negotiated =
             Handshake::perform(&mut seq_conn, self.client_name, self.client_version).await?;
@@ -547,7 +581,10 @@ fn auth_err(e: KafkaError) -> KafkaError {
 ///
 /// The correlation_id is the first 4 bytes of the response data
 /// (the frame length prefix has already been stripped by KafkaCodec).
-fn extract_correlation_id(data: &Bytes) -> i32 {
+fn extract_correlation_id(data: &Bytes) -> Option<i32> {
     use bytes::Buf;
-    (&data[..]).get_i32()
+    if data.len() < 4 {
+        return None;
+    }
+    Some((&data[..]).get_i32())
 }

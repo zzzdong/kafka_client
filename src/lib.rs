@@ -275,6 +275,10 @@ pub struct ClientConfig {
     pub broker_hostname: Option<String>,
     /// Metadata cache TTL (default 5 minutes).
     pub metadata_ttl: Duration,
+    /// Maximum time to wait for a single broker request to respond.
+    /// Must be longer than the consumer's `max_wait` (fetch timeout).
+    /// Default: 60 seconds.
+    pub request_timeout: Duration,
 }
 
 impl Default for ClientConfig {
@@ -289,6 +293,7 @@ impl Default for ClientConfig {
             kdc_port: 88,
             broker_hostname: None,
             metadata_ttl: Duration::from_secs(300),
+            request_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -339,6 +344,7 @@ impl ClientBuilder {
                 sasl: None,
                 kerberos: None,
                 metadata_ttl: Duration::from_secs(300),
+                request_timeout: Duration::from_secs(60),
                 kdc_host: None,
                 kdc_port: 88,
                 broker_hostname: None,
@@ -499,6 +505,17 @@ impl ClientBuilder {
         self
     }
 
+    /// Override the per-request timeout. Default is 60 seconds.
+    ///
+    /// This bounds how long a single broker request (produce, fetch,
+    /// metadata, admin, ...) may wait for a response. It must be larger than
+    /// the consumer's `max_wait`, since a fetch may legitimately block on the
+    /// broker for that long.
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.config.request_timeout = timeout;
+        self
+    }
+
     // --- Build ---
 
     /// Connect to the cluster and build the [`Client`].
@@ -542,6 +559,7 @@ impl Client {
             kdc_host: config.kdc_host,
             kdc_port: config.kdc_port,
             broker_hostname: config.broker_hostname,
+            request_timeout: config.request_timeout,
         };
 
         let cluster = ClusterClient::connect(cluster_config).await?;

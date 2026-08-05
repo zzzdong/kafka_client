@@ -107,6 +107,7 @@ pub(crate) fn spawn_consumer_task(
             last_metadata_refresh: None,
             metadata_refresh_interval: Duration::from_secs(1),
             pending_subscribe_reply: None,
+            pending_subscribe_deadline: None,
         };
         orch.run().await;
     });
@@ -253,6 +254,10 @@ struct ConsumerOrchestrator {
     /// Pending reply for a group-mode `subscribe()` call. Resolved when the
     /// group receives its first partition assignment and offsets are initialized.
     pending_subscribe_reply: Option<oneshot::Sender<Result<()>>>,
+    /// Deadline for resolving a pending group-mode `subscribe()` call, so a
+    /// coordinator that never assigns partitions cannot block the caller
+    /// forever.
+    pending_subscribe_deadline: Option<tokio::time::Instant>,
 }
 
 impl ConsumerOrchestrator {
@@ -293,6 +298,15 @@ impl ConsumerOrchestrator {
                         warn!("Auto commit failed: {}", e);
                     }
                 }
+                _ = Self::subscribe_deadline(self.pending_subscribe_deadline),
+                    if self.pending_subscribe_deadline.is_some() =>
+                {
+                    if let Some(reply) = self.pending_subscribe_reply.take() {
+                        let _ = reply.send(Err(KafkaError::RequestTimeout));
+                    }
+                    self.pending_subscribe_deadline = None;
+                    warn!("subscribe() timed out waiting for a group assignment");
+                }
             }
         }
 
@@ -301,6 +315,7 @@ impl ConsumerOrchestrator {
         if let Some(reply) = self.pending_subscribe_reply.take() {
             let _ = reply.send(Err(KafkaError::ConnectionClosed));
         }
+        self.pending_subscribe_deadline = None;
         // 2. Send leave group if active
         if self.group_active {
             let _ = self.send_leave_group().await;
@@ -336,14 +351,20 @@ impl ConsumerOrchestrator {
                         if let Some(old_reply) = self.pending_subscribe_reply.take() {
                             let _ = old_reply.send(Err(KafkaError::ConnectionClosed));
                         }
+                        self.pending_subscribe_deadline = None;
                         if let Some(ref gc) = self.group_coordinator {
                             let _ = gc.cmd_tx.send(GroupCommand::Join { topics });
                         }
                         // Wait for the first partition assignment before
                         // resolving subscribe(). This satisfies the public API
                         // contract that subscribe() blocks until assignment and
-                        // offset initialization are complete.
+                        // offset initialization are complete — but not forever.
                         self.pending_subscribe_reply = reply;
+                        self.pending_subscribe_deadline = Some(
+                            tokio::time::Instant::now()
+                                + self.config.rebalance_timeout
+                                + self.config.session_timeout,
+                        );
                     }
                 }
             }
@@ -498,6 +519,7 @@ impl ConsumerOrchestrator {
                 if let Some(reply) = self.pending_subscribe_reply.take() {
                     let _ = reply.send(init_result);
                 }
+                self.pending_subscribe_deadline = None;
                 // Start fetching only if consumer is ready (poll/into_stream called).
                 // Otherwise wait for StartPolling to avoid buffering records
                 // before any receiver is reading record_tx.
@@ -534,7 +556,18 @@ impl ConsumerOrchestrator {
                 if let Some(reply) = self.pending_subscribe_reply.take() {
                     let _ = reply.send(Err(e.clone()));
                 }
+                self.pending_subscribe_deadline = None;
             }
+        }
+    }
+
+    /// Future that fires when the pending subscribe() deadline elapses.
+    /// Pends forever while no deadline is set (so the select! branch stays
+    /// inert without allocating timers).
+    async fn subscribe_deadline(deadline: Option<tokio::time::Instant>) {
+        match deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending::<()>().await,
         }
     }
 

@@ -34,6 +34,8 @@ pub(crate) struct ClusterConfig {
     pub kdc_port: u16,
     /// Broker 主机名 (Kerberos 服务 principal 用)。
     pub broker_hostname: Option<String>,
+    /// Per-request timeout (see `ClientConfig::request_timeout`).
+    pub request_timeout: Duration,
 }
 
 impl Default for ClusterConfig {
@@ -48,6 +50,7 @@ impl Default for ClusterConfig {
             kdc_host: None,
             kdc_port: 88,
             broker_hostname: None,
+            request_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -89,7 +92,8 @@ impl ClusterClient {
                 kerberos,
             )
             .with_kdc(config.kdc_host.clone(), config.kdc_port)
-            .with_broker_hostname(config.broker_hostname.clone()),
+            .with_broker_hostname(config.broker_hostname.clone())
+            .with_request_timeout(config.request_timeout),
         );
 
         broker_manager.bootstrap().await.map_err(|e| {
@@ -244,7 +248,24 @@ impl ClusterClient {
         let addresses: Vec<SocketAddr> = self.broker_manager.all_broker_addresses();
 
         for addr in addresses {
-            let handle = self.broker_manager.get_connection(addr).await?;
+            // A broker that fails to connect must not abort the loop — record
+            // the error and keep trying the remaining brokers.
+            let handle = match self.broker_manager.get_connection(addr).await {
+                Ok(handle) => handle,
+                Err(e) => {
+                    warn!(
+                        "Request api_key: {} to broker {} failed to connect: {}",
+                        request.api_key(),
+                        addr,
+                        e
+                    );
+                    errors.push(crate::error::BrokerConnError {
+                        addr: addr.to_string(),
+                        error: e,
+                    });
+                    continue;
+                }
+            };
             match handle.send_request(request).await {
                 Ok(resp) => return Ok(resp),
                 Err(e @ KafkaError::CorrelationIdMismatch { .. })
@@ -339,6 +360,11 @@ impl ClusterClient {
     #[allow(dead_code)]
     pub(crate) fn any_broker_address(&self) -> Option<SocketAddr> {
         self.broker_manager.all_broker_addresses().first().copied()
+    }
+
+    /// Get addresses of all currently known brokers (for admin operations).
+    pub(crate) fn all_broker_addresses(&self) -> Vec<SocketAddr> {
+        self.broker_manager.all_broker_addresses()
     }
 
     /// Force refresh cluster metadata

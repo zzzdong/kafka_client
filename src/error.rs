@@ -76,6 +76,14 @@ pub enum KafkaError {
     #[error("Offset commit error: {0}")]
     OffsetCommitError(KafkaErrorCode),
 
+    #[error("Group '{group_id}' operation failed: {error}")]
+    GroupError {
+        /// The consumer group id the operation targeted.
+        group_id: String,
+        /// The broker-reported error code.
+        error: KafkaErrorCode,
+    },
+
     #[error("No offset stored")]
     NoOffsetStored,
 

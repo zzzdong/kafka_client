@@ -665,10 +665,12 @@ impl ProducerState {
             }
         }
 
-        // Retry remaining (split) chunks — each individual record that fails
-        // again with MESSAGE_TOO_LARGE truly exceeds the broker limit.
+        // Retry remaining (split) chunks. Multi-record chunks that are still
+        // too large are split again, until every record is sent individually
+        // (a single record exceeding max.message.bytes truly fails).
         while !remaining.is_empty() {
             let batch = std::mem::take(&mut remaining);
+            let mut next_remaining: Vec<PartitionChunk> = Vec::new();
             let futs: Vec<_> = batch
                 .iter()
                 .map(|chunk| {
@@ -689,6 +691,52 @@ impl ProducerState {
                                 ..metadata.clone()
                             };
                             let _ = tx.send(Ok(per_record_meta));
+                        }
+                    }
+                    Err(KafkaError::ProduceError(code))
+                        if code == KafkaErrorCode::MESSAGE_TOO_LARGE && chunk.records.len() > 1 =>
+                    {
+                        // Still too large as a group — binary-split and retry.
+                        warn!(
+                            "MESSAGE_TOO_LARGE for {}/{} ({} records), splitting and retrying",
+                            chunk.topic,
+                            chunk.partition,
+                            chunk.records.len()
+                        );
+                        let mid = chunk.records.len() / 2;
+                        let (r1, r2) =
+                            chunk
+                                .records
+                                .into_iter()
+                                .enumerate()
+                                .partition::<Vec<(usize, ProducerRecord)>, _>(|(i, _)| *i < mid);
+                        let records1: Vec<ProducerRecord> =
+                            r1.into_iter().map(|(_, r)| r).collect();
+                        let records2: Vec<ProducerRecord> =
+                            r2.into_iter().map(|(_, r)| r).collect();
+                        let (p1, p2) = chunk.pending.into_iter().enumerate().partition::<Vec<(
+                            usize,
+                            oneshot::Sender<Result<RecordMetadata>>,
+                        )>, _>(
+                            |(i, _)| *i < mid
+                        );
+                        let pending1: Vec<_> = p1.into_iter().map(|(_, tx)| tx).collect();
+                        let pending2: Vec<_> = p2.into_iter().map(|(_, tx)| tx).collect();
+                        if !records1.is_empty() {
+                            next_remaining.push(PartitionChunk {
+                                topic: chunk.topic.clone(),
+                                partition: chunk.partition,
+                                records: records1,
+                                pending: pending1,
+                            });
+                        }
+                        if !records2.is_empty() {
+                            next_remaining.push(PartitionChunk {
+                                topic: chunk.topic,
+                                partition: chunk.partition,
+                                records: records2,
+                                pending: pending2,
+                            });
                         }
                     }
                     Err(KafkaError::ProduceError(code))
@@ -716,6 +764,7 @@ impl ProducerState {
                     }
                 }
             }
+            remaining = next_remaining;
         }
         match first_error {
             Some(e) => Err(e),
@@ -831,7 +880,29 @@ impl ProducerState {
                 tokio::time::sleep(delay.min(remaining)).await;
             }
         }
-        Err(last_error.unwrap_or(KafkaError::ProduceError(KafkaErrorCode::from_i16(-1))))
+        let err = last_error.unwrap_or(KafkaError::ProduceError(KafkaErrorCode::from_i16(-1)));
+
+        if self.config.enable_idempotence {
+            // The batch failed and will not be retried. Roll the partition's
+            // sequence number back to the base so the next batch reuses it:
+            // if the broker never accepted this batch, the retry appends
+            // cleanly; if it did (lost response), the broker deduplicates.
+            //
+            // OUT_OF_ORDER_SEQUENCE_NUMBER is the exception: the broker's
+            // expected sequence is ahead of ours, so keep the advanced value
+            // instead of going backwards.
+            let is_out_of_order = matches!(
+                &err,
+                KafkaError::ProduceError(code)
+                    if *code == KafkaErrorCode::OUT_OF_ORDER_SEQUENCE_NUMBER
+            );
+            if !is_out_of_order {
+                let mut seq_map = self.sequence_numbers.lock().unwrap();
+                seq_map.insert((topic.to_string(), partition), base_sequence);
+            }
+        }
+
+        Err(err)
     }
 
     async fn build_request(

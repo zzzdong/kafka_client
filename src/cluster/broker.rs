@@ -5,6 +5,7 @@
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use std::collections::HashSet;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -79,8 +80,14 @@ pub(crate) struct BrokerManager {
     kdc_host: Option<String>,
     kdc_port: u16,
     broker_hostname: Option<String>,
+    request_timeout: Duration,
     brokers: DashMap<i32, BrokerEntry>,
     addr_to_node: DashMap<SocketAddr, i32>,
+    /// Broker hostname as advertised in metadata, keyed by resolved socket
+    /// address. Used to keep the hostname (Kerberos service principal, etc.)
+    /// across reconnects — without it a reconnect would silently fall back to
+    /// the IP address.
+    addr_hostnames: DashMap<SocketAddr, String>,
     next_unknown_node_id: AtomicI32,
 }
 
@@ -105,8 +112,10 @@ impl BrokerManager {
             kdc_host: None,
             kdc_port: 88,
             broker_hostname: None,
+            request_timeout: Duration::from_secs(60),
             brokers: DashMap::new(),
             addr_to_node: DashMap::new(),
+            addr_hostnames: DashMap::new(),
             next_unknown_node_id: AtomicI32::new(i32::MIN),
         }
     }
@@ -124,6 +133,12 @@ impl BrokerManager {
         self
     }
 
+    /// Set the per-request timeout for every broker connection.
+    pub(crate) fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
     async fn connect_to_broker(
         &self,
         addr: SocketAddr,
@@ -136,7 +151,8 @@ impl BrokerManager {
             self.client_version.clone(),
         )
         .with_client_id(self.client_id.clone())
-        .with_kdc(self.kdc_host.clone().unwrap_or_default(), self.kdc_port);
+        .with_kdc(self.kdc_host.clone().unwrap_or_default(), self.kdc_port)
+        .with_request_timeout(self.request_timeout);
 
         if let Some(host) = broker_hostname {
             builder = builder.with_broker_hostname(host);
@@ -164,7 +180,11 @@ impl BrokerManager {
             {
                 Ok(conn) => {
                     let node_id = self.next_unknown_node_id.fetch_sub(1, Ordering::SeqCst);
-                    self.register_broker(node_id, addr, conn).await;
+                    let hostname = self
+                        .broker_hostname
+                        .clone()
+                        .unwrap_or_else(|| addr.ip().to_string());
+                    self.register_broker(node_id, addr, hostname, conn).await;
                     debug!("Connected to bootstrap broker {}", addr);
                     return Ok(addr);
                 }
@@ -184,13 +204,20 @@ impl BrokerManager {
     }
 
     /// Register a broker connection.
-    async fn register_broker(&self, node_id: i32, addr: SocketAddr, conn: ConnectionHandle) {
+    async fn register_broker(
+        &self,
+        node_id: i32,
+        addr: SocketAddr,
+        hostname: String,
+        conn: ConnectionHandle,
+    ) {
         if let Some(old_node_id) = self.addr_to_node.get(&addr).map(|e| *e)
             && old_node_id != node_id
         {
             self.brokers.remove(&old_node_id);
         }
         self.addr_to_node.insert(addr, node_id);
+        self.addr_hostnames.insert(addr, hostname);
         self.brokers.insert(node_id, BrokerEntry::new(addr, conn));
     }
 
@@ -217,9 +244,14 @@ impl BrokerManager {
         }
 
         // No existing entry — create a new one
-        let conn = self.connect_to_broker(addr, None).await?;
+        let hostname = self
+            .addr_hostnames
+            .get(&addr)
+            .map(|e| e.value().clone())
+            .unwrap_or_else(|| addr.ip().to_string());
+        let conn = self.connect_to_broker(addr, Some(&hostname)).await?;
         let node_id = self.next_unknown_node_id.fetch_sub(1, Ordering::SeqCst);
-        self.register_broker(node_id, addr, conn).await;
+        self.register_broker(node_id, addr, hostname, conn).await;
         self.brokers
             .get(&node_id)
             .map(|e| e.load_conn().as_ref().clone())
@@ -237,7 +269,12 @@ impl BrokerManager {
         node_id: i32,
         addr: SocketAddr,
     ) -> Option<ConnectionHandle> {
-        match self.connect_to_broker(addr, None).await {
+        let hostname = self
+            .addr_hostnames
+            .get(&addr)
+            .map(|e| e.value().clone())
+            .unwrap_or_else(|| addr.ip().to_string());
+        match self.connect_to_broker(addr, Some(&hostname)).await {
             Ok(new_conn) => {
                 if let Some(entry) = self.brokers.get(&node_id) {
                     entry.swap_conn(new_conn);
@@ -271,9 +308,17 @@ impl BrokerManager {
         &self,
         brokers: Vec<MetadataResponseBroker>,
     ) -> Result<()> {
+        let mut new_node_ids: HashSet<i32> = HashSet::with_capacity(brokers.len());
+        let mut new_addrs: HashSet<SocketAddr> = HashSet::with_capacity(brokers.len());
+
         for broker in brokers {
             let addr = resolve_broker_address(&broker.host, broker.port)?;
             let node_id = broker.node_id;
+            new_node_ids.insert(node_id);
+            new_addrs.insert(addr);
+
+            // Remember the advertised hostname for reconnect purposes.
+            self.addr_hostnames.insert(addr, broker.host.clone());
 
             // Reuse healthy connection if address unchanged
             if let Some(entry) = self.brokers.get(&node_id)
@@ -286,13 +331,46 @@ impl BrokerManager {
             // Try new connection
             match self.connect_to_broker(addr, Some(&broker.host)).await {
                 Ok(conn) => {
-                    self.register_broker(node_id, addr, conn).await;
+                    self.register_broker(node_id, addr, broker.host.clone(), conn)
+                        .await;
                     debug!("Registered/updated broker {} at {}", node_id, addr);
                 }
                 Err(e) => {
                     warn!("Could not connect to broker {} at {}: {}", node_id, addr, e);
                 }
             }
+        }
+
+        // Prune brokers that disappeared from the metadata response. Keep
+        // bootstrap entries (e.g. a load balancer that never appears as a
+        // broker node) so the client can still reach the cluster through them.
+        let stale: Vec<i32> = self
+            .brokers
+            .iter()
+            .filter(|e| {
+                !new_node_ids.contains(e.key())
+                    && !self.bootstrap_servers.contains(&e.addr)
+                    && !new_addrs.contains(&e.addr)
+            })
+            .map(|e| *e.key())
+            .collect();
+        for node_id in stale {
+            debug!(
+                "Removing broker {} (no longer present in metadata)",
+                node_id
+            );
+            self.brokers.remove(&node_id);
+            self.addr_to_node.retain(|_, v| *v != node_id);
+        }
+        // Drop hostname entries for addresses no longer in the cluster.
+        let stale_addrs: Vec<SocketAddr> = self
+            .addr_hostnames
+            .iter()
+            .filter(|e| !new_addrs.contains(e.key()) && !self.bootstrap_servers.contains(e.key()))
+            .map(|e| *e.key())
+            .collect();
+        for addr in stale_addrs {
+            self.addr_hostnames.remove(&addr);
         }
         Ok(())
     }
@@ -322,7 +400,12 @@ impl BrokerManager {
             None => return,
         };
 
-        match self.connect_to_broker(addr, None).await {
+        let hostname = self
+            .addr_hostnames
+            .get(&addr)
+            .map(|e| e.value().clone())
+            .unwrap_or_else(|| addr.ip().to_string());
+        match self.connect_to_broker(addr, Some(&hostname)).await {
             Ok(new_conn) => {
                 if let Some(entry) = self.brokers.get(&node_id) {
                     entry.swap_conn(new_conn);
@@ -339,6 +422,7 @@ impl BrokerManager {
                 );
                 self.brokers.remove(&node_id);
                 self.addr_to_node.remove(&addr);
+                self.addr_hostnames.remove(&addr);
             }
         }
     }
@@ -350,6 +434,7 @@ impl BrokerManager {
             self.brokers.remove(&node_id);
             self.addr_to_node.retain(|_, v| *v != node_id);
         }
+        self.addr_hostnames.clear();
         // ConnectionHandle's Drop will close the channel to the reactor,
         // which causes the reactor to exit and clean up the TCP socket.
         Ok(())

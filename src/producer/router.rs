@@ -41,7 +41,12 @@ impl PartitionRouter {
             PartitionRouting::HashKey => match key {
                 Some(k) => {
                     let hash = murmur2(k);
-                    ((hash as i32).wrapping_abs() as usize) % partition_count
+                    // Java's DefaultPartitioner uses
+                    // `toPositive(murmur2(key)) % numPartitions`, where
+                    // `toPositive(i) = i & 0x7fffffff`. Masking (rather than
+                    // `abs`) keeps the partition mapping identical to Java
+                    // clients, which matters when both write to the same topic.
+                    ((hash & 0x7fffffff) as usize) % partition_count
                 }
                 None => {
                     let c = self.counter.fetch_add(1, Ordering::SeqCst);
@@ -132,5 +137,19 @@ mod tests {
         let partition2 = router.select_partition(Some(key), 3);
 
         assert_eq!(partition1, partition2);
+    }
+
+    #[test]
+    fn test_hash_key_matches_java_positive_masking() {
+        // murmur2("partition-me") == 0xf5408e20, which is negative when
+        // interpreted as i32. Java's DefaultPartitioner computes
+        // (murmur2 & 0x7fffffff) % numPartitions. With 0xf5408e20:
+        //   0xf5408e20 & 0x7fffffff == 0x75408e20 == 1_967_164_960
+        //   1_967_164_960 % 5 == 0, % 7 == 5
+        // A simple abs() would yield 180_318_688, mapping to different
+        // partitions (3 and 4 respectively).
+        let router = PartitionRouter::new(PartitionRouting::HashKey);
+        assert_eq!(router.select_partition(Some(b"partition-me"), 5), 0);
+        assert_eq!(router.select_partition(Some(b"partition-me"), 7), 5);
     }
 }

@@ -41,5 +41,8 @@ pub const KEY_USAGE_TGS_REP_ENC_PART: u32 = 8;
 
 /// 密钥用法 — AP-REQ Authenticator (RFC 4120 §7.5.1, 编号 11)
 pub const KEY_USAGE_AP_REQ_AUTH: u32 = 11;
-/// 密钥用法 — AP-REP enc-part (RFC 4120 §7.5.1, 编号 12)
+/// 密钥用法 — AP-REP enc-part (SunJGSS 实测值; Kafka broker 使用该编号)
 pub const KEY_USAGE_AP_REP_ENC_PART: u32 = 12;
+/// 密钥用法 — AP-REP enc-part (RFC 4120 §7.5.1, 编号 15)。
+/// SunJGSS (Kafka) 实际使用 12, 此处保留 15 作为 RFC 标准实现的兜底。
+pub const KEY_USAGE_AP_REP_ENC_PART_RFC4120: u32 = 15;
