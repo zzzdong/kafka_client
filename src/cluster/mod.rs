@@ -313,43 +313,51 @@ impl ClusterClient {
         use protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
         use protocol::describe_configs_response::DescribeConfigsResponse;
 
-        // Kafka 4.x (KRaft) may expect the broker id as the resource name;
-        // try the empty name first, then fall back to a known broker id.
-        let mut resource_names: Vec<String> = vec![String::new()];
-        if let Some(broker) = self.metadata().get_all_brokers().await.into_iter().next() {
-            resource_names.push(broker.node_id.to_string());
+        // Kafka 4.x (KRaft) accepts only the id of the broker handling the
+        // request (or an empty string). Query each known broker directly with
+        // its own id, falling back to the empty resource name.
+        let mut candidates: Vec<(SocketAddr, String)> = Vec::new();
+        for broker in self.metadata().get_all_brokers().await {
+            if let Some(addr) = self.metadata().get_broker_address(broker.node_id).await {
+                candidates.push((addr, broker.node_id.to_string()));
+            }
+        }
+        if let Some((addr, _)) = candidates.first() {
+            candidates.push((*addr, String::new()));
         }
 
-        for resource_name in resource_names {
+        for (addr, resource_name) in candidates {
             let request = DescribeConfigsRequest {
                 resources: vec![DescribeConfigsResource {
                     resource_type: 4, // broker
                     resource_name,
-                    configuration_keys: Some(vec![key.to_string()]),
+                    // No key filter: KRaft only reports explicitly-set
+                    // broker configs, so we search the returned entries for
+                    // the requested key instead of relying on the filter.
+                    configuration_keys: None,
                 }],
                 include_synonyms: false,
                 include_documentation: false,
             };
 
-            let response: Result<DescribeConfigsResponse> = self.send_to_any_broker(&request).await;
+            let response: Result<DescribeConfigsResponse> =
+                self.send_to_broker(addr, &request).await;
             match response {
                 Ok(resp) => {
                     for result in resp.results {
-                        if result.error_code == 0 {
-                            for config in result.configs {
-                                if config.name == key
-                                    && let Some(ref val) = config.value
-                                {
-                                    debug!("Broker config {} = {}", key, val);
-                                    return val.parse::<usize>().ok();
-                                }
-                            }
-                        } else {
+                        if result.error_code != 0 {
                             warn!(
                                 "DescribeConfigs({}) for broker resource failed: {}",
                                 key,
                                 KafkaErrorCode::from_i16(result.error_code)
                             );
+                            continue;
+                        }
+                        for config in result.configs {
+                            if config.name == key && let Some(ref val) = config.value {
+                                debug!("Broker config {} = {}", key, val);
+                                return val.parse::<usize>().ok();
+                            }
                         }
                     }
                 }

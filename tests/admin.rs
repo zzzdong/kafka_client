@@ -55,21 +55,30 @@ async fn test_admin_topic_and_cluster_operations() {
         // Diagnostic: surface the broker's actual DescribeConfigs response
         // for BROKER resources (empty name and broker id variants).
         match admin.describe_configs(4, "").await {
-            Ok(entries) => println!("  describe_configs(4, ''): {} entries", entries.len()),
+            Ok(entries) => {
+                println!("  describe_configs(4, ''): {} entries", entries.len());
+                for e in &entries {
+                    println!("    {} = {:?}", e.name, e.value);
+                }
+            }
             Err(e) => println!("  describe_configs(4, '') failed: {e}"),
         }
-        if let Some(broker) = cluster.brokers.first() {
-            match admin.describe_configs(4, &broker.id.to_string()).await {
-                Ok(entries) => println!(
-                    "  describe_configs(4, broker {}): {} entries",
-                    broker.id,
-                    entries.len()
-                ),
-                Err(e) => println!("  describe_configs(4, broker {}) failed: {e}", broker.id),
-            }
-        }
-        let max_bytes = admin.get_broker_config("max.message.bytes").await;
-        assert!(max_bytes.is_some(), "max.message.bytes should be present");
+
+        // KRaft only reports explicitly-set broker configs, so query a value
+        // the test cluster definitely configures (docker-compose.yml sets
+        // KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=3).
+        let rf = admin
+            .get_broker_config("offsets.topic.replication.factor")
+            .await;
+        assert_eq!(
+            rf,
+            Some(3),
+            "explicitly-set broker config should be present"
+        );
+        println!(
+            "  max.message.bytes = {:?} (may be None when not explicitly set)",
+            admin.get_broker_config("max.message.bytes").await
+        );
         assert!(
             admin.get_broker_config("no.such.config.key").await.is_none(),
             "unknown config key should return None"
