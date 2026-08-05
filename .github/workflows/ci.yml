@@ -373,20 +373,20 @@ jobs:
         run: |
           docker compose -f docker-compose.kerberos-multi.yml up -d --build
           # SASL/GSSAPI listeners reject the unauthenticated ApiVersions probe,
-          # so wait on the TCP port only. Each broker listens on its own port
-          # (19096/19097/19098), so probe them in parallel (background
-          # subshells) with the correct per-container port.
+          # so wait on the TCP port only. Each broker publishes its own host
+          # port (19096/19097/19098); probe them from the runner in parallel
+          # (background subshells) so all three become ready together.
           for pair in kafka-kerberos-1:19096 kafka-kerberos-2:19097 kafka-kerberos-3:19098; do
             c="${pair%%:*}"; p="${pair##*:}"
             (
               for i in $(seq 1 120); do
-                if docker exec "${c}" \
-                  bash -c "echo > /dev/tcp/127.0.0.1:${p}" 2>/dev/null; then
-                  echo "  ${c} ready (~${i}s)"
+                if bash -c "echo > /dev/tcp/127.0.0.1:${p}" 2>/dev/null; then
+                  echo "  ${c} (port ${p}) ready (~${i}s)"
                   exit 0
                 fi
                 if [ "$i" -eq 120 ]; then
-                  echo "  ${c} timeout"
+                  echo "  ${c} (port ${p}) timeout"
+                  docker compose -f docker-compose.kerberos-multi.yml logs "${c}" 2>/dev/null | tail -20
                   exit 1
                 fi
                 sleep 2
