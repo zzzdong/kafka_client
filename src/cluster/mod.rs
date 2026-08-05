@@ -71,15 +71,12 @@ pub(crate) struct ClusterClient {
 impl ClusterClient {
     /// Connect to cluster: bootstrap → ApiVersions negotiation → refresh metadata
     pub(crate) async fn connect(config: ClusterConfig) -> Result<Self> {
-        // 把用户配置的 broker_hostname 注入 kerberos credentials,
-        // 确保跨所有连接使用一致的服务 principal hostname.
-        let mut kerberos = config.kerberos.clone();
-        if let Some(ref krb) = kerberos
-            && krb.broker_hostname.is_none()
-            && let Some(ref host) = config.broker_hostname
-        {
-            kerberos = Some(krb.clone().with_broker_hostname(host.clone()));
-        }
+        // NOTE: the user-level `broker_hostname` is intentionally NOT baked
+        // into the shared Kerberos credentials. Each broker connection
+        // resolves and remembers its own advertised hostname (see
+        // BrokerManager::addr_hostnames), so every broker authenticates with
+        // its own service principal `kafka/<advertised host>`.
+        let kerberos = config.kerberos.clone();
 
         let broker_manager = Arc::new(
             BrokerManager::new(

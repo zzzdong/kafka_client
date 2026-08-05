@@ -536,12 +536,12 @@ impl Builder {
 
         // 4. SASL authentication (Kerberos/GSSAPI)
         if let Some(mut creds) = self.kerberos_config.clone() {
-            // broker_hostname 不由 caller 设定时, 用 IP 字符串.
-            // Kerberos 服务 principal 需要与 broker 的 JAAS principal 一致.
-            // 优先使用 credentials 中存储的 broker_hostname, 可确保重连时一致.
-            if creds.broker_hostname.is_none()
-                && let Some(ref h) = self.broker_hostname
-            {
+            // 每个 broker 连接使用自己的服务 principal:
+            // 连接级 hostname (从 metadata 的 advertised host 解析, 见
+            // BrokerManager) 优先, 保证多 broker 集群中每台 broker 都用
+            // 自己的 `kafka/<host>` principal 认证; 未设置时回退到
+            // credentials 中配置的 hostname, 再回退到 IP。
+            if let Some(ref h) = self.broker_hostname {
                 creds = creds.with_broker_hostname(h.clone());
             }
             Handshake::sasl_authenticate_gssapi(

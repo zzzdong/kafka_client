@@ -67,6 +67,11 @@
   (2-byte `0x7b 0x24` prefix before the `EncAPRepPart` DER) is accepted, and
   both key usages 12 (SunJGSS) and 15 (RFC 4120) are tried. Strict AP-REP
   verification is enabled on the Kafka connection path.
+- Kerberos multi-broker: each broker connection now resolves and remembers
+  its own advertised hostname and authenticates with its own
+  `kafka/<host>` service principal, instead of a global
+  `with_broker_hostname` value baked into the shared credentials (which
+  allowed only one broker in a multi-broker cluster to authenticate).
 - Hash-key partitioning now matches Java clients: `(murmur2 & 0x7fffffff) %
   partitions` instead of `abs(murmur2) % partitions`, so mixed Java/Rust
   producers agree on partition placement.
@@ -101,6 +106,9 @@
     `describe_configs`; `KafkaError::AdminError` for broker-reported errors.
   - `delete_records` (routed to partition leaders) and
     `reset_group_offsets`.
+- `AdminClient::create_topics` / `delete_topics` are now routed to the
+  controller and retry (with a metadata refresh) when the broker replies
+  `NOT_CONTROLLER`, instead of failing on a random non-controller broker.
 - Integration tests for transactions (`tests/transactions.rs`); the
   `producer_acks` tests now explicitly disable idempotence for `acks=0/1`.
 - **Expanded test coverage**:

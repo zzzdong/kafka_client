@@ -51,6 +51,7 @@ use crate::protocol::describe_acls_request::DescribeAclsRequest;
 use crate::protocol::describe_acls_response::DescribeAclsResponse;
 use crate::protocol::describe_configs_request::{DescribeConfigsRequest, DescribeConfigsResource};
 use crate::protocol::describe_configs_response::DescribeConfigsResponse;
+use kafka_client_protocol::{Request, Response};
 use crate::protocol::{
     CreateTopicsRequest, CreateTopicsResponse, DeleteGroupsRequest, DeleteGroupsResponse,
     DeleteTopicsRequest, DeleteTopicsResponse, DescribeGroupsRequest, DescribeGroupsResponse,
@@ -584,18 +585,34 @@ impl AdminClient {
             validate_only: false,
         };
 
-        let response: CreateTopicsResponse = self.cluster.send_to_any_broker(&request).await?;
-        let results = response
-            .topics
-            .into_iter()
-            .map(|t| AdminTopicResult {
-                name: t.name,
-                error_code: KafkaErrorCode::from_i16(t.error_code),
-                error_message: t.error_message,
-            })
-            .collect();
-
-        Ok(results)
+        // CreateTopics must be sent to the controller; a non-controller
+        // broker replies NOT_CONTROLLER (41), and the controller may hand
+        // over mid-operation (topic created but response 41). Retry with a
+        // metadata refresh so the next attempt hits the current controller.
+        const MAX_ATTEMPTS: u32 = 5;
+        let mut last_results = Vec::new();
+        for attempt in 0..MAX_ATTEMPTS {
+            let response: CreateTopicsResponse = self.send_to_controller(&request).await?;
+            last_results = response
+                .topics
+                .into_iter()
+                .map(|t| AdminTopicResult {
+                    name: t.name,
+                    error_code: KafkaErrorCode::from_i16(t.error_code),
+                    error_message: t.error_message,
+                })
+                .collect();
+            let not_controller = last_results
+                .iter()
+                .any(|r| r.error_code == KafkaErrorCode::NOT_CONTROLLER);
+            if not_controller && attempt + 1 < MAX_ATTEMPTS {
+                let _ = self.cluster.refresh_metadata().await;
+                tokio::time::sleep(Duration::from_millis(100 * (attempt as u64 + 1))).await;
+                continue;
+            }
+            break;
+        }
+        Ok(last_results)
     }
 
     /// Create a single topic. Convenience wrapper around [`create_topics`].
@@ -628,18 +645,31 @@ impl AdminClient {
             timeout_ms: 30_000,
         };
 
-        let response: DeleteTopicsResponse = self.cluster.send_to_any_broker(&request).await?;
-        let results = response
-            .responses
-            .into_iter()
-            .map(|r| AdminTopicResult {
-                name: r.name.unwrap_or_default(),
-                error_code: KafkaErrorCode::from_i16(r.error_code),
-                error_message: r.error_message,
-            })
-            .collect();
-
-        Ok(results)
+        // DeleteTopics is also a controller operation (see create_topics).
+        const MAX_ATTEMPTS: u32 = 5;
+        let mut last_results = Vec::new();
+        for attempt in 0..MAX_ATTEMPTS {
+            let response: DeleteTopicsResponse = self.send_to_controller(&request).await?;
+            last_results = response
+                .responses
+                .into_iter()
+                .map(|r| AdminTopicResult {
+                    name: r.name.unwrap_or_default(),
+                    error_code: KafkaErrorCode::from_i16(r.error_code),
+                    error_message: r.error_message,
+                })
+                .collect();
+            let not_controller = last_results
+                .iter()
+                .any(|r| r.error_code == KafkaErrorCode::NOT_CONTROLLER);
+            if not_controller && attempt + 1 < MAX_ATTEMPTS {
+                let _ = self.cluster.refresh_metadata().await;
+                tokio::time::sleep(Duration::from_millis(100 * (attempt as u64 + 1))).await;
+                continue;
+            }
+            break;
+        }
+        Ok(last_results)
     }
 
     /// Delete a single topic. Convenience wrapper around [`delete_topics`].
@@ -1126,6 +1156,29 @@ impl AdminClient {
                 .next()
                 .ok_or(KafkaError::NoCoordinator);
         }
+    }
+
+    /// Resolve the current controller's address from the metadata cache.
+    async fn controller_addr(&self) -> Option<SocketAddr> {
+        let controller_id = self.cluster.metadata().get_controller_id().await?;
+        self.cluster.metadata().get_broker_address(controller_id).await
+    }
+
+    /// Send a request to the current controller, falling back to any broker
+    /// when the controller is unknown or the controller connection fails.
+    /// Callers retry when the response reports `NOT_CONTROLLER`.
+    async fn send_to_controller<Req, Resp>(&self, request: &Req) -> Result<Resp>
+    where
+        Req: Request,
+        Resp: Response,
+    {
+        if let Some(addr) = self.controller_addr().await
+            && let Ok(resp) = self.cluster.send_to_broker(addr, request).await
+        {
+            return Ok(resp);
+        }
+        let _ = self.cluster.refresh_metadata().await;
+        self.cluster.send_to_any_broker(request).await
     }
 
     /// Resolve the high-watermark (log-end offset) of a single partition via a
