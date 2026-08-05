@@ -123,22 +123,29 @@ async fn test_transactional_abort_recovers() {
             .await
             .expect("commit after abort");
 
+        // NOTE: this client consumes with read_uncommitted, so the aborted
+        // message (offset 0) is visible as well and arrives first. Consume
+        // both records and assert the committed one is delivered; the real
+        // assertions are that the state machine recovered and the committed
+        // message is present.
         let records = common::consume_all_timeout(
             &client,
             &unique("cg-abort"),
             &topic,
-            1,
+            2,
             Duration::from_secs(20),
         )
         .await;
-        // NOTE: this client consumes with read_uncommitted, so the aborted
-        // message may be visible as well; the essential assertions are that
-        // the committed message is delivered and the state machine recovered.
         assert!(
             records
                 .iter()
                 .any(|r| r.value.as_ref() == b"committed-after-abort"),
-            "committed message must be delivered after abort + new transaction"
+            "committed message must be delivered after abort + new transaction: {}",
+            records
+                .iter()
+                .map(|r| String::from_utf8_lossy(&r.value).into_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         client.close().await.unwrap();
     })
