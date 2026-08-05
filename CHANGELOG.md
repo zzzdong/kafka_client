@@ -112,5 +112,7 @@
     group lifecycle with commit/fetch/delete), `tests/producer_api.rs`
     (`send_batch`/`send_direct`/`flush`/`close`), `tests/consumer_api.rs`
     (direct assign, seek, `max_poll_records`, `try_poll`/`poll_timeout`).
+    The ACL integration test skips gracefully on clusters without an
+    authorizer (`SECURITY_DISABLED`).
   - `tests/run-all-tests.sh` now includes `admin`, `producer_api`,
     `consumer_api` and `transactions`.
