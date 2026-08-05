@@ -372,46 +372,34 @@ jobs:
       - name: Start KDC + Kerberos multi-broker cluster
         run: |
           docker compose -f docker-compose.kerberos-multi.yml up -d --build
-          # SASL/GSSAPI listeners reject the unauthenticated ApiVersions probe,
-          # so wait on the TCP port only. Probe from *inside* each container via
-          # `docker exec` (the broker binds 0.0.0.0:<port> there), which avoids
-          # any host-port publishing quirks. Each broker uses its own port
-          # (19096/19097/19098); run the three probes in parallel so they become
-          # ready together.
-          for pair in kafka-kerberos-1:19096 kafka-kerberos-2:19097 kafka-kerberos-3:19098; do
-            c="${pair%%:*}"; p="${pair##*:}"
-            (
-              for i in $(seq 1 120); do
-                if docker exec "${c}" \
-                  bash -c "echo > /dev/tcp/127.0.0.1:${p}" 2>/dev/null; then
-                  echo "  ${c} (port ${p}) ready (~${i}s)"
-                  exit 0
-                fi
-                if [ "$i" -eq 120 ]; then
-                  echo "  ${c} (port ${p}) timeout"
-                  docker compose -f docker-compose.kerberos-multi.yml logs "${c}" 2>/dev/null | tail -20
-                  exit 1
-                fi
-                sleep 2
-              done
-            ) &
-          done
-          wait
-          # Give the brokers a moment to finish SASL/GSSAPI listener init.
-          sleep 8
-      - name: Wait for keytab
-        run: |
+          # Wait for the keytab so the test binary can load it immediately.
+          # Brokers take ~15-30s for GSSAPI login + KRaft quorum; the test
+          # binary itself has 20 retries (3s each) and polls metadata until
+          # all 3 brokers appear, so we don't need a fine-grained port probe.
+          echo -n "  Waiting for keytab... "
           for i in $(seq 1 30); do
             if [ -f fixtures/kerberos-multi/keytabs/client.keytab ]; then
-              echo "keytab ready (~${i}s)"
+              echo "ready (~${i}s)"
               break
             fi
             if [ "$i" -eq 30 ]; then
-              echo "keytab timeout"
+              echo "timeout"
               exit 1
             fi
             sleep 2
           done
+          echo "  Giving brokers time for GSSAPI init + KRaft quorum..."
+          sleep 30
+          # Quick sanity check: containers should still be running.
+          for c in kafka-kerberos-1 kafka-kerberos-2 kafka-kerberos-3; do
+            state=$(docker inspect -f '{{.State.Running}}' "${c}" 2>/dev/null)
+            if [ "${state}" != "true" ]; then
+              echo "  ${c} exited — dumping logs:"
+              docker compose -f docker-compose.kerberos-multi.yml logs "${c}" 2>/dev/null | tail -40
+              exit 1
+            fi
+          done
+          echo "  All 3 brokers running, keytab ready."
       - name: Run multi-broker Kerberos tests
         working-directory: tests
         # 测试在 compose 网络内的 test-runner 容器中编译运行, 容器网络
