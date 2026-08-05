@@ -26,16 +26,26 @@ services:
     build:
       context: ./fixtures/kerberos
       dockerfile: Dockerfile.kdc
-    hostname: kdc.example.com
+    # 显式镜像名, 避免与单节点 stack 推导出同名的 tests_kdc:latest 而互相覆盖
+    image: kafka-client-tests/kdc:latest
+    hostname: kdc-multi.example.com
     container_name: kdc-kerberos-multi
     networks:
       default:
         aliases:
-          - kdc.example.com
+          - kdc-multi.example.com
     ports:
       - "8889:88"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/keytabs
+    environment:
+      # 独立 realm + 独立 KDC 别名, 使本 stack 可与单节点 Kerberos stack 并行运行
+      KRB5_REALM: MULTI.EXAMPLE.COM
+      KRB5_KDC_HOST: kdc-multi.example.com
+      KRB5_PRINCIPALS: >-
+        kafka/broker1.example.com
+        kafka/broker2.example.com
+        kafka/broker3.example.com
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c 'echo > /dev/tcp/localhost/88' 2>/dev/null"]
       interval: 3s
@@ -57,7 +67,7 @@ services:
       - "19096:19096"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
-      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/krb5.conf:/etc/krb5.conf:ro
       - ./fixtures/kerberos-multi/kafka_jaas1.conf:/etc/kafka/kafka_server_jaas.conf:ro
     environment:
       KAFKA_OPTS: >-
@@ -99,7 +109,7 @@ services:
       - "19097:19097"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
-      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/krb5.conf:/etc/krb5.conf:ro
       - ./fixtures/kerberos-multi/kafka_jaas2.conf:/etc/kafka/kafka_server_jaas.conf:ro
     environment:
       KAFKA_OPTS: >-
@@ -141,7 +151,7 @@ services:
       - "19098:19098"
     volumes:
       - ./fixtures/kerberos-multi/keytabs:/etc/kafka/secrets:ro
-      - ./fixtures/kerberos/krb5.conf:/etc/krb5.conf:ro
+      - ./fixtures/kerberos-multi/krb5.conf:/etc/krb5.conf:ro
       - ./fixtures/kerberos-multi/kafka_jaas3.conf:/etc/kafka/kafka_server_jaas.conf:ro
     environment:
       KAFKA_OPTS: >-
@@ -183,8 +193,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP_KERBEROS_MULTI: broker1.example.com:19096
       KERBEROS_KEYTAB_MULTI: /keytabs/client.keytab
-      KERBEROS_KDC_HOST: kdc.example.com
+      KERBEROS_KDC_HOST: kdc-multi.example.com
       KERBEROS_KDC_PORT: "88"
+      KERBEROS_REALM: MULTI.EXAMPLE.COM
       KAFKA_CLUSTER_SIZE: "3"
       RUST_TEST_THREADS: "1"
     command: ["/tests-bin/kerberos_multi", "--nocapture"]

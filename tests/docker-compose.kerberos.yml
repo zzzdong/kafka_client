@@ -3,6 +3,9 @@ services:
     build:
       context: ./fixtures/kerberos
       dockerfile: Dockerfile.kdc
+    # 与多 broker stack 共用同一个镜像 (同名 tag), 避免各自推导出的
+    # tests_kdc:latest 互相覆盖并触发重复构建。
+    image: kafka-client-tests/kdc:latest
     hostname: kdc.example.com
     container_name: kdc-kerberos
     # Docker 的嵌入式 DNS 只解析容器名/网络别名, 不解析 `hostname:` 字段;
@@ -17,6 +20,14 @@ services:
       - "8888:88"
     volumes:
       - ./fixtures/kerberos/keytabs:/etc/keytabs
+    environment:
+      # 单节点 stack 保持默认 realm EXAMPLE.COM 与别名 kdc.example.com
+      KRB5_REALM: EXAMPLE.COM
+      KRB5_KDC_HOST: kdc.example.com
+      KRB5_PRINCIPALS: >-
+        kafka/broker.example.com
+        kafka/localhost
+        kafka/127.0.0.1
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c 'echo > /dev/tcp/localhost/88' 2>/dev/null"]
       interval: 3s

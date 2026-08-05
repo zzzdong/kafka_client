@@ -52,6 +52,32 @@ KERBEROS_MULTI_TESTS=("kerberos_multi")
 DEFAULT_BOOTSTRAP="127.0.0.1:29093,127.0.0.1:29095,127.0.0.1:29097"
 KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-${DEFAULT_BOOTSTRAP}}"
 
+cd "${PROJECT_ROOT}"
+MUSL_TARGET="${MUSL_TARGET:-x86_64-unknown-linux-musl}"
+SKIP_MUSL_BUILD=""
+if ! rustup target list --installed | grep -q "${MUSL_TARGET}"; then
+    rustup target add "${MUSL_TARGET}" || {
+        echo "  WARNING: cannot install musl target — multi-broker Kerberos tests will be skipped"
+        SKIP_MUSL_BUILD=1
+    }
+fi
+if [ -z "${SKIP_MUSL_BUILD:-}" ] \
+    && cargo test --no-run --target "${MUSL_TARGET}" \
+        --features integration_tests --test kerberos_multi 2>/dev/null; then
+    mkdir -pv target/test-bin
+    BIN="$(ls target/${MUSL_TARGET}/debug/deps/kerberos_multi-* 2>/dev/null | grep -v '\.d$' | head -1)"
+    if [ -n "${BIN}" ]; then
+        cp -v "${BIN}" target/test-bin/kerberos_multi
+        echo "  musl test binary ready: target/test-bin/kerberos_multi"
+    else
+        echo "  WARNING: musl test binary not found — multi-broker Kerberos tests will be skipped"
+        SKIP_MUSL_BUILD=1
+    fi
+else
+    echo "  WARNING: musl build failed — multi-broker Kerberos tests will be skipped"
+    SKIP_MUSL_BUILD=1
+fi
+
 # Auto-detect container CLI
 detect_cli() {
     if command -v podman &>/dev/null; then
@@ -101,6 +127,10 @@ KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos.yml up -d
 # KDC 初始化后生成 keytabs, Kafka 通过 depends_on:condition:service_healthy 自动启动
 
 echo "=== Starting KDC + Kerberos multi-broker (docker-compose.kerberos-multi.yml) ==="
+# 该 stack 使用独立 realm MULTI.EXAMPLE.COM 与独立 KDC 别名
+# kdc-multi.example.com, 因此可与上面的单节点 stack 并行运行。
+# 陈旧 keytab 对应已删除的 KDC 数据库, 必须清理后由 KDC 重新导出。
+rm -rf "${SCRIPT_DIR}/fixtures/kerberos-multi/keytabs"
 KAFKA_IMAGE="${KAFKA_IMAGE}" ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml up -d --build
 
 # ---------------------------------------------------------------------------
@@ -113,7 +143,7 @@ wait_broker() {
     for i in $(seq 1 "${max_retries}"); do
         if ${CLI} exec "${container}" \
             kafka-broker-api-versions.sh \
-            --bootstrap-server "127.0.0.1:${internal_port}" 2>/dev/null; then
+            --bootstrap-server "127.0.0.1:${internal_port}" &>/dev/null; then
             echo "ready (~${i}s)"
             return 0
         fi
@@ -123,10 +153,28 @@ wait_broker() {
             echo "ready (~${i}s, port)"
             return 0
         fi
+        # 容器已退出时立即失败, 不必空等到超时。启动崩溃 (如 Kerberos
+        # "Checksum failed") 会让容器直接 Exited, 再等下去也不会就绪。
+        local state
+        state="$(${CLI} inspect -f '{{.State.Status}}' "${container}" 2>/dev/null || echo "missing")"
+        if [ "${state}" != "running" ]; then
+            echo "container ${state} (crashed after ~${i}s)"
+            return 1
+        fi
         sleep 1
     done
     echo "timeout"
     return 1
+}
+
+# 打印容器启动失败的致命错误, 便于定位崩溃原因
+diagnose_broker() {
+    local container="$1"
+    echo "  --- ${container} fatal errors ---"
+    ${CLI} logs "${container}" 2>&1 \
+        | grep -iE "ERROR|FATAL|Caused by" \
+        | head -10 \
+        | sed 's/^/    /' || true
 }
 
 echo "=== Waiting for 3-broker cluster to be ready ==="
@@ -170,13 +218,19 @@ wait_broker "kafka-acl-broker" 9098 9098 120 || {
 echo "=== Waiting for Kerberos Kafka broker to be ready ==="
 wait_broker "kafka-kerberos-broker" 9096 9096 120 || {
     echo "WARNING: Kerberos broker not ready — Kerberos tests may be skipped"
+    diagnose_broker "kafka-kerberos-broker"
 }
 
 echo "=== Waiting for Kerberos multi-broker cluster to be ready ==="
+MULTI_READY=1
 for i in 1 2 3; do
-    if ! wait_broker "kafka-kerberos-${i}" 19096 "$((19095 + i))" 120; then
-        echo "WARNING: kafka-kerberos-${i} not ready — multi-broker Kerberos tests may be skipped"
-        ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml logs --tail=30 "kafka-kerberos-${i}" 2>/dev/null || true
+    # 每台 broker 监听各自的端口: 19096 / 19097 / 19098
+    # (见 docker-compose.kerberos-multi.yml 的 KAFKA_LISTENERS)
+    port=$((19095 + i))
+    if ! wait_broker "kafka-kerberos-${i}" "${port}" "${port}" 120; then
+        echo "WARNING: kafka-kerberos-${i} not ready — multi-broker Kerberos tests skipped"
+        diagnose_broker "kafka-kerberos-${i}"
+        MULTI_READY=""
     fi
 done
 
@@ -251,42 +305,21 @@ done
 
 echo ""
 echo "--- Kerberos multi-broker tests ---"
-echo "  Building musl test binary (${MUSL_TARGET:-x86_64-unknown-linux-musl})..."
-cd "${PROJECT_ROOT}"
-MUSL_TARGET="${MUSL_TARGET:-x86_64-unknown-linux-musl}"
-SKIP_MUSL_BUILD=""
-if ! rustup target list --installed | grep -q "${MUSL_TARGET}"; then
-    rustup target add "${MUSL_TARGET}" 2>/dev/null || {
-        echo "  WARNING: cannot install musl target — multi-broker Kerberos tests will be skipped"
-        SKIP_MUSL_BUILD=1
-    }
-fi
-if [ -z "${SKIP_MUSL_BUILD:-}" ] \
-    && cargo test --no-run --target "${MUSL_TARGET}" \
-        --features integration_tests --test kerberos_multi 2>/dev/null; then
-    mkdir -p target/test-bin
-    BIN="$(ls target/${MUSL_TARGET}/debug/deps/kerberos_multi-* 2>/dev/null | grep -v '\.d$' | head -1)"
-    if [ -n "${BIN}" ]; then
-        cp "${BIN}" target/test-bin/kerberos_multi
-        echo "  musl test binary ready: target/test-bin/kerberos_multi"
-    else
-        echo "  WARNING: musl test binary not found — multi-broker Kerberos tests will be skipped"
-        SKIP_MUSL_BUILD=1
-    fi
-else
-    echo "  WARNING: musl build failed — multi-broker Kerberos tests will be skipped"
-    SKIP_MUSL_BUILD=1
-fi
 cd "${SCRIPT_DIR}"
 
 if [ -z "${SKIP_MUSL_BUILD:-}" ]; then
-    for test in "${KERBEROS_MULTI_TESTS[@]}"; do
-        echo "  [RUN] ${test} (in-container)"
-        # 测试在 compose 网络内的 test-runner 容器中运行, 容器网络解析
-        # broker1/2/3.example.com 与 kdc.example.com, 无需宿主机 /etc/hosts。
-        ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml run --rm test-runner \
-            || TEST_EXIT_CODE=$?
-    done
+    if [ -n "${MULTI_READY:-}" ]; then
+        for test in "${KERBEROS_MULTI_TESTS[@]}"; do
+            echo "  [RUN] ${test} (in-container)"
+            # 测试在 compose 网络内的 test-runner 容器中运行, 容器网络解析
+            # broker1/2/3.example.com 与 kdc-multi.example.com, 无需宿主机 /etc/hosts。
+            ${COMPOSE_CMD} -f docker-compose.kerberos-multi.yml run --rm test-runner \
+                || TEST_EXIT_CODE=$?
+        done
+    else
+        echo "  SKIPPED: multi-broker Kerberos cluster not ready"
+        TEST_EXIT_CODE=1
+    fi
 fi
 
 # ---------------------------------------------------------------------------

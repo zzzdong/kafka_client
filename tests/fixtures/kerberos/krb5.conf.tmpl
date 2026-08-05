@@ -1,0 +1,21 @@
+
+[libdefaults]
+  default_realm = @@REALM@@
+  dns_lookup_kdc = false
+  dns_lookup_realm = false
+  ticket_lifetime = 24h
+  renew_lifetime = 7d
+  forwardable = true
+
+[realms]
+  @@REALM@@ = {
+    kdc = @@KDC_HOST@@:88
+    admin_server = @@KDC_HOST@@:749
+    default_domain = example.com
+  }
+
+[domain_realm]
+  .example.com = @@REALM@@
+  example.com = @@REALM@@
+  localhost = @@REALM@@
+  .localhost = @@REALM@@

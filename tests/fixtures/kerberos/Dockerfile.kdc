@@ -5,9 +5,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     krb5-admin-server \
     && rm -rf /var/lib/apt/lists/*
 
-COPY kdc.conf /etc/krb5kdc/kdc.conf
-COPY krb5.conf /etc/krb5.conf
-COPY kadm5.acl /etc/krb5kdc/kadm5.acl
+# 配置以模板形式打包, 由 init-kdc.sh 按 KRB5_REALM / KRB5_KDC_HOST 渲染,
+# 使同一个镜像可服务于不同 realm 的多个 stack。
+COPY kdc.conf.tmpl /etc/krb5kdc/kdc.conf.tmpl
+COPY krb5.conf.tmpl /etc/krb5.conf.tmpl
+COPY kadm5.acl.tmpl /etc/krb5kdc/kadm5.acl.tmpl
 COPY init-kdc.sh /init-kdc.sh
 
 RUN chmod +x /init-kdc.sh

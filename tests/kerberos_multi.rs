@@ -7,7 +7,7 @@
 //! 前提:
 //! - tests/docker-compose.kerberos-multi.yml 集群
 //! - 通常通过该 compose 的 `test-runner` 服务运行 (容器网络内解析
-//!   broker1/2/3.example.com 与 kdc.example.com); 在宿主机直接运行则需要
+//!   broker1/2/3.example.com 与 kdc-multi.example.com); 在宿主机直接运行则需要
 //!   /etc/hosts 把 broker 主机名解析到 127.0.0.1。
 //!
 //! 单独运行:
@@ -75,9 +75,13 @@ async fn test_kerberos_multi_broker_gssapi() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    let creds = KerberosCredentials::new("client@EXAMPLE.COM")
+    // 多 broker stack 使用独立 realm (MULTI.EXAMPLE.COM), 以便与单节点
+    // Kerberos stack (EXAMPLE.COM) 并行运行而不发生 KDC/keytab 串扰。
+    let realm = std::env::var("KERBEROS_REALM").unwrap_or_else(|_| "MULTI.EXAMPLE.COM".to_string());
+
+    let creds = KerberosCredentials::new(format!("client@{realm}"))
         .with_keytab(keytab_path)
-        .with_realm("EXAMPLE.COM");
+        .with_realm(realm.clone());
 
     // 故意设置一个全局 broker_hostname: 只有当"连接级主机名优先"的修复
     // 生效时, broker2/3 才能用各自 advertised host 认证通过。
