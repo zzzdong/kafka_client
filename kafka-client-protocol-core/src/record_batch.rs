@@ -63,6 +63,18 @@ impl Default for RecordBatch {
     }
 }
 
+impl RecordBatch {
+    /// Returns `true` if this is a control batch (transaction marker).
+    ///
+    /// Control batches (abort/commit markers) occupy offsets but carry no
+    /// user data; consumers must skip them while still advancing their
+    /// fetch position.
+    pub fn is_control_batch(&self) -> bool {
+        // Attribute bit 5 marks control batches (Kafka record batch spec).
+        self.attributes & 0x20 != 0
+    }
+}
+
 /// Kafka Record - 单条消息
 ///
 /// 使用变长编码，包含消息键、值和头信息

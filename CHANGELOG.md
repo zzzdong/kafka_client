@@ -30,6 +30,9 @@
   coordinator never assigns partitions; it times out after
   `rebalance_timeout + session_timeout` and returns `RequestTimeout` while
   the join keeps retrying in the background.
+- Consumer now skips control batches (transaction abort/commit markers)
+  instead of surfacing them as empty records; the fetch position still
+  advances past the markers.
 - Idempotent producer: a failed batch rolls the partition sequence number
   back so subsequent sends reuse it (deduplicated by the broker), instead of
   leaving a permanent sequence gap.

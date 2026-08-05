@@ -888,13 +888,27 @@ impl ConsumerOrchestrator {
                     && !batch.records.is_empty()
                 {
                     let next_offset = batch.base_offset + batch.last_offset_delta as i64 + 1;
-                    let cursor =
-                        RecordBatchCursor::new(result.topic.clone(), result.partition, batch);
-                    self.next_in_line_records.insert(tp, cursor);
-                    self.offsets
-                        .entry(result.topic.clone())
-                        .or_default()
-                        .insert(result.partition, next_offset);
+                    if batch.is_control_batch() {
+                        // Transaction markers (abort/commit) occupy offsets
+                        // but carry no user data — advance the fetch position
+                        // without yielding records.
+                        debug!(
+                            "Skipping control batch for {}/{}",
+                            result.topic, result.partition
+                        );
+                        self.offsets
+                            .entry(result.topic.clone())
+                            .or_default()
+                            .insert(result.partition, next_offset);
+                    } else {
+                        let cursor =
+                            RecordBatchCursor::new(result.topic.clone(), result.partition, batch);
+                        self.next_in_line_records.insert(tp, cursor);
+                        self.offsets
+                            .entry(result.topic.clone())
+                            .or_default()
+                            .insert(result.partition, next_offset);
+                    }
                 }
             }
             KafkaErrorCode::OFFSET_OUT_OF_RANGE => {
