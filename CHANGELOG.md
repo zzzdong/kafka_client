@@ -33,6 +33,13 @@
 - Idempotent producer: a failed batch rolls the partition sequence number
   back so subsequent sends reuse it (deduplicated by the broker), instead of
   leaving a permanent sequence gap.
+- Transactional producer: after an *aborted* transaction the per-partition
+  sequence numbers are restored to the transaction-start snapshot, mirroring
+  the broker's rollback; previously the next transaction failed with
+  `OUT_OF_ORDER_SEQUENCE_NUMBER`. `AddPartitionsToTxn` also recovers from
+  fenced producer errors by re-initializing the producer id (epoch bump),
+  and `EndTxn` adopts the producer id/epoch returned by v5+ brokers
+  (KIP-890).
 - `MESSAGE_TOO_LARGE` batches are now split repeatedly (not just once) until
   each record is sent individually.
 - SASL PLAIN now sends the authorisation identity (`authzid`, settable via

@@ -407,6 +407,10 @@ struct ProducerState {
     txn_coordinator: Option<SocketAddr>,
     /// Partitions already added to the current transaction.
     txn_partitions: HashSet<(String, i32)>,
+    /// Per-partition sequence numbers at transaction start. The broker rolls
+    /// back the sequence state of an *aborted* transaction, so the local
+    /// counters must be restored to this snapshot on abort to stay in sync.
+    txn_start_sequences: HashMap<(String, i32), i32>,
 }
 
 impl ProducerState {
@@ -581,6 +585,7 @@ impl ProducerState {
         }
         self.txn_state = TxnState::InTransaction;
         self.txn_partitions.clear();
+        self.txn_start_sequences = self.sequence_numbers.lock().unwrap().clone();
         debug!("Transaction begun");
         Ok(())
     }
@@ -642,6 +647,15 @@ impl ProducerState {
                             self.producer_id = resp.producer_id;
                             self.producer_epoch = resp.producer_epoch;
                         }
+                        if !committed {
+                            // The broker reverts per-partition sequence numbers
+                            // for aborted transactions; mirror that locally so
+                            // the next transaction restarts from the same
+                            // sequence the broker expects.
+                            *self.sequence_numbers.lock().unwrap() =
+                                self.txn_start_sequences.clone();
+                        }
+                        self.txn_start_sequences.clear();
                         self.txn_state = TxnState::Ready;
                         self.txn_partitions.clear();
                         debug!("Transaction {}", if committed { "committed" } else { "aborted" });
@@ -814,6 +828,7 @@ impl ProducerState {
                                 );
                                 self.producer_id_initialized = false;
                                 self.sequence_numbers.lock().unwrap().clear();
+                                self.txn_start_sequences.clear();
                                 self.txn_coordinator = None;
                                 match self.ensure_producer_id().await {
                                     Ok(()) => {
@@ -970,6 +985,7 @@ impl ProducerState {
         );
         self.producer_id_initialized = false;
         self.sequence_numbers.lock().unwrap().clear();
+        self.txn_start_sequences.clear();
         self.txn_state = TxnState::Ready;
         self.txn_partitions.clear();
         self.txn_coordinator = None;
@@ -1809,6 +1825,7 @@ impl Producer {
             txn_state: TxnState::Ready,
             txn_coordinator: None,
             txn_partitions: HashSet::new(),
+            txn_start_sequences: HashMap::new(),
         };
 
         let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
