@@ -200,3 +200,38 @@ pub enum SaslError {
 }
 
 pub type Result<T> = std::result::Result<T, KafkaError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_for_common_errors() {
+        assert!(KafkaError::RequestTimeout.to_string().contains("Request timeout"));
+        assert!(KafkaError::NoCoordinator.to_string().contains("No coordinator"));
+        assert!(KafkaError::ConnectionClosed.to_string().contains("Connection closed"));
+        assert!(
+            KafkaError::TransactionError(KafkaErrorCode::PRODUCER_FENCED)
+                .to_string()
+                .contains("Transaction error")
+        );
+        let group_err = KafkaError::GroupError {
+            group_id: "my-group".into(),
+            error: KafkaErrorCode::NOT_COORDINATOR,
+        };
+        let s = group_err.to_string();
+        assert!(s.contains("my-group"));
+        assert!(s.contains("NOT_COORDINATOR"));
+    }
+
+    #[test]
+    fn broker_errors_display() {
+        let err = KafkaError::NoBrokerAvailable(BrokerErrors(vec![BrokerConnError {
+            addr: "broker-1:9092".into(),
+            error: KafkaError::RequestTimeout,
+        }]));
+        let s = err.to_string();
+        assert!(s.contains("broker-1:9092"));
+        assert!(s.contains("Request timeout"));
+    }
+}

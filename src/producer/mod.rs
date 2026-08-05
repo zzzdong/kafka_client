@@ -2197,3 +2197,89 @@ async fn find_coordinator(
             .ok_or(KafkaError::NoCoordinator);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    #[test]
+    fn producer_config_defaults_to_idempotent() {
+        let config = ProducerConfig::new();
+        assert!(config.enable_idempotence, "idempotence should be on by default");
+        assert_eq!(config.acks, -1, "idempotence requires acks=-1");
+        assert_eq!(config.retries, i32::MAX as u32);
+        assert_eq!(config.transactional_id, None);
+        assert_eq!(config.transaction_timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn with_transactional_id_implies_idempotence() {
+        let config = ProducerConfig::new().with_transactional_id("txn-1");
+        assert_eq!(config.transactional_id.as_deref(), Some("txn-1"));
+        assert!(config.enable_idempotence);
+        assert_eq!(config.acks, -1);
+    }
+
+    #[test]
+    fn with_idempotence_can_be_disabled_and_re_enabled() {
+        let disabled = ProducerConfig::new().with_idempotence(false).with_acks(1);
+        assert!(!disabled.enable_idempotence);
+        assert_eq!(disabled.acks, 1);
+
+        let reenabled = disabled.with_idempotence(true);
+        assert!(reenabled.enable_idempotence);
+        assert_eq!(reenabled.acks, -1);
+    }
+
+    #[test]
+    fn build_record_batch_empty_errors() {
+        let err = ProducerState::build_record_batch_inner(&[]).unwrap_err();
+        assert!(matches!(err, KafkaError::InvalidConfiguration(_)));
+    }
+
+    #[test]
+    fn build_record_batch_preserves_timestamps_keys_and_headers() {
+        let records = [
+            ProducerRecord {
+                topic: "t".into(),
+                partition: None,
+                key: Some(Bytes::from_static(b"k1")),
+                value: Bytes::from_static(b"v1"),
+                timestamp: Some(1000),
+                headers: vec![Header {
+                    key: "h1".into(),
+                    value: Bytes::from_static(b"hv1"),
+                }],
+            },
+            ProducerRecord {
+                topic: "t".into(),
+                partition: None,
+                key: None,
+                value: Bytes::from_static(b"v2"),
+                timestamp: Some(2000),
+                headers: vec![],
+            },
+        ];
+        let refs: Vec<&ProducerRecord> = records.iter().collect();
+        let batch = ProducerState::build_record_batch_inner(&refs).unwrap();
+
+        assert_eq!(batch.first_timestamp, 1000);
+        assert_eq!(batch.max_timestamp, 2000);
+        assert_eq!(batch.records.len(), 2);
+
+        let r0 = &batch.records[0];
+        assert_eq!(r0.offset_delta, 0);
+        assert_eq!(r0.timestamp_delta, 0);
+        assert_eq!(r0.key.as_deref(), Some(&b"k1"[..]));
+        assert_eq!(r0.value.as_deref(), Some(&b"v1"[..]));
+        assert_eq!(r0.headers[0].key, "h1");
+        assert_eq!(r0.headers[0].value.as_deref(), Some(&b"hv1"[..]));
+
+        let r1 = &batch.records[1];
+        assert_eq!(r1.offset_delta, 1);
+        assert_eq!(r1.timestamp_delta, 1000);
+        assert_eq!(r1.key, None);
+        assert_eq!(r1.value.as_deref(), Some(&b"v2"[..]));
+    }
+}

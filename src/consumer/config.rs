@@ -221,6 +221,37 @@ impl Default for ConsumerConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consumer_config_defaults_are_direct_mode() {
+        let config = ConsumerConfig::new();
+        assert_eq!(config.group_id, None, "default is direct (non-group) mode");
+        assert!(config.auto_commit);
+        assert_eq!(config.auto_commit_interval, Duration::from_secs(5));
+        assert_eq!(config.auto_offset_reset, AutoOffsetReset::Latest);
+        assert_eq!(config.max_poll_records, 500);
+        assert_eq!(config.max_wait, Duration::from_millis(500));
+        assert!(!config.enable_at_least_once);
+        assert_eq!(config.retries, 3);
+    }
+
+    #[test]
+    fn with_group_id_enables_group_mode() {
+        let config = ConsumerConfig::new().with_group_id("my-group").with_earliest();
+        assert_eq!(config.group_id.as_deref(), Some("my-group"));
+        assert_eq!(config.auto_offset_reset, AutoOffsetReset::Earliest);
+    }
+
+    #[test]
+    fn with_at_least_once_flips_delivery_semantics() {
+        let config = ConsumerConfig::new().with_at_least_once();
+        assert!(config.enable_at_least_once);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoOffsetReset {
     Earliest,

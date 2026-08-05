@@ -35,6 +35,10 @@ THREE_BROKER_TESTS=(
     "offset_reset"
     "consumer_group"
     "consumer_seek"
+    "consumer_api"
+    "producer_api"
+    "admin"
+    "transactions"
     "cluster"
 )
 

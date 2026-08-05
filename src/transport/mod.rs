@@ -73,3 +73,33 @@ impl TransportConnector {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_protocol_flags() {
+        assert!(!SecurityProtocol::Plaintext.uses_tls());
+        assert!(!SecurityProtocol::Plaintext.uses_sasl());
+        assert!(SecurityProtocol::SaslPlaintext.uses_sasl());
+        assert!(!SecurityProtocol::SaslPlaintext.uses_tls());
+
+        let tls = SecurityProtocol::Ssl(TlsConfig::default());
+        assert!(tls.uses_tls());
+        assert!(!tls.uses_sasl());
+
+        let sasl_tls = SecurityProtocol::SaslSsl(TlsConfig::default());
+        assert!(sasl_tls.uses_tls());
+        assert!(sasl_tls.uses_sasl());
+    }
+
+    #[test]
+    fn tls_config_default_has_no_custom_paths() {
+        let config = TlsConfig::default();
+        assert!(config.domain.is_empty());
+        assert!(config.ca_cert_path.is_none());
+        assert!(config.client_cert_path.is_none());
+        assert!(config.client_key_path.is_none());
+    }
+}

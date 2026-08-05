@@ -573,3 +573,47 @@ impl Client {
 pub fn builder(bootstrap_servers: Vec<String>) -> ClientBuilder {
     ClientBuilder::new(bootstrap_servers)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_config_defaults() {
+        let config = ClientConfig::default();
+        assert!(config.bootstrap_servers.is_empty());
+        assert_eq!(
+            config.security_protocol,
+            crate::transport::SecurityProtocol::Plaintext
+        );
+        assert_eq!(config.client_id, NAME);
+        assert!(config.sasl.is_none());
+        assert!(config.kerberos.is_none());
+        assert_eq!(config.metadata_ttl, Duration::from_secs(300));
+        assert_eq!(config.request_timeout, Duration::from_secs(60));
+        assert_eq!(config.kdc_port, 88);
+    }
+
+    #[test]
+    fn client_config_with_sasl_sets_protocol() {
+        let config = ClientConfig::default().with_sasl(
+            SaslMechanismType::Plain,
+            "user".to_string(),
+            "pass".to_string(),
+        );
+        assert!(config.sasl.is_some());
+        assert_eq!(
+            config.security_protocol,
+            crate::transport::SecurityProtocol::SaslPlaintext
+        );
+    }
+
+    #[test]
+    fn builder_defaults_match_config() {
+        let builder = ClientBuilder::new(vec!["localhost:9092".into()]);
+        assert_eq!(builder.config.request_timeout, Duration::from_secs(60));
+        assert!(builder.config.bootstrap_servers.contains(
+            &"localhost:9092".to_string()
+        ));
+    }
+}

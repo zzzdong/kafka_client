@@ -29,3 +29,32 @@ impl Default for NegotiatedVersions {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_unknown_version_returns_none() {
+        let versions = NegotiatedVersions::new();
+        assert_eq!(versions.get_version(0), None);
+    }
+
+    #[test]
+    fn set_and_get_version() {
+        let mut versions = NegotiatedVersions::new();
+        versions.set_version(3, 12);
+        versions.set_version(9, 8);
+        assert_eq!(versions.get_version(3), Some(12));
+        assert_eq!(versions.get_version(9), Some(8));
+        assert_eq!(versions.get_version(42), None);
+    }
+
+    #[test]
+    fn overwrite_version() {
+        let mut versions = NegotiatedVersions::new();
+        versions.set_version(0, 3);
+        versions.set_version(0, 9);
+        assert_eq!(versions.get_version(0), Some(9));
+    }
+}

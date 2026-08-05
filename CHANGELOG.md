@@ -84,3 +84,14 @@
   InvalidTransactionState`.
 - Integration tests for transactions (`tests/transactions.rs`); the
   `producer_acks` tests now explicitly disable idempotence for `acks=0/1`.
+- **Expanded test coverage**:
+  - Unit tests: wire frame codec (framing, negative/oversized lengths),
+    producer config defaults and record batch building, consumer config
+    defaults, negotiated versions, transport security protocol flags,
+    `ClientConfig` defaults, error display.
+  - Integration tests: `tests/admin.rs` (topic/cluster/broker-config admin,
+    group lifecycle with commit/fetch/delete), `tests/producer_api.rs`
+    (`send_batch`/`send_direct`/`flush`/`close`), `tests/consumer_api.rs`
+    (direct assign, seek, `max_poll_records`, `try_poll`/`poll_timeout`).
+  - `tests/run-all-tests.sh` now includes `admin`, `producer_api`,
+    `consumer_api` and `transactions`.
