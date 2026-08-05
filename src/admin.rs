@@ -739,10 +739,19 @@ impl AdminClient {
                     });
                 }
                 for t in grp.topics {
-                    let name = t.name;
-                    if name.is_empty() {
+                    // Protocol v10+ reports topics by id (name is empty);
+                    // resolve the name back through the metadata cache.
+                    let name = if !t.name.is_empty() {
+                        t.name.clone()
+                    } else if !t.topic_id.is_nil() {
+                        self.cluster
+                            .metadata()
+                            .get_topic_name_by_id(t.topic_id)
+                            .await
+                            .unwrap_or_else(|| format!("unknown-{}", t.topic_id))
+                    } else {
                         continue;
-                    }
+                    };
                     for p in t.partitions {
                         if p.error_code != 0 {
                             continue;

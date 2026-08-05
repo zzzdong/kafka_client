@@ -635,6 +635,13 @@ impl ProducerState {
                 Ok(resp) => {
                     let code = KafkaErrorCode::from_i16(resp.error_code);
                     if code.is_ok() {
+                        // KIP-890 (EndTxn v5+): the broker may return the
+                        // current producer id/epoch — adopt it so a fenced or
+                        // recovered producer keeps working.
+                        if resp.producer_id != -1 && resp.producer_epoch != -1 {
+                            self.producer_id = resp.producer_id;
+                            self.producer_epoch = resp.producer_epoch;
+                        }
                         self.txn_state = TxnState::Ready;
                         self.txn_partitions.clear();
                         debug!("Transaction {}", if committed { "committed" } else { "aborted" });
@@ -695,8 +702,6 @@ impl ProducerState {
         }
 
         let txn_id = self.config.transactional_id.clone().unwrap();
-        let producer_id = self.producer_id;
-        let producer_epoch = self.producer_epoch;
         let mut coordinator = self.txn_coordinator.ok_or(KafkaError::NoCoordinator)?;
 
         let mut by_topic: HashMap<String, Vec<i32>> = HashMap::new();
@@ -712,6 +717,8 @@ impl ProducerState {
                 last_error = Some(KafkaError::TransactionError(KafkaErrorCode::from_i16(-1)));
                 break;
             }
+            let producer_id = self.producer_id;
+            let producer_epoch = self.producer_epoch;
 
             let topics: Vec<AddPartitionsToTxnTopic> = by_topic
                 .iter()
@@ -791,6 +798,37 @@ impl ProducerState {
                                 tokio::time::sleep(backoff).await;
                                 backoff = backoff.mul_f32(2.0).min(Duration::from_secs(5));
                                 continue;
+                            }
+                            // The broker fenced or forgot our PID (e.g. after an
+                            // abort the coordinator may require a fresh epoch).
+                            // Re-initialize (epoch bump) and retry once — the
+                            // standard client recovery for these errors.
+                            if attempt == 0
+                                && (code == KafkaErrorCode::PRODUCER_FENCED
+                                    || code == KafkaErrorCode::INVALID_PRODUCER_EPOCH
+                                    || code == KafkaErrorCode::UNKNOWN_PRODUCER_ID)
+                            {
+                                warn!(
+                                    "AddPartitionsToTxn {} — re-initializing producer id and retrying",
+                                    code
+                                );
+                                self.producer_id_initialized = false;
+                                self.sequence_numbers.lock().unwrap().clear();
+                                self.txn_coordinator = None;
+                                match self.ensure_producer_id().await {
+                                    Ok(()) => {
+                                        coordinator =
+                                            self.txn_coordinator.ok_or(KafkaError::NoCoordinator)?;
+                                        last_error = Some(err);
+                                        tokio::time::sleep(backoff).await;
+                                        backoff = backoff.mul_f32(2.0).min(Duration::from_secs(5));
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        self.handle_fatal_txn_error(code);
+                                        return Err(e);
+                                    }
+                                }
                             }
                             self.handle_fatal_txn_error(code);
                             return Err(err);

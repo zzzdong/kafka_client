@@ -189,11 +189,24 @@ async fn test_transactional_offset_commit() {
             .await
             .expect("commit_transaction");
 
-        let fetched = client
-            .admin()
-            .fetch_group_offsets(&group)
-            .await
-            .expect("fetch_group_offsets");
+        // The group coordinator applies transactional offsets when it sees
+        // the commit marker from the transaction coordinator; allow a short
+        // window for that propagation.
+        let mut fetched = Vec::new();
+        for _ in 0..10 {
+            fetched = client
+                .admin()
+                .fetch_group_offsets(&group)
+                .await
+                .expect("fetch_group_offsets");
+            if fetched
+                .iter()
+                .any(|o| o.topic == topic && o.partition == 0 && o.committed_offset == 3)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
         assert!(
             fetched.iter().any(|o| {
                 o.topic == topic && o.partition == 0 && o.committed_offset == 3
