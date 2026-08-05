@@ -70,6 +70,11 @@ pub(crate) enum ConsumerCommand {
     GetAssignment {
         reply: oneshot::Sender<HashMap<String, Vec<i32>>>,
     },
+    /// Get the group's current generation and member id (for transactional
+    /// offset commits).
+    GetGroupMetadata {
+        reply: oneshot::Sender<(i32, String)>,
+    },
     /// Shutdown the background task
     Shutdown,
     /// Unsubscribe from all topics (direct mode: clear assignment;

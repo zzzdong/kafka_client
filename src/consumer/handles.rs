@@ -66,6 +66,22 @@ impl GroupHandle {
             .send(ConsumerCommand::GetAssignment { reply: tx });
         rx.await.unwrap_or_default()
     }
+    /// Current group generation (for transactional offset commits).
+    pub async fn generation(&self) -> i32 {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .cmd_tx
+            .send(ConsumerCommand::GetGroupMetadata { reply: tx });
+        rx.await.map(|(generation, _)| generation).unwrap_or(0)
+    }
+    /// Current member id (for transactional offset commits).
+    pub async fn member_id(&self) -> String {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .cmd_tx
+            .send(ConsumerCommand::GetGroupMetadata { reply: tx });
+        rx.await.map(|(_, member_id)| member_id).unwrap_or_default()
+    }
     pub async fn commit(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx

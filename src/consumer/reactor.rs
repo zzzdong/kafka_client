@@ -460,6 +460,9 @@ impl ConsumerOrchestrator {
             ConsumerCommand::GetAssignment { reply } => {
                 let _ = reply.send(self.assigned_partitions.clone());
             }
+            ConsumerCommand::GetGroupMetadata { reply } => {
+                let _ = reply.send((self.group_generation_id, self.group_member_id.clone()));
+            }
             ConsumerCommand::Unsubscribe { reply } => {
                 // Group mode: leave the group first
                 if self.group_active {

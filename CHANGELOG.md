@@ -53,3 +53,21 @@
 - `SaslCredentials::with_authzid`.
 - `AdminGroup::state` is now populated from `ListGroupsResponse` when the
   broker reports it.
+- **Idempotent producer is now enabled by default** (`acks=-1`, effectively
+  unbounded retries bounded by the delivery timeout), like modern Kafka
+  clients. Disable with `ProducerConfig::with_idempotence(false)` when
+  `acks=0/1` or pre-0.11 brokers are needed.
+- **Transactional producer (Kafka EOS / KIP-98)**: `ProducerConfig::
+  with_transactional_id` plus `Producer::init_transactions`,
+  `begin_transaction`, `commit_transaction`, `abort_transaction`, and
+  `send_offsets_to_transaction` (TxnOffsetCommit, the consume-process-produce
+  bridge). The client lazily registers partitions with the transaction
+  coordinator (`AddPartitionsToTxn`), produces with the transactional id and
+  PID/epoch, and recovers from fatal transaction errors by re-initializing
+  the producer id (epoch bump).
+- `Consumer::group().generation()` / `member_id()` expose the group
+  generation and member id needed for transactional offset commits.
+- New errors: `KafkaError::TransactionError`, `KafkaError::
+  InvalidTransactionState`.
+- Integration tests for transactions (`tests/transactions.rs`); the
+  `producer_acks` tests now explicitly disable idempotence for `acks=0/1`.

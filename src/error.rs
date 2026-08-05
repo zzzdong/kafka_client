@@ -73,6 +73,12 @@ pub enum KafkaError {
     #[error("Produce error: {0}")]
     ProduceError(KafkaErrorCode),
 
+    #[error("Transaction error: {0}")]
+    TransactionError(KafkaErrorCode),
+
+    #[error("Invalid transaction state: {0}")]
+    InvalidTransactionState(String),
+
     #[error("Offset commit error: {0}")]
     OffsetCommitError(KafkaErrorCode),
 

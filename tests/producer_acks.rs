@@ -30,7 +30,12 @@ async fn test_producer_acks_zero() {
     // acks=0: fire-and-forget.  Broker may not send a response,
     // so wrap the entire test in a timeout.
     let result = tokio::time::timeout(Duration::from_secs(15), async {
-        let config = ProducerConfig::new().with_acks(0).with_retries(5);
+        // acks=0 is incompatible with the idempotent producer (which forces
+        // acks=-1), so disable idempotence explicitly.
+        let config = ProducerConfig::new()
+            .with_acks(0)
+            .with_retries(5)
+            .with_idempotence(false);
         let producer = client.producer(config).await;
 
         client.refresh_metadata().await.unwrap();
@@ -74,7 +79,8 @@ async fn test_producer_acks_one() {
     let config = ProducerConfig::new()
         .with_acks(1)
         .with_timeout(10000)
-        .with_retries(10);
+        .with_retries(10)
+        .with_idempotence(false);
     let producer = client.producer(config).await;
 
     client.refresh_metadata().await.unwrap();
