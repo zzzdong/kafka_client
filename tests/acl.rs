@@ -74,7 +74,22 @@ async fn test_acl_lifecycle() {
         resource_name: Some(topic.clone()),
         ..Default::default()
     };
-    let found = admin.describe_acls(&filter).await.expect("describe_acls");
+    // KRaft persists ACLs through the metadata log; give the describe a short
+    // window to observe the just-created ACL.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let found = loop {
+        let found = admin.describe_acls(&filter).await.expect("describe_acls");
+        if found
+            .iter()
+            .any(|a| a.principal == "User:alice" && a.operation == AclOperation::Read)
+        {
+            break found;
+        }
+        if std::time::Instant::now() > deadline {
+            break found;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    };
     assert!(
         found
             .iter()

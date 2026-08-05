@@ -153,6 +153,12 @@ async fn test_admin_commit_and_fetch_offsets_roundtrip() {
         common::create_topic(&client, &topic, 1).await;
         common::wait_for_topic_ready(&client, &topic, 1).await;
 
+        let cached = client.metadata().get_topic(&topic).await;
+        println!(
+            "  topic metadata before commit: {:?}",
+            cached.map(|t| (t.name, t.topic_id))
+        );
+
         admin
             .commit_offsets(
                 &group,

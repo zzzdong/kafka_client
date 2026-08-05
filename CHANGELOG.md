@@ -109,6 +109,10 @@
 - `AdminClient::create_topics` / `delete_topics` are now routed to the
   controller and retry (with a metadata refresh) when the broker replies
   `NOT_CONTROLLER`, instead of failing on a random non-controller broker.
+- `AdminClient::commit_offsets` refreshes metadata when the topic id is
+  missing from the cache and retries on `UNKNOWN_TOPIC_ID` (a just-created
+  topic may briefly lag the local metadata); the ACL integration test retries
+  `describe_acls` to absorb KRaft ACL propagation.
 - Integration tests for transactions (`tests/transactions.rs`); the
   `producer_acks` tests now explicitly disable idempotence for `acks=0/1`.
 - **Expanded test coverage**:
@@ -131,5 +135,6 @@
     a distinct hostname with its own `kafka/<host>` service principal; the
     client intentionally sets a global `with_broker_hostname` and must still
     authenticate to all brokers via their per-broker advertised host. The
-    runner needs `broker1/2/3.example.com` to resolve to 127.0.0.1
-    (`/etc/hosts`; the CI job adds it with sudo).
+    test binary is statically compiled on the host (musl target) and run
+    inside a compose `test-runner` container on the cluster network, so the
+    broker hostnames resolve via container DNS without touching `/etc/hosts`.
