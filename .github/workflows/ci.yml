@@ -372,28 +372,29 @@ jobs:
       - name: Start KDC + Kerberos multi-broker cluster
         run: |
           docker compose -f docker-compose.kerberos-multi.yml up -d --build
+          # SASL/GSSAPI listeners reject the unauthenticated ApiVersions probe,
+          # so wait on the TCP port only. Probe all three brokers in parallel
+          # (background subshells) so they become ready together instead of
+          # serially, which otherwise multiplies the startup wait.
           for c in kafka-kerberos-1 kafka-kerberos-2 kafka-kerberos-3; do
-            echo -n "  ${c}... "
-            for i in $(seq 1 120); do
-              if docker exec "${c}" \
-                /opt/kafka/bin/kafka-broker-api-versions.sh \
-                --bootstrap-server 127.0.0.1:19096 &>/dev/null; then
-                echo "ready (~${i}s)"
-                break
-              fi
-              if docker exec "${c}" \
-                bash -c "echo > /dev/tcp/127.0.0.1/19096" 2>/dev/null; then
-                sleep 8
-                echo "ready (~${i}s, port)"
-                break
-              fi
-              if [ "$i" -eq 120 ]; then
-                echo "timeout"
-                exit 1
-              fi
-              sleep 2
-            done
+            (
+              for i in $(seq 1 120); do
+                if docker exec "${c}" \
+                  bash -c "echo > /dev/tcp/127.0.0.1/19096" 2>/dev/null; then
+                  echo "  ${c} ready (~${i}s)"
+                  exit 0
+                fi
+                if [ "$i" -eq 120 ]; then
+                  echo "  ${c} timeout"
+                  exit 1
+                fi
+                sleep 2
+              done
+            ) &
           done
+          wait
+          # Give the brokers a moment to finish SASL/GSSAPI listener init.
+          sleep 8
       - name: Wait for keytab
         run: |
           for i in $(seq 1 30); do
