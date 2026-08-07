@@ -45,7 +45,7 @@ THREE_BROKER_TESTS=(
 SASL_TESTS=("auth")
 TLS_TESTS=("tls")
 ACL_TESTS=("acl")
-KERBEROS_TESTS=("kerberos" "kerberos_service_ticket")
+KERBEROS_TESTS=("kerberos" "kerberos_service_ticket" "reproduce_0x7b")
 KERBEROS_MULTI_TESTS=("kerberos_multi")
 
 # 如果未设置 KAFKA_BOOTSTRAP，设为默认的 3-broker 地址
@@ -55,10 +55,17 @@ KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-${DEFAULT_BOOTSTRAP}}"
 cd "${PROJECT_ROOT}"
 MUSL_TARGET="${MUSL_TARGET:-x86_64-unknown-linux-musl}"
 SKIP_MUSL_BUILD=""
+# Multi-broker Kerberos tests run inside a debian:trixie-slim test-runner
+# container, so the test binary must be statically linked (musl) to avoid
+# depending on the host's glibc. If musl is unavailable or the build fails,
+# mark the run as FAILED rather than silently skipping kerberos_multi, so its
+# integration coverage stays mandatory.
+MUSL_BUILD_FAILED=""
 if ! rustup target list --installed | grep -q "${MUSL_TARGET}"; then
     rustup target add "${MUSL_TARGET}" || {
-        echo "  WARNING: cannot install musl target — multi-broker Kerberos tests will be skipped"
+        echo "  ERROR: cannot install musl target — multi-broker Kerberos integration tests cannot run"
         SKIP_MUSL_BUILD=1
+        MUSL_BUILD_FAILED=1
     }
 fi
 if [ -z "${SKIP_MUSL_BUILD:-}" ] \
@@ -70,12 +77,14 @@ if [ -z "${SKIP_MUSL_BUILD:-}" ] \
         cp -v "${BIN}" target/test-bin/kerberos_multi
         echo "  musl test binary ready: target/test-bin/kerberos_multi"
     else
-        echo "  WARNING: musl test binary not found — multi-broker Kerberos tests will be skipped"
+        echo "  ERROR: musl test binary not found — multi-broker Kerberos integration tests cannot run"
         SKIP_MUSL_BUILD=1
+        MUSL_BUILD_FAILED=1
     fi
 else
-    echo "  WARNING: musl build failed — multi-broker Kerberos tests will be skipped"
+    echo "  ERROR: musl build failed — multi-broker Kerberos integration tests cannot run"
     SKIP_MUSL_BUILD=1
+    MUSL_BUILD_FAILED=1
 fi
 
 # Auto-detect container CLI
@@ -342,6 +351,10 @@ else
 fi
 
 echo ""
+if [ -n "${MUSL_BUILD_FAILED:-}" ] && [ "${TEST_EXIT_CODE}" -eq 0 ]; then
+    echo "=== ERROR: musl build for multi-broker Kerberos tests failed (not just skipped) ==="
+    TEST_EXIT_CODE=1
+fi
 if [ "${TEST_EXIT_CODE}" -eq 0 ]; then
     echo "=== All tests PASSED ==="
 else
