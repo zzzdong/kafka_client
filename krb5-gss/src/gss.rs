@@ -684,7 +684,20 @@ pub fn build_ap_req_token(opts: &ApReqOptions) -> Result<Vec<u8>> {
     Ok(wrap_gss_initial_token(&ap_req_der))
 }
 
-/// 验证 acceptor 回送的 AP-REP GSS InitialContextToken。
+/// 验证 acceptor 回送的 AP-REP GSS InitialContextToken（始终严格双向认证）。
+///
+/// GSSAPI 的 mutual authentication 是协议默认行为：客户端发送 `GSS_C_MUTUAL_FLAG`
+/// 后, 服务端必须回 AP-REP 证明自己持有正确的服务票据会话密钥。因此这里**始终**执行
+/// 严格验证:
+///   - 只有用预期的 key usage 解密成功（即 `crypto::decrypt` 的 HMAC 校验通过, 证明
+///     对端持有正确的会话密钥）才接受该 AP-REP;
+///   - 一旦某个 usage 的 HMAC 校验通过但 `EncAPRepPart` 结构解析失败, 立即判定认证
+///     失败并报错, 不再回退到其它 usage —— 杜绝「用错误 usage 碰巧解析出结构」的
+///     伪认证路径;
+///   - ctime / cusec 必须与客户端发送的 Authenticator 一致。
+///
+/// 不再提供「验证失败仅告警、继续握手」的非严格模式: 那会掩盖未验证服务端身份的
+/// 中间人攻击, 且与「配置正确时日常就是双向严格验证」的事实相悖。
 pub fn verify_ap_rep_token(
     token: &[u8],
     expected_etype: Etype,
@@ -697,45 +710,56 @@ pub fn verify_ap_rep_token(
     let inner = unwrap_gss_token(token)?;
     let enc_part = decode_ap_rep(&inner)?;
     //
-    // SunJGSS (real Kafka brokers) encrypts the AP-REP enc-part with key
-    // usage 12 and an HMAC computed over the plaintext — the same convention
-    // as this crate's `decrypt` — and prefixes the EncAPRepPart DER with a
-    // 2-byte TLV (0x7b 0x24) right after the confounder. Try usage 12 first
-    // (verified against Kafka), then 15 as a fallback for RFC 4120
-    // conformant implementations, and accept the DER at offset 0 (self-test
-    // vectors) or offset 2 (SunJGSS).
+    // 加密与 usage:
+    //   - SunJGSS (real Kafka brokers) 用 key usage 12 + HMAC-over-plaintext
+    //     (与本 crate 的 `decrypt` 约定一致);
+    //   - RFC 4120 约定 key usage 15。
+    // 依次尝试 usage 12 与 15。`crypto::decrypt` 仅在 HMAC 校验通过时才返回
+    // 明文, 因此某个 usage 的「解密成功」即证明对端用了该 usage 且密钥正确
+    // —— 这是严格认证的关键。
+    //
+    // EncAPRepPart 明文布局: RFC 4120 定义 `EncAPRepPart ::= [APPLICATION 27]
+    // SEQUENCE {...}`, 其 DER 以 `0x7b` (即 [APPLICATION 27]) 开头; 本 crate
+    // 自测/旧布局则直接是裸 `SEQUENCE` (0x30)。`decode_enc_ap_rep_part` 已能
+    // 真正解析并剥掉 `[APPLICATION 27]` 外层包装, 因此这里对完整明文只调用一次,
+    // 无需任何偏移 trick。
+    let usages: &[u32] = &[KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REP_ENC_PART_RFC4120];
     let mut last_err = None;
-    for usage in [KEY_USAGE_AP_REP_ENC_PART, KEY_USAGE_AP_REP_ENC_PART_RFC4120] {
-        let plain = match crypto::decrypt(expected_etype, decrypt_key, usage, &enc_part.cipher) {
+    for usage in usages {
+        let plain = match crypto::decrypt(expected_etype, decrypt_key, *usage, &enc_part.cipher) {
             Ok(p) => p,
             Err(e) => {
                 last_err = Some(e);
+                // 该 usage 的 HMAC 校验失败 → 解密被拒。继续尝试下一个 usage
+                // (SunJGSS 失败则试 RFC 4120)。
                 continue;
             }
         };
-        for offset in [0usize, 2] {
-            if plain.len() <= offset {
-                continue;
+        match decode_enc_ap_rep_part(&plain) {
+            Ok(part) => {
+                if part.ctime != expected_ctime {
+                    return Err(KerberosError::Gss(format!(
+                        "AP-REP ctime mismatch: expected {expected_ctime}, got {}",
+                        part.ctime
+                    )));
+                }
+                if part.cusec != expected_cusec {
+                    return Err(KerberosError::Gss(format!(
+                        "AP-REP cusec mismatch: expected {expected_cusec}, got {}",
+                        part.cusec
+                    )));
+                }
+                return Ok(part);
             }
-            match decode_enc_ap_rep_part(&plain[offset..]) {
-                Ok(part) => {
-                    if part.ctime != expected_ctime {
-                        return Err(KerberosError::Gss(format!(
-                            "AP-REP ctime mismatch: expected {expected_ctime}, got {}",
-                            part.ctime
-                        )));
-                    }
-                    if part.cusec != expected_cusec {
-                        return Err(KerberosError::Gss(format!(
-                            "AP-REP cusec mismatch: expected {expected_cusec}, got {}",
-                            part.cusec
-                        )));
-                    }
-                    return Ok(part);
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                }
+            Err(e) => {
+                let desc = e.to_string();
+                // 该 usage 的 HMAC 已通过（证明对端持有正确的服务票据会话密钥），
+                // 但 EncAPRepPart 结构解析失败 → 说明格式异常，判定认证失败，
+                // 不再回退到其它 usage（避免掩盖伪造或协议不兼容）。
+                return Err(KerberosError::Gss(format!(
+                    "AP-REP enc-part failed to decode under the verified key usage {}: {}",
+                    usage, desc
+                )));
             }
         }
     }
@@ -827,7 +851,6 @@ pub struct NativeGssContext {
     auth_principal: Option<String>,
     seq_send: u64,
     seq_recv: u64,
-    strict_aprep: bool,
     /// Ticket end time (GeneralizedTime), used for GSS_Context_time.
     ticket_endtime: String,
     #[expect(dead_code)]
@@ -849,20 +872,9 @@ impl NativeGssContext {
             auth_principal: None,
             seq_send: 1,
             seq_recv: 0,
-            strict_aprep: false,
             ticket_endtime: ticket.endtime,
             context_start: SystemTime::now(),
         }
-    }
-
-    /// Enable strict AP-REP verification (mutual authentication).
-    ///
-    /// When enabled, a missing/unverifiable AP-REP challenge aborts the handshake
-    /// (prevents spoofed acceptor). Disabled by default for compatibility with
-    /// acceptors that wrap the AP-REP in non-standard encapsulation.
-    pub fn with_strict_aprep(mut self, strict: bool) -> Self {
-        self.strict_aprep = strict;
-        self
     }
 
     /// Build a non-confidential GSS_Wrap token for the given QOP / max_buffer.
@@ -1057,40 +1069,34 @@ impl GssContext for NativeGssContext {
                 let ctime = ctime.clone();
                 let cusec = *cusec;
 
-                // 验证 AP-REP (双向认证). 默认 best-effort: 部分 acceptor 以非标准方式封装,
-                // 验证失败时不阻塞握手, 继续进入 WRAP 阶段.
-                // 若开启 strict_aprep, 缺失或无法验证的 AP-REP 会直接中断握手 (防伪造 acceptor).
-                if !challenge.is_empty() {
-                    match verify_ap_rep_token(
-                        challenge,
-                        self.session_etype,
-                        &self.session_key,
-                        &ctime,
-                        cusec,
-                    ) {
-                        Ok(part) => {
-                            if let Some(sk) = part.subkey {
-                                self.session_etype = Etype::from_u32(sk.keytype as u32)
-                                    .unwrap_or(self.session_etype);
-                                self.session_key = sk.keyvalue;
-                            }
-                        }
-                        Err(e) => {
-                            if self.strict_aprep {
-                                return Err(KerberosError::Gss(format!(
-                                    "AP-REP verification failed (strict mode): {e}"
-                                )));
-                            }
-                            tracing::warn!(
-                                "AP-REP verification failed (non-fatal, continuing handshake): {}",
-                                e
-                            );
+                // 验证 AP-REP (双向认证)。GSSAPI mutual authentication 是协议默认:
+                // 客户端发送 GSS_C_MUTUAL_FLAG 后, acceptor 必须回 AP-REP 证明身份。
+                // 因此这里始终严格验证 —— 无法验证或缺失 AP-REP 直接中断握手 (防伪造 acceptor /
+                // 中间人), 不提供「仅告警继续握手」的非严格路径。
+                if challenge.is_empty() {
+                    return Err(KerberosError::Gss(
+                        "expected AP-REP challenge but received empty token".into(),
+                    ));
+                }
+                match verify_ap_rep_token(
+                    challenge,
+                    self.session_etype,
+                    &self.session_key,
+                    &ctime,
+                    cusec,
+                ) {
+                    Ok(part) => {
+                        if let Some(sk) = part.subkey {
+                            self.session_etype =
+                                Etype::from_u32(sk.keytype as u32).unwrap_or(self.session_etype);
+                            self.session_key = sk.keyvalue;
                         }
                     }
-                } else if self.strict_aprep {
-                    return Err(KerberosError::Gss(
-                        "expected AP-REP challenge but received empty token (strict mode)".into(),
-                    ));
+                    Err(e) => {
+                        return Err(KerberosError::Gss(format!(
+                            "AP-REP verification failed: {e}"
+                        )));
+                    }
                 }
 
                 self.state = GssState::AwaitingWrap;
@@ -1207,7 +1213,6 @@ pub async fn acquire_gss_context(
 /// ```
 pub struct GssClient {
     krb5: Krb5Client,
-    strict_aprep: bool,
 }
 
 impl GssClient {
@@ -1218,7 +1223,6 @@ impl GssClient {
     ) -> Result<Self> {
         Ok(Self {
             krb5: Krb5Client::with_transport(creds, transport)?,
-            strict_aprep: false,
         })
     }
 
@@ -1226,17 +1230,7 @@ impl GssClient {
     pub fn new(creds: &KerberosCredentials, kdc_host: &str, kdc_port: u16) -> Result<Self> {
         Ok(Self {
             krb5: Krb5Client::new(creds, kdc_host, kdc_port)?,
-            strict_aprep: false,
         })
-    }
-
-    /// Enable strict AP-REP verification for contexts created via [`GssClient::context_for`].
-    ///
-    /// When enabled, a missing/unverifiable AP-REP aborts the handshake (see
-    /// [`NativeGssContext::with_strict_aprep`]). Disabled by default for compatibility.
-    pub fn with_strict_aprep(mut self, strict: bool) -> Self {
-        self.strict_aprep = strict;
-        self
     }
 
     /// Obtain a GSS context for the specified service (KDC ticket already acquired, ready for acceptor handshake).
@@ -1245,7 +1239,7 @@ impl GssClient {
     /// after the handshake, use [`NativeGssContext::wrap`] / [`NativeGssContext::unwrap`] for per-message protection.
     pub async fn context_for(&self, service: &str) -> Result<NativeGssContext> {
         let ticket = self.krb5.acquire_service_ticket(service).await?;
-        Ok(NativeGssContext::from_acquired(ticket).with_strict_aprep(self.strict_aprep))
+        Ok(NativeGssContext::from_acquired(ticket))
     }
 }
 
@@ -1352,8 +1346,9 @@ mod tests {
 
     /// 模拟 acceptor AP-REP (GSS InitialContextToken 格式：含 OID 包装)。
     ///
-    /// `sun_jgss_prefix` 为 true 时, 在 EncAPRepPart DER 前插入真实 SunJGSS
-    /// 的 2 字节前缀 (0x7b 0x24), 用于覆盖 Kafka 互操作场景。
+    /// `sun_jgss_prefix` 为 true 时, 按 RFC 4120 用 `[APPLICATION 27]` (tag `0x7b`)
+    /// 包裹 `EncAPRepPart SEQUENCE`, 与真实 SunJGSS broker 的明文布局一致。
+    /// false 时使用本 crate 自测的裸 `SEQUENCE` 布局。
     fn simulate_server_ap_rep(
         etype: Etype,
         key: &[u8],
@@ -1365,11 +1360,15 @@ mod tests {
         part.extend(tlv_ctx(0, &tlv_gt(ctime)));
         part.extend(ctx_int(1, cusec));
         let enc_part_plain = tlv_seq(&part);
-        let mut plain = Vec::new();
-        if sun_jgss_prefix {
-            plain.extend_from_slice(&[0x7b, 0x24]);
-        }
-        plain.extend_from_slice(&enc_part_plain);
+        // RFC 4120: EncAPRepPart ::= [APPLICATION 27] SEQUENCE {...} —— 真实
+        // SunJGSS broker 加密的明文正是以 [APPLICATION 27] (tag 0x7b) 包裹
+        // SEQUENCE 的完整 DER。用 `tlv(0x7b, ...)` 构造自洽的 application TLV,
+        // 使长度字段正确反映内层 SEQUENCE 的实际长度 (而非硬编码)。
+        let plain = if sun_jgss_prefix {
+            tlv(0x7b, &enc_part_plain)
+        } else {
+            enc_part_plain
+        };
         let enc_cipher = crypto::encrypt(etype, key, KEY_USAGE_AP_REP_ENC_PART, &plain).unwrap();
         let mut ap_rep = Vec::new();
         ap_rep.extend(ctx_int(0, 5));
@@ -1406,6 +1405,93 @@ mod tests {
         let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
         verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec).unwrap();
         assert!(verify_ap_rep_token(&server_token, etype, &key, "20260713", cusec).is_err());
+    }
+
+    /// 严格验证: 正确的密钥 + SunJGSS/无前缀布局 → 通过。
+    #[test]
+    fn ap_rep_verify_strict_success() {
+        let (etype, key) = fake_session();
+        let ctime = "20260713".to_string() + "101112Z";
+        let cusec = 654321;
+        // SunJGSS 前缀布局 (真实 Kafka broker, usage 12)
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
+        verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec).unwrap();
+        // 无前缀 (自测布局)
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, false);
+        verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec).unwrap();
+    }
+
+    /// 严格验证: 错误的密钥 → HMAC 校验失败 → 拒绝。
+    #[test]
+    fn ap_rep_verify_strict_wrong_key_rejected() {
+        let (etype, key) = fake_session();
+        let wrong_key = vec![0x99u8; 32];
+        let ctime = "20260713".to_string() + "101112Z";
+        let cusec = 654321;
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
+        // 用错误密钥验证: HMAC 校验失败 → 认证失败。
+        assert!(verify_ap_rep_token(&server_token, etype, &wrong_key, &ctime, cusec).is_err());
+    }
+
+    /// 严格验证: 时间戳 (ctime) 不匹配 → 拒绝。
+    #[test]
+    fn ap_rep_verify_strict_ctime_mismatch_rejected() {
+        let (etype, key) = fake_session();
+        let ctime = "20260713".to_string() + "101112Z";
+        let cusec = 654321;
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
+        assert!(
+            verify_ap_rep_token(&server_token, etype, &key, "20260713000000Z", cusec).is_err(),
+            "ctime mismatch must fail under strict verification"
+        );
+    }
+
+    /// 复现 issue: 真实 SunJGSS (Kafka broker) AP-REP 带 `0x7b 0x24` 前缀。
+    ///
+    /// issue 现场:
+    ///   WARN ... AP-REP verification failed (non-fatal, continuing handshake):
+    ///   ASN.1 decode error: expected EncAPRepPart SEQUENCE (0x30), got 0x7b
+    ///
+    /// 根因: RFC 4120 定义 `EncAPRepPart ::= [APPLICATION 27] SEQUENCE {...}`,
+    /// 其 DER 以 `[APPLICATION 27]` (tag `0x7b`) 开头。旧解析器把整段明文当裸
+    /// SEQUENCE 解析, 遇到 `0x7b` 首字节即报错。正确做法是真正剥掉 `[APPLICATION
+    /// 27]` 外层, 而不是盲目跳 2 字节。
+    #[test]
+    fn reproduce_sunjgss_0x7b_prefix() {
+        let (etype, key) = fake_session();
+        let ctime = "20260713".to_string() + "101112Z";
+        let cusec = 654321;
+
+        // 1) 构造真实 SunJGSS 风格的 AP-REP (明文为 [APPLICATION 27] 包裹 SEQUENCE)。
+        let server_token = simulate_server_ap_rep(etype, &key, &ctime, cusec, true);
+
+        // 2) 解出内层 AP-REP, 再用 usage 12 解密 enc-part, 得到明文。
+        let inner = unwrap_gss_token(&server_token).expect("unwrap GSS wrapper");
+        let enc_part = decode_ap_rep(&inner).expect("decode AP-REP");
+        let plain = crypto::decrypt(etype, &key, KEY_USAGE_AP_REP_ENC_PART, &enc_part.cipher)
+            .expect("decrypt enc-part");
+
+        // 3) 断言明文确实以 [APPLICATION 27] tag (0x7b) 开头 —— 这正是 issue 里报错的首字节。
+        assert_eq!(
+            plain[0], 0x7b,
+            "明文首字节应为 0x7b ([APPLICATION 27] tag), 但实际是 0x{:02x}",
+            plain[0]
+        );
+
+        // 4) 复现「修复前」行为: 若把整段明文当裸 SEQUENCE (要求首 tag 为 0x30)
+        //    解析, 会报 expected ... got 0x7b。为模拟旧解析器的强制 0x30 校验,
+        //    这里用 `tlv_seq` 无法复现, 改为直接断言: 旧逻辑 (要求 0x30) 对 0x7b 拒绝。
+        //    我们用一个辅助断言模拟: 0x7b != 0x30。
+        assert_ne!(plain[0], 0x30, "旧解析器期望 0x30, 实际 0x7b");
+
+        // 5) 真正修复: 递归剥掉 [APPLICATION 27] 外层, 对完整明文一次解析成功。
+        let part = decode_enc_ap_rep_part(&plain).expect("应真正解析 [APPLICATION 27] 包裹");
+        assert_eq!(part.ctime, ctime);
+        assert_eq!(part.cusec, cusec);
+
+        // 6) 端到端: `verify_ap_rep_token` (始终严格) 在真实布局下应整体通过。
+        verify_ap_rep_token(&server_token, etype, &key, &ctime, cusec)
+            .expect("strict verify should pass");
     }
 
     /// 验证新的 `initial_token` / `handle_challenge` API 的 mock 上下文。

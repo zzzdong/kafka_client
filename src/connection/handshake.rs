@@ -237,17 +237,14 @@ impl Handshake {
             .unwrap_or(broker_host);
         let service_sname = format!("{}/{}", credentials.service_name, service_host);
 
-        let gss = GssClient::new(credentials, &kdc_host_owned, kdc_port)
-            .map_err(|e| {
-                KafkaError::AuthenticationFailed(format!("failed to create GSS client: {e}"))
-            })?
-            // Kafka brokers (Java SASL/GSSAPI) send the standard
-            // GSS-wrapped AP-REP (RFC 4121), so mutual authentication must
-            // be verified — otherwise the client cannot tell the real broker
-            // from an impersonator. `verify_ap_rep_token` handles the
-            // SunJGSS enc-part layout (2-byte prefix before the
-            // EncAPRepPart DER).
-            .with_strict_aprep(true);
+        let gss = GssClient::new(credentials, &kdc_host_owned, kdc_port).map_err(|e| {
+            KafkaError::AuthenticationFailed(format!("failed to create GSS client: {e}"))
+        })?;
+        // GSSAPI mutual authentication is always verified: Kafka brokers
+        // (Java SASL/GSSAPI) send the standard GSS-wrapped AP-REP, and
+        // `verify_ap_rep_token` strictly validates it (handling the SunJGSS
+        // enc-part layout) — otherwise the client cannot tell the real broker
+        // from an impersonator.
 
         gss.context_for(&service_sname).await.map_err(|e| {
             KafkaError::AuthenticationFailed(format!("failed to acquire GSS ticket: {e}"))

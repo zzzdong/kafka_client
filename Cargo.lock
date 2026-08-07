@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "kafka_client"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "arc-swap",
  "base64",
@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "krb5-gss"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cfg-if",

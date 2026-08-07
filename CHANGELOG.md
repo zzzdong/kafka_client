@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] - 2026-08-07
+
+> **Version note:** `kafka_client` bumped to `0.7.0` and `krb5-gss` bumped to `0.2.0`
+> because this release removes the public `with_strict_aprep` APIs (a breaking change).
+
+### Breaking
+
+- **`krb5-gss`: GSSAPI mutual authentication is now always strict.**
+  Removed `GssClient::with_strict_aprep` and `NativeGssContext::with_strict_aprep`
+  (and the `strict` parameter of the internal `verify_ap_rep_token`). GSSAPI mutual
+  auth is protocol-mandated (the client sends `GSS_C_MUTUAL_FLAG`), so a missing or
+  unverifiable AP-REP now always aborts the handshake instead of degrading to a
+  warning. This closes the intermediate-attacker path where a non-verifying acceptor
+  could be accepted. If you relied on non-strict mode to talk to a non-standard
+  acceptor, you must ensure it returns a valid AP-REP.
+
+### Fixed
+
+- **`krb5-gss`: correctly parse RFC 4120 `EncAPRepPart ::= [APPLICATION 27] SEQUENCE`**
+  instead of skipping a hard-coded 2-byte offset. The AP-REP enc-part plaintext from
+  Java Kafka brokers (SunJGSS) begins with `[APPLICATION 27]` (tag `0x7b`); the decoder
+  now genuinely unwraps that application tag rather than blindly jumping 2 bytes.
+
 ## [0.6.1] - 2026-08-05
 
 > `kafka-client-protocol` and `kafka-client-protocol-core` are bumped to

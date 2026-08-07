@@ -436,14 +436,28 @@ fn parse_enc_key(content: &[u8]) -> Result<EncryptionKey> {
     })
 }
 
+/// 解码 `EncAPRepPart` 明文。
+///
+/// 按 RFC 4120, `EncAPRepPart ::= [APPLICATION 27] SEQUENCE {...}` —— 其 DER 编码
+/// 由 `[APPLICATION 27]` (tag `0x7b`) 显式包裹一个 `SEQUENCE` (tag `0x30`)。真实
+/// Java Kafka broker (SunJGSS) 加密的 enc-part 明文正是这种 RFC 布局, 因此会以
+/// `0x7b` 开头。
+///
+/// 为兼容本 crate 历史/自测布局 (明文直接是裸 `SEQUENCE`), 这里同时接受 `0x30`:
+/// - `0x7b` (`[APPLICATION 27]`): 递归剥掉外层 application tag, 取其 content 继续解析
+///   (content 本身是一个 `SEQUENCE` 的完整 DER)。
+/// - `0x30` (裸 SEQUENCE): 直接解析 content。
 pub fn decode_enc_ap_rep_part(data: &[u8]) -> Result<EncApRepPart> {
     let (tag, content, _) = take_tlv(data)?;
-    if tag != 0x30 {
-        return Err(KerberosError::Asn1(format!(
-            "expected EncAPRepPart SEQUENCE (0x30), got 0x{tag:02x}"
-        )));
+    match tag {
+        // RFC 4120 布局: [APPLICATION 27] SEQUENCE {...}
+        0x7b => decode_enc_ap_rep_part(content),
+        // 兼容旧/自测布局: 裸 SEQUENCE {...}
+        0x30 => parse_enc_ap_rep_part(content),
+        other => Err(KerberosError::Asn1(format!(
+            "expected EncAPRepPart [APPLICATION 27] (0x7b) or SEQUENCE (0x30), got 0x{other:02x}"
+        ))),
     }
-    parse_enc_ap_rep_part(content)
 }
 
 fn parse_enc_ap_rep_part(content: &[u8]) -> Result<EncApRepPart> {
