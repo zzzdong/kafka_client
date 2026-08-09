@@ -43,9 +43,9 @@ fn generate_decode_single(
     };
 
     quote! {
-        fn #method_name(buf: &mut ::bytes::Bytes, version: i16) -> kafka_client_protocol_core::ProtocolResult<Self> {
+        fn #method_name(buf: &mut ::kafka_client_protocol_core::bytes::Bytes, version: i16) -> kafka_client_protocol_core::ProtocolResult<Self> {
             use kafka_client_protocol_core::codec::*;
-            use ::bytes::Buf;
+            use ::kafka_client_protocol_core::bytes::Buf;
 
             #(#decode_fields)*
 
@@ -81,7 +81,7 @@ fn generate_default_value(field: &FieldInfo) -> TokenStream {
     } else if field.is_string() {
         quote! { String::new() }
     } else if field.is_bytes() {
-        quote! { ::bytes::Bytes::new() }
+        quote! { ::kafka_client_protocol_core::bytes::Bytes::new() }
     } else if field.is_vec() {
         quote! { Vec::new() }
     } else if field.is_bool() {

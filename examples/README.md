@@ -9,6 +9,7 @@ This directory contains example programs demonstrating how to use the `kafka-cli
 | `basic_connect.rs` | Simple connection and metadata query | Basic |
 | `produce_consume.rs` | Complete workflow: create topic → produce → consume | Intermediate |
 | `raw_connection.rs` | Low-level Connection API (for debugging) | Advanced |
+| `framed_relay.rs` | Raw 1:1 frame relay via `build_framed()` (proxy/gateway) | Advanced |
 | `sasl_auth.rs` | SASL authentication (PLAIN, SCRAM) | Advanced |
 | `tls_connect.rs` | TLS encryption and TLS+SASL | Advanced |
 | `admin_operations.rs` | Topic management (create/delete) | Intermediate |
@@ -96,6 +97,41 @@ cargo run --example tls_connect
 # Create and delete topics
 cargo run --example admin_operations
 ```
+
+### Raw Frame Relay (proxy / gateway)
+
+```bash
+cargo run --example framed_relay
+```
+
+Demonstrates `Builder::build_framed()`, which returns an authenticated
+`wire::KafkaFramed` with no reactor — the caller drives the socket and owns
+correlation IDs. Call `.into_inner().split()` to obtain independent read/write
+halves for full-duplex relaying. Use it when forwarding frames verbatim between
+a downstream client and a broker.
+
+Choosing the right level of access:
+
+| Need | Use |
+|------|-----|
+| Normal produce/consume/admin | `Client` |
+| Typed request with auto correlation ID over a pooled connection | `ConnectionHandle::send_request` |
+| Strict one-request-at-a-time, no reactor | `Builder::build_sequential` |
+| 1:1 frame relay, full-duplex, caller-owned correlation IDs | `Builder::build_framed` |
+
+For a `KafkaFramed` obtained from `build_framed()` / `into_framed()`, pick the
+request helper by how much you want to encode yourself:
+
+| You provide | Use |
+|-------------|-----|
+| A typed `Request` value | `send_request` (library encodes header + body + correlation ID) |
+| `api_key`, `api_version`, `is_flexible`, a pre-encoded body | `send_frame` (library encodes header + owns correlation ID) |
+| The entire header + body byte string | `send_raw_frame` (library only adds the length prefix) |
+
+Note that `build_framed()` returns an **already authenticated** connection:
+never forward a downstream client's `ApiVersions`, `SaslHandshake`, or
+`SaslAuthenticate` frames to the broker. Answer those locally using the
+`NegotiatedVersions` returned alongside the stream.
 
 ## Environment Variables
 

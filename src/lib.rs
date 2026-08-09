@@ -41,16 +41,45 @@
 //! );
 //! ```
 
-// Internal modules (layered architecture)
+// Layered architecture
+//
+// The crate is organised into four layers. Each is public, so you can drop
+// down exactly as far as a use case requires and no further:
+//
+// ```text
+// L4  Client / Producer / Consumer / AdminClient   semantic API (start here)
+// L3  connection::{ConnectionHandle, Builder}      request/response, multiplexing
+// L2  wire::{KafkaCodec, KafkaFrame}               length-prefixed framing
+// L1  transport::{NetworkStream, TlsConfig}        raw byte streams (TCP/TLS)
+// ```
+//
+// Escape hatches, in increasing order of control:
+//
+// - [`connection::ConnectionHandle::send_raw_frame`] — reuse the multiplexing
+//   reactor, but encode frames yourself.
+// - [`connection::Builder::build_sequential`] — authenticated connection
+//   without a reactor; strict one-request-at-a-time.
+// - [`connection::Builder::build_framed`] — authenticated [`wire::KafkaFramed`];
+//   you drive the socket via its request helpers
+//   ([`wire::KafkaFramed::send_request`] for typed requests,
+//   [`wire::KafkaFramed::send_frame`] for api-key/version + caller body, or
+//   [`wire::KafkaFramed::send_raw_frame`] for pre-encoded bytes), or reach the
+//   raw `tokio_util::codec::Framed` through [`wire::KafkaFramed::into_inner`]
+//   for 1:1 frame relay. Intended for proxies.
 pub mod admin;
 mod cluster;
-pub mod connection; // Public for advanced users who need low-level access
+pub mod connection;
 mod consumer;
 mod error;
 mod producer;
 mod sasl;
-pub mod transport; // Public for advanced users who need low-level access
-mod wire;
+pub mod transport;
+pub mod wire;
+
+// Re-exported so downstream crates can name the `Framed` types reachable via
+// [`wire::KafkaFramed::into_inner`] without declaring their own `tokio-util`
+// dependency (and risking a version mismatch).
+pub use tokio_util;
 
 // Public re-exports
 pub use error::{KafkaError, KafkaErrorCode, Result};

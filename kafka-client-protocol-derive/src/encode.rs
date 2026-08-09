@@ -70,7 +70,7 @@ fn generate_encode_single(
                         self.#field_name.flexible_encode(&mut tagged_buf, version)?;
                         let data_len = (tagged_buf.len() - start_len) as u32;
                         let len_bytes = varint_len(data_len);
-                        let mut len_buf = ::bytes::BytesMut::with_capacity(5);
+                        let mut len_buf = ::kafka_client_protocol_core::bytes::BytesMut::with_capacity(5);
                         encode_unsigned_varint(&mut len_buf, data_len + 1);
                         tagged_buf[len_pos..len_pos + len_bytes].copy_from_slice(&len_buf[..len_bytes]);
                     }
@@ -88,7 +88,7 @@ fn generate_encode_single(
             #(#tagged_check)*
             encode_unsigned_varint(buf, tagged_count);
             if tagged_count > 0 {
-                let mut tagged_buf = ::bytes::BytesMut::new();
+                let mut tagged_buf = ::kafka_client_protocol_core::bytes::BytesMut::new();
                 #(#tagged_encode)*
                 buf.extend_from_slice(&tagged_buf);
             }
@@ -98,9 +98,9 @@ fn generate_encode_single(
     };
 
     quote! {
-        fn #method_name(&self, buf: &mut ::bytes::BytesMut, version: i16) -> kafka_client_protocol_core::ProtocolResult<()> {
+        fn #method_name(&self, buf: &mut ::kafka_client_protocol_core::bytes::BytesMut, version: i16) -> kafka_client_protocol_core::ProtocolResult<()> {
             use kafka_client_protocol_core::codec::*;
-            use ::bytes::BufMut;
+            use ::kafka_client_protocol_core::bytes::BufMut;
 
             #(#inline_fields)*
 
@@ -227,7 +227,7 @@ fn generate_encode_body(field: &FieldInfo, flexible: bool) -> TokenStream {
                     };
                     quote! {
                         let batch = self.#field_name.as_ref().unwrap();
-                        let mut batch_buf = ::bytes::BytesMut::new();
+                        let mut batch_buf = ::kafka_client_protocol_core::bytes::BytesMut::new();
                         #batch_encode(batch, &mut batch_buf, version)?;
                         #length_prefix
                         buf.extend_from_slice(&batch_buf);

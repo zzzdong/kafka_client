@@ -51,6 +51,7 @@ pub use api::sync_group_response::SyncGroupResponse;
 pub use version::{VersionRange, versions};
 
 // 重新导出 core 中的核心类型（方便用户使用）
+pub use kafka_client_protocol_core::header::{RequestHeaderV1, RequestHeaderV2};
 pub use kafka_client_protocol_core::{
     KafkaErrorCode, KafkaMessage, Message, ProtocolError, Record, RecordBatch, Request, Response,
 };

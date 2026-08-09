@@ -16,6 +16,9 @@ impl KafkaFrame {
     }
 }
 
+/// Default maximum frame size accepted by [`KafkaCodec`]: 100 MiB.
+pub const DEFAULT_MAX_FRAME_SIZE: usize = 100 * 1024 * 1024;
+
 /// Kafka codec for business phase
 pub struct KafkaCodec {
     max_frame_size: usize,
@@ -24,12 +27,17 @@ pub struct KafkaCodec {
 impl KafkaCodec {
     pub fn new() -> Self {
         Self {
-            max_frame_size: 100 * 1024 * 1024,
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
         }
     }
 
     pub fn new_with_max_frame_size(max_frame_size: usize) -> Self {
         Self { max_frame_size }
+    }
+
+    /// The maximum frame size this codec will accept, in bytes.
+    pub fn max_frame_size(&self) -> usize {
+        self.max_frame_size
     }
 }
 

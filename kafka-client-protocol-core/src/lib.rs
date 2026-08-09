@@ -11,6 +11,7 @@ pub mod message_impls;
 pub mod record_batch;
 
 // 重新导出核心类型
+pub use bytes;
 pub use codec::*;
 pub use error::{KafkaErrorCode, ProtocolError, ProtocolResult};
 pub use kafka_client_protocol_derive::KafkaMessage;

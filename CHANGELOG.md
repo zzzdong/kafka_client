@@ -1,5 +1,116 @@
 # Changelog
 
+## [0.8.0] - 2026-08-09
+
+> Additive release: no existing API changed or was removed. The version bump to
+> `0.8.0` reflects the new public dependency commitment noted below.
+>
+> **The raw-frame APIs added here are experimental** (`build_framed`,
+> `build_sequential`, `send_raw_frame`, `pub mod wire`). They are expected to
+> evolve as proxy/relay use cases become clearer, and may change in a future
+> minor release. The stable `Client` / `Producer` / `Consumer` APIs are
+> unaffected.
+>
+> **One caveat for downstream crates defining custom messages.** The
+> `#[derive(KafkaMessage)]` macro expands paths rooted at
+> `kafka_client_protocol_core` (and `bytes`), so a crate that derives its own
+> `Request`/`Response` types must list `kafka-client-protocol-core` in its
+> `[dependencies]`. This is the standard serde-style arrangement. Crates that
+> only *use* the built-in message types (via `kafka_client::protocol`) need no
+> extra dependencies. See the "Custom `Request`/`Response` types" entry below.
+
+### Added
+
+- **Layered public API for raw frame access.** All four layers of the crate are
+  now public, so you can drop down exactly as far as a use case requires:
+  `Client` (L4) → `connection` (L3) → `wire` (L2) → `transport` (L1). See the
+  crate-level docs for the layering diagram and escape hatches.
+- **`connection::Builder::build_framed()`** — returns
+  `(KafkaFramed, NegotiatedVersions)`: an authenticated, length-prefixed frame
+  stream with no reactor. Intended for proxy/gateway use cases doing 1:1 frame
+  relay. Because there is no reactor, downstream correlation IDs pass through
+  untouched. The stream can be `.split()` into independent read/write halves
+  for full-duplex forwarding. See `examples/framed_relay.rs`.
+- **`connection::Builder::build_sequential()`** — authenticated connection
+  stopped at the one-request-at-a-time stage, before a reactor is spawned.
+  Upgrade later via `SequentialConnection::into_pipeline()`.
+- **`connection::ConnectionHandle::send_raw_frame(Bytes) -> Result<Bytes>`** —
+  send a pre-encoded request frame over an existing pooled connection and get
+  the undecoded response back. Note that the caller owns correlation-ID
+  uniqueness; prefer `build_framed()` when relaying IDs you do not control.
+- **`wire::KafkaFramed`** — a crate-owned wrapper around
+  `tokio_util::codec::Framed<NetworkStream, KafkaCodec>`, so the public type
+  stays stable even if the underlying codec evolves. Provides three request
+  helpers spanning fully-typed to fully-raw:
+  - `send_request(Req, api_version, client_id) -> Resp` — fully typed; the
+    library encodes the header, body and correlation ID via the `Request`/
+    `Response` traits.
+  - `send_frame(api_key, api_version, is_flexible, client_id, body) -> Bytes` —
+    you supply the API key/version and a pre-encoded body; the library encodes
+    the header (picking v1/v2 from `is_flexible`) and owns the correlation ID.
+    Sits between `send_request` and `send_raw_frame`.
+  - `send_raw_frame(Bytes) -> Result<Bytes>` — fully pre-encoded: `data` is
+    written verbatim (only the length prefix is added) and the raw response is
+    returned unchanged. The caller owns correlation-ID uniqueness.
+  - `recv_response() -> (i32, Bytes)` — read the next response frame with its
+    header stripped.
+  - `into_inner() -> Framed<...>` — the escape hatch that reaches the raw
+    `Framed` for `.split()`-based full-duplex relaying.
+  `build_framed()` and `SequentialConnection::into_framed()` return this type.
+- **`pub mod wire`** exposing `KafkaCodec`, `KafkaFrame`, `KafkaFramed` and the
+  new `DEFAULT_MAX_FRAME_SIZE` constant and `KafkaCodec::max_frame_size()`
+  accessor.
+- **`connection::Builder::with_max_frame_size()`** — the codec's 100 MiB limit
+  is now configurable, for relaying large record batches.
+- `tokio_util` is re-exported at the crate root so downstream crates can name
+  the `Framed` types produced by `KafkaFramed::into_inner()` without declaring
+  their own dependency.
+- **Custom `Request`/`Response` types for `send_request`.** A downstream crate
+  can now define its own messages via `#[derive(KafkaMessage)]` (and implement
+  the public `Request`/`Response` traits manually if needed); the derived types
+  satisfy the exact `Req: Request` / `Resp: Response` bounds that
+  `send_request` requires, so a user-authored request can be sent with the same
+  typed path as a built-in one.
+  - `#[derive(KafkaMessage)]` expands to paths rooted at
+    `kafka_client_protocol_core` (and `bytes`), both of which the downstream
+    crate must list in its `[dependencies]`. `kafka-client-protocol` re-exports
+    the derive and the `Request`/`Response`/`Message` traits from core, but the
+    generated code references core by its crate name directly, so core must be a
+    direct dependency of any crate that *derives* custom messages (this mirrors
+    the well-known `serde`/`serde_derive` arrangement).
+
+### Fixed
+
+- **`ConnectionHandle` raw sends no longer hang forever on a lost response.**
+  The new `send_raw_frame` applies the same `request_timeout` as
+  `send_request`, rather than awaiting the oneshot channel unbounded.
+
+### Internal
+
+- `Builder::build()` now routes through a single private `establish()` pipeline
+  shared by `build_sequential()` and `build_framed()`, so every entry point
+  performs an identical TCP → TLS → ApiVersions → SASL sequence.
+- `Builder` now uses `transport::TransportConnector::connect()` instead of
+  hand-rolling TCP/TLS setup, while preserving the documented
+  `KafkaError::Io` vs `KafkaError::TlsError` distinction.
+- The reactor routes pending responses by correlation ID using a named,
+  tested `request_correlation_id()` helper, documenting why request headers read
+  bytes `[4..8]` while response headers read `[0..4]`. The `wire` layer's
+  `send_raw_frame` performs no such extraction — it forwards pre-encoded bytes
+  untouched.
+
+### Note on public dependencies
+
+`build_framed()` returns `wire::KafkaFramed`, a crate-owned wrapper that holds
+a `tokio_util::codec::Framed` internally. The stable surface (`send_request`,
+`recv_response`, `send_raw_frame`) does not name `tokio-util`, but the
+`into_inner()` escape hatch returns a raw `Framed`, so `tokio-util 0.7` is still
+part of this crate's public API. A future `tokio-util 0.8` will therefore be a
+breaking change for `kafka_client`. This is a deliberate trade-off: reaching
+the raw `Framed` is what allows `.split()` and `Sink`/`Stream` composition,
+which proxy use cases require, while the wrapper itself keeps our main type name
+stable.
+
 ## [0.7.0] - 2026-08-07
 
 > **Version note:** `kafka_client` bumped to `0.7.0` and `krb5-gss` bumped to `0.2.0`
