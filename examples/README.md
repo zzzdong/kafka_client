@@ -2,17 +2,33 @@
 
 This directory contains example programs demonstrating how to use the `kafka-client` library.
 
-## Example Overview
+The examples are organized by **layer** of the library, from the high-level
+`Client` down to the raw frame stream. Start at the top; reach lower layers only
+when you need finer control.
 
-| Example | Description | Level |
-|---------|-------------|-------|
-| `basic_connect.rs` | Simple connection and metadata query | Basic |
-| `produce_consume.rs` | Complete workflow: create topic → produce → consume | Intermediate |
-| `raw_connection.rs` | Low-level Connection API (for debugging) | Advanced |
-| `framed_relay.rs` | Raw 1:1 frame relay via `build_framed()` (proxy/gateway) | Advanced |
-| `sasl_auth.rs` | SASL authentication (PLAIN, SCRAM) | Advanced |
-| `tls_connect.rs` | TLS encryption and TLS+SASL | Advanced |
-| `admin_operations.rs` | Topic management (create/delete) | Intermediate |
+## Architecture in one line
+
+```
+L4  Client (produce / consume / admin)
+L3  connection::ConnectionHandle   (pipelined, out-of-order)   <- build()
+    connection::SequentialConnection (serial, pre-auth)         <- build_sequential()
+L2  wire::KafkaFramed              (pure frame send/recv)      <- build_framed()
+L1  transport::NetworkStream       (TCP / TLS)
+```
+
+## Example Overview (by layer)
+
+| Layer | Example | Description |
+|-------|---------|-------------|
+| **L4** | `basic_connect.rs` | Simple connection and metadata query via `Client` |
+| **L4** | `produce_consume.rs` | Complete workflow: create topic → produce → consume |
+| **L4** | `admin_operations.rs` | Topic management (create/delete) |
+| **L3** | `raw_connection.rs` | Typed `ConnectionHandle::send_request` (pipelined) |
+| **L3** | `request_frame.rs` | Structured `RequestHeader` + raw body (`send_request_frame`) |
+| **L3** | `sequential_connection.rs` | Serial `SequentialConnection` → promote to pipelined |
+| **L2** | `framed_relay.rs` | Pure frame relay via `build_framed()` (proxy/gateway) |
+| **L1/security** | `sasl_auth.rs` | SASL authentication (PLAIN, SCRAM) |
+| **L1/security** | `tls_connect.rs` | TLS encryption and TLS+SASL |
 
 ## Running Examples
 
@@ -21,7 +37,7 @@ This directory contains example programs demonstrating how to use the `kafka-cli
 - A running Kafka broker (default: `localhost:9092`)
 - Rust toolchain with Tokio support
 
-### Basic Examples
+### Basic Examples (L4)
 
 ```bash
 # Connect to localhost:9092
@@ -31,7 +47,7 @@ cargo run --example basic_connect
 KAFKA_BOOTSTRAP=192.168.1.100:9092 cargo run --example basic_connect
 ```
 
-### Produce and Consume
+### Produce and Consume (L4)
 
 ```bash
 # Default configuration
@@ -41,7 +57,56 @@ cargo run --example produce_consume
 KAFKA_TOPIC=my-topic cargo run --example produce_consume
 ```
 
-### SASL Authentication
+### Admin Operations (L4)
+
+```bash
+# Create and delete topics
+cargo run --example admin_operations
+```
+
+### Raw Connection (L3: typed pipelined)
+
+```bash
+cargo run --example raw_connection
+```
+
+Sends a typed `MetadataRequest` over a `ConnectionHandle`, which runs a reactor
+that correlates responses to callers out-of-order.
+
+### Request Frame (L3: structured header + raw body)
+
+```bash
+cargo run --example request_frame
+```
+
+Demonstrates `ConnectionHandle::send_request_frame`: you build a structured
+`kafka_client::protocol::RequestHeader` (choosing the correlation ID yourself)
+and hand a raw encoded body; you get back a structured
+`kafka_client::protocol::ResponseHeader` plus the raw body.
+
+### Sequential Connection (L3: serial phase)
+
+```bash
+cargo run --example sequential_connection
+```
+
+Demonstrates `Builder::build_sequential()`, which returns a strict
+one-request-at-a-time `SequentialConnection`, then promotes it to a pipelined
+`ConnectionHandle` via `into_pipeline()`.
+
+### Raw Frame Relay (L2: proxy / gateway)
+
+```bash
+cargo run --example framed_relay
+```
+
+Demonstrates `Builder::build_framed()`, which returns an authenticated
+`wire::KafkaFramed` with no reactor — the caller drives the socket and owns
+correlation IDs. Call `.into_inner().split()` to obtain independent read/write
+halves for full-duplex relaying. Use it when forwarding frames verbatim between
+a downstream client and a broker.
+
+### SASL Authentication (security)
 
 ```bash
 # PLAIN mechanism
@@ -66,7 +131,7 @@ SASL_PASSWORD=pass \
 cargo run --example sasl_auth
 ```
 
-### TLS Connection
+### TLS Connection (security)
 
 ```bash
 # TLS only (no SASL)
@@ -91,42 +156,36 @@ SASL_PASSWORD=pass \
 cargo run --example tls_connect
 ```
 
-### Admin Operations
-
-```bash
-# Create and delete topics
-cargo run --example admin_operations
-```
-
-### Raw Frame Relay (proxy / gateway)
-
-```bash
-cargo run --example framed_relay
-```
-
-Demonstrates `Builder::build_framed()`, which returns an authenticated
-`wire::KafkaFramed` with no reactor — the caller drives the socket and owns
-correlation IDs. Call `.into_inner().split()` to obtain independent read/write
-halves for full-duplex relaying. Use it when forwarding frames verbatim between
-a downstream client and a broker.
-
-Choosing the right level of access:
+## Choosing the right level of access
 
 | Need | Use |
 |------|-----|
-| Normal produce/consume/admin | `Client` |
-| Typed request with auto correlation ID over a pooled connection | `ConnectionHandle::send_request` |
-| Strict one-request-at-a-time, no reactor | `Builder::build_sequential` |
-| 1:1 frame relay, full-duplex, caller-owned correlation IDs | `Builder::build_framed` |
+| Normal produce/consume/admin | `Client` (L4) |
+| Typed request, auto correlation ID, pipelined | `ConnectionHandle::send_request` (L3) |
+| Structured header + raw body, pipelined | `ConnectionHandle::send_request_frame` (L3) |
+| Strict one-request-at-a-time, then promote | `Builder::build_sequential` (L3) |
+| 1:1 frame relay, full-duplex, caller-owned correlation IDs | `Builder::build_framed` (L2) |
 
-For a `KafkaFramed` obtained from `build_framed()` / `into_framed()`, pick the
-request helper by how much you want to encode yourself:
+### The `KafkaFramed` primitive (L2)
 
-| You provide | Use |
-|-------------|-----|
-| A typed `Request` value | `send_request` (library encodes header + body + correlation ID) |
-| `api_key`, `api_version`, `is_flexible`, a pre-encoded body | `send_frame` (library encodes header + owns correlation ID) |
-| The entire header + body byte string | `send_raw_frame` (library only adds the length prefix) |
+A `KafkaFramed` obtained from `build_framed()` is a pure frame stream: it has no
+request/response semantics, no correlation-ID bookkeeping, and no header
+encoding. Drive it with its raw primitives, or `into_inner().split()` it into
+independent read/write halves:
+
+| You want | Use |
+|----------|-----|
+| Send one frame (length prefix added for you) | `send_frame(Bytes)` |
+| Read the next frame (length prefix stripped) | `recv_frame()` / `recv_response()` |
+| Independent read/write halves for full-duplex relaying | `into_inner().split()` |
+
+There is only one way to write at this layer (`send_frame`) and one way to read
+(`recv_frame`). A serial "send then read" is just those two calls in sequence;
+timeouts and correlation-ID matching are the caller's responsibility.
+
+For correlation-ID dispatch on a single multiplexed connection, use
+`ConnectionHandle` (reactor) instead — it correlates responses to callers
+out-of-order. `SequentialConnection` covers the strict serial, pre-auth phase.
 
 Note that `build_framed()` returns an **already authenticated** connection:
 never forward a downstream client's `ApiVersions`, `SaslHandshake`, or
@@ -146,31 +205,35 @@ never forward a downstream client's `ApiVersions`, `SaslHandshake`, or
 
 ## Example Structure
 
-### Basic Level
+### L4 — High-level `Client`
 
-- **`basic_connect.rs`**: Demonstrates the simplest way to connect to Kafka and query cluster metadata. Ideal for first-time users.
+- **`basic_connect.rs`**: The simplest way to connect to Kafka and query cluster metadata. Ideal for first-time users.
+- **`produce_consume.rs`**: A complete workflow including topic creation, message production, and consumption.
+- **`admin_operations.rs`**: Administrative operations like creating and deleting topics.
 
-### Intermediate Level
+### L3 — Connection layer
 
-- **`produce_consume.rs`**: Shows a complete workflow including topic creation, message production, and consumption. Demonstrates proper configuration and error handling.
+- **`raw_connection.rs`**: Typed `ConnectionHandle::send_request` over a pipelined reactor. Use when you need direct protocol access but want typed messages and automatic correlation.
+- **`request_frame.rs`**: `ConnectionHandle::send_request_frame` — structured header + raw body. Use when you need to control the header (especially correlation ID) but still want reactor framing.
+- **`sequential_connection.rs`**: `SequentialConnection` for the strict serial, pre-auth phase, then `into_pipeline()` to a pipelined handle.
 
-- **`admin_operations.rs`**: Demonstrates administrative operations like creating and deleting topics.
+### L2 — Frame layer
 
-### Advanced Level
+- **`framed_relay.rs`**: `Builder::build_framed()` returning an authenticated `KafkaFramed` for 1:1 frame relay (proxy/gateway).
 
-- **`raw_connection.rs`**: Shows how to use the low-level Connection API directly. Use this only for debugging or when you need direct protocol access.
+### Security
 
-- **`sasl_auth.rs`**: Demonstrates SASL authentication with different mechanisms (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512).
-
-- **`tls_connect.rs`**: Demonstrates TLS encryption and TLS+SASL configurations.
+- **`sasl_auth.rs`**: SASL authentication with different mechanisms (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512).
+- **`tls_connect.rs`**: TLS encryption and TLS+SASL configurations.
 
 ## Learning Path
 
-1. Start with `basic_connect.rs` to understand connection basics
-2. Move to `produce_consume.rs` to learn the core workflow
-3. Try `admin_operations.rs` for topic management
+1. Start with `basic_connect.rs` to understand connection basics (L4)
+2. Move to `produce_consume.rs` to learn the core workflow (L4)
+3. Try `admin_operations.rs` for topic management (L4)
 4. Explore `sasl_auth.rs` and `tls_connect.rs` for security features
-5. Use `raw_connection.rs` only when you need low-level access
+5. Use `raw_connection.rs` and `request_frame.rs` when you need direct connection control (L3)
+6. Reach `framed_relay.rs` only when you need a raw frame relay/proxy (L2)
 
 ## Common Patterns
 

@@ -182,8 +182,8 @@ impl Consumer {
     ///
     /// # Errors
     ///
-    /// Returns [`KafkaError::ConnectionClosed`] if the background consumer
-    /// task has terminated (e.g. due to a fatal error).
+    /// Returns [`crate::error::KafkaError::ConnectionClosed`] if the background
+    /// consumer task has terminated (e.g. due to a fatal error).
     pub async fn poll(&mut self) -> Result<Vec<ConsumerRecord>> {
         if !self.started {
             self.cmd_tx
@@ -206,8 +206,8 @@ impl Consumer {
     /// Poll with a timeout.
     ///
     /// Returns an empty `Vec` on timeout, or
-    /// [`KafkaError::ConnectionClosed`] if the background consumer task has
-    /// terminated.
+    /// [`crate::error::KafkaError::ConnectionClosed`] if the background consumer
+    /// task has terminated.
     pub async fn poll_timeout(&mut self, timeout: Duration) -> Result<Vec<ConsumerRecord>> {
         if !self.started {
             self.cmd_tx

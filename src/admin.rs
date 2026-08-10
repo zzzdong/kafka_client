@@ -615,7 +615,8 @@ impl AdminClient {
         Ok(last_results)
     }
 
-    /// Create a single topic. Convenience wrapper around [`create_topics`].
+    /// Create a single topic. Convenience wrapper around
+    /// [`AdminClient::create_topics`].
     pub async fn create_topic(&self, topic: &NewTopic) -> Result<AdminTopicResult> {
         let mut results = self.create_topics(std::slice::from_ref(topic)).await?;
         results
@@ -672,7 +673,8 @@ impl AdminClient {
         Ok(last_results)
     }
 
-    /// Delete a single topic. Convenience wrapper around [`delete_topics`].
+    /// Delete a single topic. Convenience wrapper around
+    /// [`AdminClient::delete_topics`].
     pub async fn delete_topic(&self, name: &str) -> Result<AdminTopicResult> {
         let mut results = self.delete_topics(&[name]).await?;
         results

@@ -59,13 +59,12 @@
 //   reactor, but encode frames yourself.
 // - [`connection::Builder::build_sequential`] — authenticated connection
 //   without a reactor; strict one-request-at-a-time.
-// - [`connection::Builder::build_framed`] — authenticated [`wire::KafkaFramed`];
-//   you drive the socket via its request helpers
-//   ([`wire::KafkaFramed::send_request`] for typed requests,
-//   [`wire::KafkaFramed::send_frame`] for api-key/version + caller body, or
-//   [`wire::KafkaFramed::send_raw_frame`] for pre-encoded bytes), or reach the
-//   raw `tokio_util::codec::Framed` through [`wire::KafkaFramed::into_inner`]
-//   for 1:1 frame relay. Intended for proxies.
+// - [`connection::Builder::build_framed`] — authenticated [`wire::KafkaFramed`]
+//   with no request/response semantics; you drive the socket directly via its
+//   frame primitives ([`wire::KafkaFramed::send_frame`] and
+//   [`wire::KafkaFramed::recv_frame`]), or reach the raw
+//   `tokio_util::codec::Framed` through [`wire::KafkaFramed::into_inner`] for
+//   1:1 frame relay. Intended for proxies and gateways.
 pub mod admin;
 mod cluster;
 pub mod connection;
@@ -84,6 +83,7 @@ pub use tokio_util;
 // Public re-exports
 pub use error::{KafkaError, KafkaErrorCode, Result};
 pub use kafka_client_protocol as protocol;
+pub use kafka_client_protocol_core as protocol_core;
 pub use krb5_gss::gss::GssContext;
 pub use krb5_gss::{KerberosCredentials, KerberosError};
 pub use sasl::{SaslCredentials, SaslMechanismType};
@@ -182,8 +182,8 @@ impl Client {
     ///
     /// Creates a direct-mode consumer (no consumer group). All partitions
     /// of the subscribed topics are fetched directly from the cluster.
-    /// Use [`Consumer`](Consumer) with `ConsumerConfig::new("my-group")`
-    /// for group-coordinated consumption.
+    /// Use [`Consumer`] with `ConsumerConfig::new("my-group")` for
+    /// group-coordinated consumption.
     pub fn consumer_default(&self) -> Consumer {
         Consumer::new(self.cluster.clone(), ConsumerConfig::default())
     }

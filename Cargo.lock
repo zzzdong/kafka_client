@@ -1049,6 +1049,7 @@ dependencies = [
  "hex",
  "hmac",
  "kafka-client-protocol",
+ "kafka-client-protocol-core",
  "krb5-gss",
  "pbkdf2",
  "rand",

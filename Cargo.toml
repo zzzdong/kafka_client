@@ -52,6 +52,7 @@ serde_json = { workspace = true }
 
 # 协议
 kafka-client-protocol = { version = "0.2.2", path = "kafka-client-protocol" }
+kafka-client-protocol-core = { version = "0.2.2", path = "kafka-client-protocol-core" }
 # Kerberos / SASL GSSAPI
 krb5-gss = { version = "0.2.0", path = "krb5-gss" }
 
