@@ -40,23 +40,26 @@
   uniqueness; prefer `build_framed()` when relaying IDs you do not control.
 - **`wire::KafkaFramed`** — a crate-owned wrapper around
   `tokio_util::codec::Framed<NetworkStream, KafkaCodec>`, so the public type
-  stays stable even if the underlying codec evolves. Provides three request
-  helpers spanning fully-typed to fully-raw:
-  - `send_request(Req, api_version, client_id) -> Resp` — fully typed; the
-    library encodes the header, body and correlation ID via the `Request`/
-    `Response` traits.
-  - `send_frame(api_key, api_version, is_flexible, client_id, body) -> Bytes` —
-    you supply the API key/version and a pre-encoded body; the library encodes
-    the header (picking v1/v2 from `is_flexible`) and owns the correlation ID.
-    Sits between `send_request` and `send_raw_frame`.
-  - `send_raw_frame(Bytes) -> Result<Bytes>` — fully pre-encoded: `data` is
-    written verbatim (only the length prefix is added) and the raw response is
-    returned unchanged. The caller owns correlation-ID uniqueness.
-  - `recv_response() -> (i32, Bytes)` — read the next response frame with its
-    header stripped.
+  stays stable even if the underlying codec evolves. It is a **transport
+  primitive only**: it sends and receives whole frames, doing nothing more than
+  adding/removing the 4-byte length prefix. It performs **no** correlation-ID
+  bookkeeping and **no** header encoding — payloads are passed through verbatim
+  (suitable for frame relay). Its methods are strictly one-frame-at-a-time and
+  serial, with **no** built-in timeouts (apply one at the calling layer). The
+  API surface is:
+  - `send_frame(Bytes) -> Result<()>` — write one frame verbatim (the codec
+    prepends the length prefix) and flush; returns without waiting for any
+    response.
+  - `recv_frame() -> Result<Bytes>` — read the next frame (length prefix
+    stripped) and return its complete payload, still carrying the full response
+    header. Blocks indefinitely waiting for the next frame.
   - `into_inner() -> Framed<...>` — the escape hatch that reaches the raw
     `Framed` for `.split()`-based full-duplex relaying.
-  `build_framed()` and `SequentialConnection::into_framed()` return this type.
+  - `max_frame_size() -> usize` — the codec's maximum accepted frame size.
+  For typed or structured request/response on a multiplexed connection, use
+  `ConnectionHandle` instead (see `send_request`, `send_request_frame`,
+  `send_raw_frame` below). `build_framed()` and
+  `SequentialConnection::into_framed()` return this type.
 - **`pub mod wire`** exposing `KafkaCodec`, `KafkaFrame`, `KafkaFramed` and the
   new `DEFAULT_MAX_FRAME_SIZE` constant and `KafkaCodec::max_frame_size()`
   accessor.
@@ -102,14 +105,35 @@
 ### Note on public dependencies
 
 `build_framed()` returns `wire::KafkaFramed`, a crate-owned wrapper that holds
-a `tokio_util::codec::Framed` internally. The stable surface (`send_request`,
-`recv_response`, `send_raw_frame`) does not name `tokio-util`, but the
-`into_inner()` escape hatch returns a raw `Framed`, so `tokio-util 0.7` is still
-part of this crate's public API. A future `tokio-util 0.8` will therefore be a
-breaking change for `kafka_client`. This is a deliberate trade-off: reaching
-the raw `Framed` is what allows `.split()` and `Sink`/`Stream` composition,
-which proxy use cases require, while the wrapper itself keeps our main type name
-stable.
+a `tokio_util::codec::Framed` internally. The `KafkaFramed` method surface
+(`send_frame`, `recv_frame`, `max_frame_size`) does not name
+`tokio-util`, but the `into_inner()` escape hatch returns a raw `Framed`, so
+`tokio-util 0.7` is still part of this crate's public API. A future
+`tokio-util 0.8` will therefore be a breaking change for `kafka_client`. This
+is a deliberate trade-off: reaching the raw `Framed` is what allows `.split()`
+and `Sink`/`Stream` composition, which proxy use cases require, while the
+wrapper itself keeps our main type name stable.
+
+### Protocol crate patch bumps
+
+Three protocol crates gained **additive** public API in this release and were
+bumped by one patch version (no existing API changed or removed):
+
+- **`kafka-client-protocol-core` 0.2.2 → 0.2.3** — adds `pub use bytes`, so the
+  crate (and `#[derive(KafkaMessage)]` expansion) re-exports the `bytes` types
+  it relies on, letting downstream crates derive custom messages without
+  naming `bytes` paths directly.
+- **`kafka-client-protocol` 0.2.2 → 0.2.3** — adds a re-export of the
+  structured header types (`RequestHeader`, `ResponseHeader`, `TaggedField`,
+  …) used by `ConnectionHandle::send_request_frame`.
+- **`kafka-client-protocol-derive` 0.2.1 → 0.2.2** — the macro's generated code
+  now roots its paths at `kafka_client_protocol_core` (and `bytes`) instead of
+  the bare `::bytes`, so expansion works for downstream crates that list core as
+  a direct dependency.
+
+`kafka_client` 0.8.0's dependency constraints are updated accordingly
+(`kafka-client-protocol = "0.2.3"`, `kafka-client-protocol-core = "0.2.3"`,
+`kafka-client-protocol-derive = "0.2.2"`).
 
 ## [0.7.0] - 2026-08-07
 

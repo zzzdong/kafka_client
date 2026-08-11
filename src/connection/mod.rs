@@ -457,7 +457,7 @@ impl SequentialConnection {
 
         self.framed.send_frame(request_data).await?;
 
-        let frame = tokio::time::timeout(self.request_timeout, self.framed.recv_response())
+        let frame = tokio::time::timeout(self.request_timeout, self.framed.recv_frame())
             .await
             .map_err(|_| KafkaError::RequestTimeout)??;
 

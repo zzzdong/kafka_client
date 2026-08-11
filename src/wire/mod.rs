@@ -70,8 +70,7 @@ impl KafkaFramed {
     /// **no** correlation-ID bookkeeping and **no** header encoding: `data` is
     /// written exactly as given. It returns once the frame has been flushed,
     /// without waiting for any response — the caller pairs it with a
-    /// subsequent [`recv_frame`](Self::recv_frame) (or
-    /// [`recv_response`](Self::recv_response)).
+    /// subsequent [`recv_frame`](Self::recv_frame).
     ///
     /// # Errors
     ///
@@ -112,22 +111,6 @@ impl KafkaFramed {
             .await
             .ok_or(KafkaError::ConnectionClosed)??;
         Ok(frame.data)
-    }
-
-    /// Read the next response frame and return the complete response bytes.
-    ///
-    /// Alias of [`recv_frame`](Self::recv_frame), retained for callers that
-    /// think of the wire as "send request, then read response". Like
-    /// [`recv_frame`](Self::recv_frame) it has **no timeout**; apply one at the
-    /// calling layer when a bounded wait is required. The returned bytes
-    /// include the response header (correlation ID and, for flexible versions,
-    /// its tagged fields); the caller must parse or forward it as needed.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`recv_frame`](Self::recv_frame).
-    pub async fn recv_response(&mut self) -> Result<Bytes> {
-        self.recv_frame().await
     }
 
     /// Unwrap into the raw [`tokio_util::codec::Framed`] stream.
@@ -242,7 +225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recv_response_returns_full_frame_with_header() {
+    async fn recv_frame_keeps_full_frame_with_header() {
         let (mut framed, server) = duplex_framed();
 
         // A response whose correlation ID is at bytes [0..4] followed by body.
@@ -257,13 +240,10 @@ mod tests {
             framed.flush().await.expect("flush response");
         });
 
-        // No send needed: `recv_response` picks up the broker's frame directly
+        // No send needed: `recv_frame` picks up the broker's frame directly
         // and keeps the full header (length prefix already stripped).
-        let frame = framed.recv_response().await.expect("recv_response");
-        assert_eq!(
-            frame, raw_expected,
-            "recv_response must keep the full header"
-        );
+        let frame = framed.recv_frame().await.expect("recv_frame");
+        assert_eq!(frame, raw_expected, "recv_frame must keep the full header");
         assert_eq!(
             i32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]),
             7

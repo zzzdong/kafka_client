@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bytes",
  "kafka-client-protocol-core",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bytes",
  "crc32c",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "kafka-client-protocol-derive"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "proc-macro2",
  "quote",
